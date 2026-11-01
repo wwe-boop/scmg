@@ -31,7 +31,9 @@ STAGES = {
 
 
 def ddp():
-    if 'RANK' in os.environ:
+    # only a torchrun child is distributed: DLC sets RANK=0 / WORLD_SIZE on EVERY pod, also for single-process
+    # launches (job dlc1md6q6j0e0paj failed on that: KeyError LOCAL_RANK)
+    if 'LOCAL_RANK' in os.environ and int(os.environ.get('WORLD_SIZE', '1')) > 1:
         dist.init_process_group('nccl'); r = dist.get_rank(); torch.cuda.set_device(int(os.environ['LOCAL_RANK']))
         return r, dist.get_world_size()
     torch.cuda.set_device(0)
@@ -76,6 +78,7 @@ def main():
     ap.add_argument('--semsynth-share', type=float, default=0.4)
     ap.add_argument('--snap-every', type=int, default=10000, help='EMA snapshot for mid-training evaluation')
     ap.add_argument('--deriv-ramp', type=int, default=3000, help='vae: steps to ramp in derivative losses, noise, KL')
+    ap.add_argument('--tok-cache', default=None, help='LM token ids (voxcpm planner)')
     ap.add_argument('--mmap', action='store_true', help='memory-map the arrays instead of loading them (smoke tests)')
     ap.add_argument('--max-hours', type=float, default=0, help='stop cleanly after this wall time (0 = no limit)')
     a = ap.parse_args()
@@ -83,8 +86,8 @@ def main():
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(a.seed + rank); np.random.seed(a.seed + rank)
     stats = json.loads(Path(a.stats).read_text())
-    view = View(a.view, 'train', a.text_cache, stats, mmap=a.mmap)
-    dview = View(a.view, 'val', a.text_cache, stats, mmap=a.mmap)
+    view = View(a.view, 'train', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache)
+    dview = View(a.view, 'val', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache)
     ds = WindowDataset(view, a.frames, seed=a.seed * 1000 + rank, semsynth_share=a.semsynth_share)
     dl = iter(torch.utils.data.DataLoader(ds, a.batch, num_workers=a.workers, collate_fn=collate, pin_memory=True,
                                           persistent_workers=a.workers > 0, prefetch_factor=4 if a.workers else None))
@@ -123,7 +126,11 @@ def main():
     if rank == 0: print(f'stage {a.stage}: trainable {n_train / 1e6:.2f}M / {n_all / 1e6:.2f}M', flush=True)
     ema = copy.deepcopy(model).eval().requires_grad_(False)
     net = torch.nn.parallel.DistributedDataParallel(model, find_unused_parameters=True) if world > 1 else model
-    opt = torch.optim.AdamW(params, lr=a.lr, betas=(0.9, 0.98), weight_decay=0.01)
+    lm_ids = {id(p) for n, p in model.named_parameters() if n.startswith('vox.lm.')}
+    lm_scale = getattr(getattr(model, 'cfg', None), 'lm_lr_scale', 1.0)
+    groups = [dict(params=[p for p in params if id(p) not in lm_ids], scale=1.0)]
+    if any(id(p) in lm_ids for p in params): groups.append(dict(params=[p for p in params if id(p) in lm_ids], scale=lm_scale))
+    opt = torch.optim.AdamW([dict(params=g_['params'], scale=g_['scale']) for g_ in groups], lr=a.lr, betas=(0.9, 0.98), weight_decay=0.01)
     sched = lambda s: min(1., (s + 1) / a.warmup) * (0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * min(1., s / a.steps))))
     step = 0; gn_hist = []
     ck = out / 'resume.pt'
@@ -178,7 +185,7 @@ def main():
     model.train()
     while step < a.steps:
         b = {k: v.to(dev, non_blocking=True) for k, v in next(dl).items()}
-        for gp in opt.param_groups: gp['lr'] = a.lr * sched(step)
+        for gp in opt.param_groups: gp['lr'] = a.lr * gp.get('scale', 1.0) * sched(step)
         with torch.autocast('cuda', torch.bfloat16):
             l = losses(net, b)
         loss = l['loss']

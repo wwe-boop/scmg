@@ -34,7 +34,7 @@ def compute_stats(view, n=400000, seed=0):
 class View:
     """Everything loaded once (RAM, ~8 GB) before DataLoader workers fork (shared copy-on-write)."""
 
-    def __init__(self, view=VIEW, split='train', text_cache=None, stats=None, mmap=False):
+    def __init__(self, view=VIEW, split='train', text_cache=None, stats=None, mmap=False, tok_cache=None):
         v = Path(view); self.root = v
         items = json.loads((v / 'train.json').read_text())
         sp = json.loads((v / 'SPLIT.json').read_text())
@@ -58,6 +58,10 @@ class View:
         self.by_spk = defaultdict(list)
         for i, c in enumerate(self.clips):
             if c['speaker']: self.by_spk[c['speaker']].append(i)
+        self.tok = None
+        if tok_cache:                                   # LM token ids for the VoxCPM-style planner (prep_tokens.py)
+            tc = Path(tok_cache)
+            self.tok = dict(ids=np.load(tc / 'TOK_IDS.npy'), index=json.loads((tc / 'TOK_INDEX.json').read_text()))
         self.text = None
         if text_cache:
             tc = Path(text_cache)
@@ -76,10 +80,11 @@ class View:
 
 class WindowDataset(torch.utils.data.IterableDataset):
     def __init__(self, view: View, frames=256, ref_frames=128, max_tokens=128, seed=0, semsynth_share=0.4,
-                 fixed=None):
+                 fixed=None, max_ids=160):
         self.v, self.T, self.R, self.K, self.seed = view, frames, ref_frames, max_tokens, seed
         self.w = view.weights(semsynth_share)
         self.fixed = fixed            # list of (clip_idx, start) for deterministic evaluation
+        self.KI = max_ids
 
     def __iter__(self):
         wi = torch.utils.data.get_worker_info()
@@ -126,6 +131,17 @@ class WindowDataset(torch.utils.data.IterableDataset):
                 order = np.argsort(np.nan_to_num(np.abs(tt - T / 100.), nan=1e9))[:K]; order.sort()
                 tk, tt = tk[order], tt[order]
             text[:len(tk)] = tk; ttime[:len(tk)] = tt; tmask[:len(tk)] = True
+        # LM token ids of the utterances overlapping the window, in order (VoxCPM-style planner)
+        tids = np.zeros(self.KI, np.int64); tidm = np.zeros(self.KI, bool)
+        if v.tok is not None:
+            seq = []
+            for it in c['items']:
+                i0 = it['offset'] - c['start']
+                if i0 + it['frames'] <= s or i0 >= s + n or it.get('text_null'): continue
+                e = v.tok['index'].get(it['id'])
+                if e: seq.append(v.tok['ids'][e[0]:e[0] + e[1]])
+            if seq:
+                seq = np.concatenate(seq)[:self.KI]; tids[:len(seq)] = seq; tidm[:len(seq)] = True
         # speaker / source conditions of the first utterance in the window
         it0 = next((it for it in c['items'] if it['offset'] - c['start'] + it['frames'] > s), c['items'][0])
         row = v.cond.get(str(it0['id']))
@@ -144,7 +160,7 @@ class WindowDataset(torch.utils.data.IterableDataset):
                 rs = int(rng.integers(0, max(1, Lr - self.R + 1)))
                 ref, rm, _, _ = self._window(cj, rs, self.R); ref_valid = 1.
         return dict(q=q, mask=m, feat=f, text=text, ttime=ttime, tmask=tmask, spk=spk, spk_valid=np.float32(spk_valid),
-                    source=np.int64(source), ref=ref, ref_valid=np.float32(ref_valid), clip=np.int64(ci), start=np.int64(s))
+                    source=np.int64(source), tids=tids, tidm=tidm, ref=ref, ref_valid=np.float32(ref_valid), clip=np.int64(ci), start=np.int64(s))
 
 
 def collate(batch):

@@ -112,9 +112,9 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         mt, mt_mask = model.mt_memory(text, tmask, a, amask_k, g, sref, lat_k, state_tok, K)
         mtp, mtpm = mt.flatten(0, 1), mt_mask.flatten(0, 1)
         mflat, pm = model.planner_memory(mt, mt_mask)
-        h = model.plan(lat_in, a, amask_k, text, tmask, g, mflat, pm)
+        h = model.plan(lat_in, a, amask_k, text, tmask, g, mflat, pm, batch.get('tids'), batch.get('tidm'), sref)
     else:
-        h = model.plan(lat_in, a, amask_k, text, tmask, g)
+        h = model.plan(lat_in, a, amask_k, text, tmask, g, tids=batch.get('tids'), tidm=batch.get('tidm'), sref=sref)
     if cfg.style:
         style_tok, kl, _ = model.style_head(sref[:, None].expand(-1, K, -1), h, x_target=lat_k)
         style_tok = style_tok.flatten(0, 1)

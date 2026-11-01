@@ -47,6 +47,8 @@ class Config:
     style_z: int = 8
     state: bool = False
     state_dim: int = 3 * J + 2     # q, dq, q - q_plan, contact(2, zeros when unavailable)
+    planner: str = 'chunk'         # 'chunk' (from-scratch chunk transformer) | 'voxcpm' (TSLM + FSQ + RALM + LocEnc)
+    lm_lr_scale: float = 0.1       # learning-rate scale of the pretrained LM (voxcpm planner)
     lora_r: int = 0                # >0: LoRA on planner/flow linear layers (base frozen by the trainer)
     # condition dropout (classifier-free guidance)
     drop_text: float = 0.1
@@ -158,10 +160,14 @@ class SCMG(nn.Module):
         self.spk_in = nn.Sequential(nn.LayerNorm(SPK), nn.Linear(SPK, d)); self.spk_null = nn.Parameter(torch.zeros(d))
         self.source = nn.Embedding(N_SOURCE, d); nn.init.zeros_(self.source.weight)
         # planner
-        self.p_in = nn.Linear(CHUNK * cfg.z, d); self.p_start = nn.Parameter(torch.zeros(d))
-        self.p_audio = nn.Linear(d, d)
-        self.planner = nn.ModuleList([Block(d, cfg.heads, cross=True) for _ in range(cfg.planner_layers)])
-        self.p_norm = nn.LayerNorm(d)
+        if cfg.planner == 'voxcpm':
+            from .voxplanner import VoxPlanner
+            self.vox = VoxPlanner(cfg); self.planner = nn.ModuleList()
+        else:
+            self.p_in = nn.Linear(CHUNK * cfg.z, d); self.p_start = nn.Parameter(torch.zeros(d))
+            self.p_audio = nn.Linear(d, d)
+            self.planner = nn.ModuleList([Block(d, cfg.heads, cross=True) for _ in range(cfg.planner_layers)])
+            self.p_norm = nn.LayerNorm(d)
         self.p_aux = nn.Linear(d, CHUNK * cfg.z)             # auxiliary: predict chunk mean latents from the plan
         # local flow
         L = cfg.ctx + CHUNK
@@ -184,7 +190,7 @@ class SCMG(nn.Module):
     # ------------------------------------------------------------------ module surgery (stages 2-4)
     def add_modules(self):
         cfg, d = self.cfg, self.cfg.d
-        if cfg.mtc and not isinstance(self.planner[0], GatedXBlock):
+        if cfg.mtc and not isinstance(self.flow[0], GatedXBlock):
             self.planner = nn.ModuleList([GatedXBlock(b, d, cfg.heads) for b in self.planner])
             self.flow = nn.ModuleList([GatedXBlock(b, d, cfg.heads) for b in self.flow])
             self.mt_type = nn.Embedding(6, d)                 # 0 text 1 audio 2 speaker 3 ref-style 4 history 5 state
@@ -195,7 +201,8 @@ class SCMG(nn.Module):
         if cfg.state and not hasattr(self, 'state_ad'):
             self.state_ad = StateAdapter(cfg)
         if cfg.lora_r > 0 and not getattr(self, '_lora', False):
-            for m in (self.planner, self.flow, self.audio): apply_lora(m, r=cfg.lora_r)
+            for m in (self.planner, self.flow, self.audio) + ((self.vox.ralm,) if hasattr(self, 'vox') else ()):
+                apply_lora(m, r=cfg.lora_r)
             self._lora = True
 
     # ------------------------------------------------------------------ conditions
@@ -217,14 +224,16 @@ class SCMG(nn.Module):
         return i[None, None, :] < lim
 
     # ------------------------------------------------------------------ planner
-    def plan(self, lat, a, amask, text, tmask, g, mt=None, mt_mask=None):
+    def plan(self, lat, a, amask, text, tmask, g, mt=None, mt_mask=None, tids=None, tidm=None, sref=None):
         """lat [B, K, CHUNK, z] latents of chunks 0..K-1 (teacher forcing: chunk k's input is chunk k-1);
         a [B, N, d]; amask [B, K, N]; returns h [B, K, d]."""
         B, K = lat.shape[:2]
-        prev = torch.cat([self.p_start.expand(B, 1, -1), self.p_in(lat[:, :-1].flatten(-2))], 1)
         own = (amask & self._own_chunk(K, a.shape[1], a.device)[None]).float()          # visible audio of chunk k
         pooled = torch.einsum('bkn,bnd->bkd', own, a) / own.sum(-1, keepdim=True).clamp(min=1)
         pooled = torch.where(own.sum(-1, keepdim=True) > 0, pooled, self.audio_null)
+        if self.cfg.planner == 'voxcpm':
+            return self.vox(lat, pooled, tids, tidm, g, sref)[0]
+        prev = torch.cat([self.p_start.expand(B, 1, -1), self.p_in(lat[:, :-1].flatten(-2))], 1)
         x = prev + self.p_audio(pooled) + sincos(torch.arange(K, device=lat.device), self.cfg.d)[None]
         causal = torch.ones(K, K, dtype=torch.bool, device=lat.device).tril()[None]
         tm = tmask[:, None, :].expand(B, K, -1)

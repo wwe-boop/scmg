@@ -46,6 +46,11 @@ class Streamer:
         else:
             self.hist0 = None
 
+    def _ids(self):
+        c = self.cond
+        if 'tids' not in c: return None, None
+        return c['tids'][None].long(), c['tidm'][None].bool()
+
     @torch.no_grad()
     def _window(self):
         m, k = self.m, self.k
@@ -110,9 +115,9 @@ class Streamer:
             if cfg.mtc:
                 mt, mtm = m.mt_memory(text, tmask, a, amask, g, sref, lat[None], stw, WIN)
                 mflat, pm = m.planner_memory(mt, mtm)
-                h = m.plan(lat[None], a, amask, text, tmask, g, mflat, pm)
+                h = m.plan(lat[None], a, amask, text, tmask, g, mflat, pm, *self._ids(), sref)
             else:
-                h = m.plan(lat[None], a, amask, text, tmask, g)
+                h = m.plan(lat[None], a, amask, text, tmask, g, tids=self._ids()[0], tidm=self._ids()[1], sref=sref)
             hk = h[:, kw]
             style_tok = None
             if cfg.style:

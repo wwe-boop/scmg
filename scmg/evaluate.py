@@ -40,7 +40,10 @@ def kin_feats(q, win=50):
 def frechet(a, b):
     a, b = np.asarray(a), np.asarray(b)
     m1, m2 = a.mean(0), b.mean(0); s1, s2 = np.cov(a, rowvar=False), np.cov(b, rowvar=False)
-    cs, _ = linalg.sqrtm(s1 @ s2, disp=False)
+    try:
+        cs, _ = linalg.sqrtm(s1 @ s2, disp=False)
+    except TypeError:                                   # scipy >= 1.14 dropped disp
+        cs = linalg.sqrtm(s1 @ s2)
     return float(((m1 - m2) ** 2).sum() + np.trace(s1 + s2 - 2 * cs.real))
 
 
@@ -99,11 +102,12 @@ def main():
     ap.add_argument('--stats', required=True); ap.add_argument('--text-cache', required=True); ap.add_argument('--view', default=VIEW)
     ap.add_argument('--n', type=int, default=380); ap.add_argument('--horizons', default='inf,8,4,0')
     ap.add_argument('--steps', type=int, default=10); ap.add_argument('--closed-loop', action='store_true')
+    ap.add_argument('--tok-cache', default=None)
     ap.add_argument('--n-future', type=int, default=1); ap.add_argument('--mmap', action='store_true')
     a = ap.parse_args()
     dev = 'cuda'; out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     stats = json.loads(Path(a.stats).read_text())
-    view = View(a.view, 'val', a.text_cache, stats, mmap=a.mmap)
+    view = View(a.view, 'val', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache)
     m, vae = load(a.ckpt, a.vae, dev)
     qm, qs = np.asarray(stats['q_mean'], np.float32), np.asarray(stats['q_std'], np.float32)
     standby = qm
@@ -117,7 +121,7 @@ def main():
             if nch < 3: continue
             ds = WindowDataset(view, nch * CHUNK_FRAMES, max_tokens=256)
             s = ds.sample(ci, 0, np.random.default_rng(ci))
-            cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid')}
+            cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm')}
             gt = s['q'] * qs + qm
             beat = np.clip(s['feat'][:, PROSODY_COLS['onset']] + s['feat'][:, PROSODY_COLS['beat']], 0, None)
             gens = []
@@ -149,7 +153,7 @@ def main():
                 if nch < 6: continue
                 ds = WindowDataset(view, nch * CHUNK_FRAMES, max_tokens=256)
                 s = ds.sample(ci, 0, np.random.default_rng(ci))
-                cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid')}
+                cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm')}
                 rg = np.random.default_rng(ci)
                 hl = int(rg.integers(20, 51)); h0 = int(rg.integers(2 * CHUNK_FRAMES, max(2 * CHUNK_FRAMES + 1, (nch - 2) * CHUNK_FRAMES - hl)))
                 robot = Robot(standby, hold_start=h0, hold_len=hl, seed=ci)

@@ -18,9 +18,11 @@ CODE=${1:?code dir}; R=${2:?out root}; VAE=${3:?vae}
 NGPU=${NGPU:-8}; SCALE=${SCALE:-1.0}; NEVAL=${NEVAL:-380}; NMID=${NMID:-60}; BATCH=${BATCH:-128}; EXTRA=${EXTRA:-}
 PY=${PY:-python}
 D=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg
-C="--stats $D/STATS_v36_1.json --text-cache $D/text-e5-v36_1 --vae $VAE --workers ${WORKERS:-6} $EXTRA"
+TOKC=${TOKC:-}; BASECFG=${BASECFG:-{\}}          # VoxCPM-style planner: TOKC=<token cache>, BASECFG={"planner":"voxcpm"}
+C="--stats $D/STATS_v36_1.json --text-cache $D/text-e5-v36_1 --vae $VAE --workers ${WORKERS:-6} $EXTRA ${TOKC:+--tok-cache $TOKC}"
 cd $CODE && export PYTHONPATH=$CODE
 mkdir -p $R
+rm -f $R/*/FAILED                          # a resubmission retries lanes that failed in an earlier job
 steps() { python3 -c "print(max(4, int($1 * $SCALE)))"; }
 g() { echo $(( $1 % NGPU )); }            # lane -> GPU (selftest: everything on GPU 0)
 
@@ -40,7 +42,7 @@ evaluate() {  # gpu dir n ckpt-name extra...
   local out=$R/$o/eval-${ck%.pt}
   [ -f $out/RESULTS.json ] && return 0
   CUDA_VISIBLE_DEVICES=$gpu $PY -m scmg.evaluate --ckpt $R/$o/$ck --vae $VAE --stats $D/STATS_v36_1.json \
-    --text-cache $D/text-e5-v36_1 --out $out --n $n "$@" $( [[ "$EXTRA" == *--mmap* ]] && echo --mmap ) >> $R/$o/eval.log 2>&1 \
+    --text-cache $D/text-e5-v36_1 ${TOKC:+--tok-cache $TOKC} --out $out --n $n "$@" $( [[ "$EXTRA" == *--mmap* ]] && echo --mmap ) >> $R/$o/eval.log 2>&1 \
     || echo "$(date -Is) eval FAILED $o/$ck"
 }
 wait_for() {  # dir : returns 1 if upstream failed
@@ -79,10 +81,10 @@ if [ ! -f $R/base/DONE.json ]; then
   mkdir -p $R/base; echo "$(date -Is) start base on $NGPU GPUs"
   ( mid_eval $(g 7) base ) & BASEWATCH=$!          # keeps evaluating snapshots in the background; never blocks lanes
   if [ $NGPU -gt 1 ]; then
-    $PY -m torch.distributed.run --standalone --nproc_per_node=$NGPU -m scmg.train --stage base --out $R/base $C \
+    $PY -m torch.distributed.run --standalone --nproc_per_node=$NGPU -m scmg.train --stage base --out $R/base $C --cfg "$BASECFG" \
       --batch $BATCH --steps $(steps 40000) --lr 3e-4 --warmup $(steps 2000) --snap-every $(steps ${SNAP:-5000}) >> $R/base/log.txt 2>&1
   else
-    CUDA_VISIBLE_DEVICES=0 $PY -m scmg.train --stage base --out $R/base $C \
+    CUDA_VISIBLE_DEVICES=0 $PY -m scmg.train --stage base --out $R/base $C --cfg "$BASECFG" \
       --batch $BATCH --steps $(steps 40000) --lr 3e-4 --warmup $(steps 2000) --snap-every $(steps ${SNAP:-5000}) >> $R/base/log.txt 2>&1
   fi
   [ -f $R/base/DONE.json ] || { echo "base FAILED"; touch $R/base/FAILED; kill $BASEWATCH 2>/dev/null; exit 1; }
