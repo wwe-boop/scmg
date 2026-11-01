@@ -15,7 +15,7 @@
 #                          +--> g7 measured-state (history = measured), then unfreeze-state   [Robot State Adapter]
 set -uo pipefail
 CODE=${1:?code dir}; R=${2:?out root}; VAE=${3:?vae}
-NGPU=${NGPU:-8}; SCALE=${SCALE:-1.0}; NEVAL=${NEVAL:-380}; NMID=${NMID:-60}; BATCH=${BATCH:-128}; EXTRA=${EXTRA:-}
+NGPU=${NGPU:-8}; SCALE=${SCALE:-1.0}; NEVAL=${NEVAL:-120}; NFULL=${NFULL:-380}; NMID=${NMID:-40}; BATCH=${BATCH:-128}; EXTRA=${EXTRA:-}
 PY=${PY:-python}
 D=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg
 TOKC=${TOKC:-}; BASECFG=${BASECFG:-{\}}          # VoxCPM-style planner: TOKC=<token cache>, BASECFG={"planner":"voxcpm"}
@@ -96,8 +96,8 @@ ST="--steps $(steps 20000) --lr 1e-4 --warmup $(steps 500) --snap-every $(steps 
 B=$R/base/final.pt
 LANES=()
 ( train $(g 0) main-peft --stage peft --init $B $PE && evaluate $(g 0) main-peft $NEVAL final.pt --horizons inf,4,0 \
-  && train $(g 0) main-causal --stage causal --init $R/main-peft/final.pt $CA && evaluate $(g 0) main-causal $NEVAL final.pt --horizons inf,8,4,2,0 \
-  && train $(g 0) main-state --stage state --init $R/main-causal/final.pt $ST && evaluate $(g 0) main-state $NEVAL final.pt --horizons 4,0 --closed-loop ) & LANES+=($!)
+  && train $(g 0) main-causal --stage causal --init $R/main-peft/final.pt $CA && evaluate $(g 0) main-causal $NFULL final.pt --horizons inf,8,4,2,0 \
+  && train $(g 0) main-state --stage state --init $R/main-causal/final.pt $ST && evaluate $(g 0) main-state $NFULL final.pt --horizons 4,0 --closed-loop ) & LANES+=($!)
 ( train $(g 1) nomtc-peft --stage peft --init $B --cfg '{"mtc": false}' $PE \
   && train $(g 1) nomtc-causal --stage causal --init $R/nomtc-peft/final.pt --cfg '{"mtc": false}' $CA && evaluate $(g 1) nomtc-causal $NEVAL final.pt --horizons inf,4,0 ) & LANES+=($!)
 ( train $(g 2) nostyle-peft --stage peft --init $B --cfg '{"style": false}' $PE \

@@ -103,7 +103,8 @@ def main():
     ap.add_argument('--n', type=int, default=380); ap.add_argument('--horizons', default='inf,8,4,0')
     ap.add_argument('--steps', type=int, default=10); ap.add_argument('--closed-loop', action='store_true')
     ap.add_argument('--tok-cache', default=None)
-    ap.add_argument('--n-future', type=int, default=1); ap.add_argument('--mmap', action='store_true')
+    ap.add_argument('--n-future', type=int, default=0, help='open loop: provisional chunks (closed loop always uses 1)')
+    ap.add_argument('--ndiv', type=int, default=20, help='clips that get a second seed for the diversity metric'); ap.add_argument('--mmap', action='store_true')
     a = ap.parse_args()
     dev = 'cuda'; out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     stats = json.loads(Path(a.stats).read_text())
@@ -125,7 +126,7 @@ def main():
             gt = s['q'] * qs + qm
             beat = np.clip(s['feat'][:, PROSODY_COLS['onset']] + s['feat'][:, PROSODY_COLS['beat']], 0, None)
             gens = []
-            for seed in (0, 1):
+            for seed in ((0, 1) if len(dv) < a.ndiv else (0,)):
                 cmd, _, tm = generate(m, vae, s['feat'], cond, stats, nch, H=H, steps=a.steps, seed=seed,
                                       n_future=a.n_future, standby=standby)
                 gens.append(cmd); ticks += list(tm[1:])
@@ -134,8 +135,8 @@ def main():
             ba_g.append(beat_align(g0[:n], beat[:n])); ba_t.append(beat_align(gt[:n], beat[:n]))
             br_g.append(boundary_ratio(g0[:n])); br_t.append(boundary_ratio(gt[:n]))
             sp.append(np.abs(np.diff(g0[:n, ARMS], axis=0)).mean() / max(np.abs(np.diff(gt[:n, ARMS], axis=0)).mean(), 1e-6))
-            dv.append(float(np.abs(gens[0][:n, ARMS] - gens[1][:n, ARMS]).mean()))
-            per.append(dict(H=hname, clip=view.clips[ci]['clip'], ba=ba_g[-1], br=br_g[-1], sp=sp[-1], dv=dv[-1]))
+            if len(gens) > 1: dv.append(float(np.abs(gens[0][:n, ARMS] - gens[1][:n, ARMS]).mean()))
+            per.append(dict(H=hname, clip=view.clips[ci]['clip'], ba=ba_g[-1], br=br_g[-1], sp=sp[-1], dv=dv[-1] if len(gens) > 1 else None))
             if ci < 8: np.save(out / f'gen_H{hname}_{ci}.npy', g0); np.save(out / f'gt_{ci}.npy', gt)
         tk = np.array(ticks) * 1000
         res[hname] = dict(clips=len(ba_g), FKD=frechet(F_gen, F_gt) if len(F_gen) > 110 else None,
@@ -165,7 +166,7 @@ def main():
                 else:
                     rb = robot
                 cmd, ex, _ = generate(m, vae, s['feat'], cond, stats, nch, robot=rb, H=4 * U80, steps=a.steps, seed=0,
-                                      n_future=a.n_future, standby=standby, hist_measured=hm)
+                                      n_future=1, standby=standby, hist_measured=hm)
                 n = min(len(cmd), len(ex)); rel = h0 + hl
                 if rel + 25 > n: continue
                 err = cmd[:n] - ex[:n]

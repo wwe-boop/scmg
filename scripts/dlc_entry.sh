@@ -34,7 +34,7 @@ case $PHASE in
     export RANK=0 WORLD_SIZE=1 MASTER_ADDR=localhost MASTER_PORT=29500   # what DLC sets on every pod
     [ "${SCMG_STRIDE:-4}" = 2 ] && VAE=$OUT/vae25/final.pt
     [ "${SCMG_VOX:-0}" = 1 ] && export TOKC=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/tok-qwen25-v36_1 BASECFG='{"planner": "voxcpm", "d": 256}'
-    NGPU=1 SCALE=0.002 SNAP=40000 NEVAL=1 NMID=1 BATCH=8 WORKERS=2 EXTRA=--mmap PY=${PY:-/usr/local/bin/python} \
+    NGPU=1 SCALE=0.002 SNAP=40000 NEVAL=1 NFULL=1 NMID=1 BATCH=8 WORKERS=2 EXTRA=--mmap PY=${PY:-/usr/local/bin/python} \
       bash $P/scripts/pipeline_dlc.sh $P $OUT $VAE
     test -f $OUT/PIPELINE_DONE && ls $OUT && cat $OUT/SUMMARY.md && echo SELFTEST_PASS ;;
   *) echo "unknown phase $PHASE"; exit 2 ;;
