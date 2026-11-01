@@ -35,7 +35,7 @@ class Streamer:
         self.g = torch.Generator(device=device).manual_seed(seed)
         self.lat = []                     # committed latents (normalised), one [z] per latent step
         self.frames = []                  # emitted joint frames (rad)
-        self.k = 0
+        self.k = 0; self.n_emitted = 0
         self.timing = []
         self.hist_measured = hist_measured   # ablation: context latents = encoded EXECUTED motion, no state adapter
         z = model.cfg.z
@@ -62,6 +62,22 @@ class Streamer:
         ok = (idx >= 0) & (idx < arrived)
         feat = torch.where(ok[:, None], self.feat[idx.clamp(0, Tf - 1)], torch.zeros_like(self.feat[:1]))
         return c0, f0, feat[None]
+
+    @torch.no_grad()
+    def _emit(self, final=False):
+        m = self.m
+        L1 = len(self.lat); L0 = max(0, L1 - 4 * CHUNK)
+        zz = torch.stack(self.lat[L0:L1])[None] * m.lat_std + m.lat_mean
+        y = self.vae.decode(zz)[0] * self.qs + self.qm              # global frames [L0*STRIDE, L1*STRIDE)
+        end = L1 * STRIDE if final else (L1 - 1) * STRIDE           # last latent waits for its look-ahead
+        fr = y[self.n_emitted - L0 * STRIDE:end - L0 * STRIDE]
+        for f in fr: self.frames.append(f)
+        self.n_emitted = end
+        return fr
+
+    def flush(self):
+        """End of utterance: emit the frames of the last latent (decoded with replicated look-ahead)."""
+        return self._emit(final=True)
 
     @torch.no_grad()
     def tick(self, robot_q=None, robot_dq=None, executed=None):
@@ -144,14 +160,11 @@ class Streamer:
             out.append(new)
         committed = out[0]
         for i in range(CHUNK): self.lat.append(committed[i].clone())
-        # decode: last 2 chunks of committed (+ provisional next latent as the decoder's look-ahead)
-        tail = torch.stack(self.lat[-2 * CHUNK:])
-        look = out[1][:1] if len(out) > 1 else committed[-1:]
-        zz = torch.cat([tail, look], 0)[None] * m.lat_std + m.lat_mean
-        y = self.vae.decode(zz)[0] * self.qs + self.qm                # [(2*CHUNK+1)*4, J]
-        nf = y.shape[0] - STRIDE
-        fr = y[nf - CHUNK_FRAMES:nf]
-        for f in fr: self.frames.append(f)
+        # decode with the decoder's 1-latent look-ahead satisfied by COMMITTED latents only: a frame is emitted once the
+        # latent after it is committed (fixed 80 ms output delay). Emitting with a replicated or provisional look-ahead
+        # gave 5-6x jerk at chunk boundaries (scripts/diag_boundary.py C/E); the decoder also looks ~7 latents back, so a
+        # 4-chunk tail is decoded (a 2-chunk tail leaked window-start padding: 9-10x).
+        fr = self._emit(final=False)
         self.provisional = [o for o in out[1:]]
         torch.cuda.synchronize(); self.timing.append(time.perf_counter() - t0)
         self.k += 1
@@ -164,9 +177,10 @@ def generate(model, vae, feat, cond, stats, n_chunks, robot=None, **kw):
     s = Streamer(model, vae, feat, cond, stats, **kw)
     q = dq = None
     executed = []
-    for _ in range(n_chunks):
+    for i in range(n_chunks):
         fr = s.tick(q, dq, np.concatenate(executed) if executed else None)
-        if robot is not None:
+        if i == n_chunks - 1: fr = torch.cat([fr, s.flush()], 0)
+        if robot is not None and len(fr):
             q, dq, ex = robot.step(fr)
             executed.append(ex)
     cmd = torch.stack(s.frames).cpu().numpy()

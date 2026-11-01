@@ -78,12 +78,16 @@ class MLP(nn.Module):
         return self.fc2(F.gelu(self.fc1(x)))
 
 
+DROPOUT = 0.1          # residual-branch dropout (r4: the r1 base overfit after ~6k steps of a 1024-window batch)
+
+
 class Block(nn.Module):
     """Pre-norm block: self-attn -> (cross-attn) -> MLP, each modulated by AdaLN(c) (shift, scale, gate).
     c: [B, d] global or [B, L, d] per token. Gates start at 0 for the AdaLN projection (identity block at init)."""
 
     def __init__(self, d, heads, cross=False, mem_dim=None):
         super().__init__()
+        self.drop = nn.Dropout(DROPOUT)
         self.n1 = nn.LayerNorm(d, elementwise_affine=False); self.sa = Attention(d, heads)
         self.cross = cross
         if cross:
@@ -96,10 +100,10 @@ class Block(nn.Module):
         a = self.ada(F.silu(c))
         if a.ndim == 2: a = a[:, None]
         s1, b1, g1, s2, b2, g2, s3, b3, g3 = a.chunk(9, -1)
-        x = x + (1 + g1) * self.sa(self.n1(x) * (1 + s1) + b1, mask=self_mask)
+        x = x + self.drop((1 + g1) * self.sa(self.n1(x) * (1 + s1) + b1, mask=self_mask))
         if self.cross and mem is not None:
-            x = x + (1 + g2) * self.ca(self.n2(x) * (1 + s2) + b2, kv=mem, mask=mem_mask)
-        return x + (1 + g3) * self.ff(self.n3(x) * (1 + s3) + b3)
+            x = x + self.drop((1 + g2) * self.ca(self.n2(x) * (1 + s2) + b2, kv=mem, mask=mem_mask))
+        return x + self.drop((1 + g3) * self.ff(self.n3(x) * (1 + s3) + b3))
 
 
 class Encoder(nn.Module):

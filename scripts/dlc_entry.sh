@@ -30,7 +30,7 @@ case $PHASE in
       exec bash $P/scripts/pipeline_dlc.sh $P $OUT $VAE ;;
   selftest)
     : "${SCMG_DSW_RUNID:?explicit DSW run id required}"
-    OUT=/tmp/zehan-scmg-selftest-$SCMG_DSW_RUNID; rm -rf $OUT
+    OUT=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/selftest/$SCMG_DSW_RUNID; rm -rf $OUT   # CPFS, never the shared /tmp
     export RANK=0 WORLD_SIZE=1 MASTER_ADDR=localhost MASTER_PORT=29500   # what DLC sets on every pod
     [ "${SCMG_STRIDE:-4}" = 2 ] && VAE=$OUT/vae25/final.pt
     [ "${SCMG_VOX:-0}" = 1 ] && export TOKC=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/tok-qwen25-v36_1 BASECFG='{"planner": "voxcpm", "d": 256}'

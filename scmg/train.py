@@ -182,6 +182,8 @@ def main():
         return {f'dev_{k}': v / max(n, 1) for k, v in acc.items()}
 
     t0 = time.time(); tl = time.time(); agg = {}; skipped = 0
+    best_key = 'dev_rec' if a.stage == 'vae' else 'dev_flow'
+    best = json.loads((out / 'BEST.json').read_text()) if (out / 'BEST.json').exists() else dict(value=1e9, step=0)
     model.train()
     while step < a.steps:
         b = {k: v.to(dev, non_blocking=True) for k, v in next(dl).items()}
@@ -221,10 +223,15 @@ def main():
         if rank == 0 and step % a.eval_every == 0:
             model.eval(); ev = evaluate(); model.train(); ev['step'] = step
             log(out / 'dev.jsonl', ev); print('DEV', json.dumps(ev), flush=True)
+            if ev.get(best_key, 1e9) < best['value']:              # model selection on the never-trained dev set
+                best = dict(value=ev[best_key], step=step, key=best_key); save(out / 'best.pt', final=True)
+                (out / 'BEST.json').write_text(json.dumps(best))
         if step % a.save_every == 0: save(ck)
         if a.snap_every and step % a.snap_every == 0: save(out / f'snap_{step:06d}.pt', final=True)
         if a.max_hours and (time.time() - t0) / 3600 > a.max_hours: break
     save(ck); save(out / 'final.pt', final=True)
+    if rank == 0 and not (out / 'best.pt').exists():                # no dev evaluation happened (tiny runs)
+        import shutil; shutil.copy(out / 'final.pt', out / 'best.pt')
     if rank == 0: (out / 'DONE.json').write_text(json.dumps(dict(step=step, skipped=skipped, hours=(time.time() - t0) / 3600)))
     if world > 1: dist.destroy_process_group()
 

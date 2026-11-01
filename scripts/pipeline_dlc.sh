@@ -82,38 +82,38 @@ if [ ! -f $R/base/DONE.json ]; then
   ( mid_eval $(g 7) base ) & BASEWATCH=$!          # keeps evaluating snapshots in the background; never blocks lanes
   if [ $NGPU -gt 1 ]; then
     $PY -m torch.distributed.run --standalone --nproc_per_node=$NGPU -m scmg.train --stage base --out $R/base $C --cfg "$BASECFG" \
-      --batch $BATCH --steps $(steps 40000) --lr 3e-4 --warmup $(steps 2000) --snap-every $(steps ${SNAP:-5000}) >> $R/base/log.txt 2>&1
+      --batch $BATCH --steps $(steps 8000) --lr 3e-4 --warmup $(steps 1000) --eval-every $(steps 500) --snap-every $(steps ${SNAP:-2000}) >> $R/base/log.txt 2>&1
   else
     CUDA_VISIBLE_DEVICES=0 $PY -m scmg.train --stage base --out $R/base $C --cfg "$BASECFG" \
-      --batch $BATCH --steps $(steps 40000) --lr 3e-4 --warmup $(steps 2000) --snap-every $(steps ${SNAP:-5000}) >> $R/base/log.txt 2>&1
+      --batch $BATCH --steps $(steps 8000) --lr 3e-4 --warmup $(steps 1000) --eval-every $(steps 500) --snap-every $(steps ${SNAP:-2000}) >> $R/base/log.txt 2>&1
   fi
   [ -f $R/base/DONE.json ] || { echo "base FAILED"; touch $R/base/FAILED; kill $BASEWATCH 2>/dev/null; exit 1; }
 fi
 
-PE="--steps $(steps 20000) --lr 1e-4 --warmup $(steps 500) --snap-every $(steps ${SNAP:-5000})"
-CA="--steps $(steps 30000) --lr 1e-4 --warmup $(steps 500) --snap-every $(steps ${SNAP:-5000})"
-ST="--steps $(steps 20000) --lr 1e-4 --warmup $(steps 500) --snap-every $(steps ${SNAP:-5000})"
-B=$R/base/final.pt
+PE="--steps $(steps 6000) --lr 1e-4 --warmup $(steps 300) --eval-every $(steps 500) --snap-every $(steps ${SNAP:-2000})"
+CA="--steps $(steps 8000) --lr 1e-4 --warmup $(steps 300) --eval-every $(steps 500) --snap-every $(steps ${SNAP:-2000})"
+ST="--steps $(steps 6000) --lr 1e-4 --warmup $(steps 300) --eval-every $(steps 500) --snap-every $(steps ${SNAP:-2000})"
+B=$R/base/best.pt
 LANES=()
-( train $(g 0) main-peft --stage peft --init $B $PE && evaluate $(g 0) main-peft $NEVAL final.pt --horizons inf,4,0 \
-  && train $(g 0) main-causal --stage causal --init $R/main-peft/final.pt $CA && evaluate $(g 0) main-causal $NFULL final.pt --horizons inf,8,4,2,0 \
-  && train $(g 0) main-state --stage state --init $R/main-causal/final.pt $ST && evaluate $(g 0) main-state $NFULL final.pt --horizons 4,0 --closed-loop ) & LANES+=($!)
+( train $(g 0) main-peft --stage peft --init $B $PE && evaluate $(g 0) main-peft $NEVAL best.pt --horizons inf,4,0 \
+  && train $(g 0) main-causal --stage causal --init $R/main-peft/best.pt $CA && evaluate $(g 0) main-causal $NFULL best.pt --horizons inf,8,4,2,0 \
+  && train $(g 0) main-state --stage state --init $R/main-causal/best.pt $ST && evaluate $(g 0) main-state $NFULL best.pt --horizons 4,0 --closed-loop ) & LANES+=($!)
 ( train $(g 1) nomtc-peft --stage peft --init $B --cfg '{"mtc": false}' $PE \
-  && train $(g 1) nomtc-causal --stage causal --init $R/nomtc-peft/final.pt --cfg '{"mtc": false}' $CA && evaluate $(g 1) nomtc-causal $NEVAL final.pt --horizons inf,4,0 ) & LANES+=($!)
+  && train $(g 1) nomtc-causal --stage causal --init $R/nomtc-peft/best.pt --cfg '{"mtc": false}' $CA && evaluate $(g 1) nomtc-causal $NEVAL best.pt --horizons inf,4,0 ) & LANES+=($!)
 ( train $(g 2) nostyle-peft --stage peft --init $B --cfg '{"style": false}' $PE \
-  && train $(g 2) nostyle-causal --stage causal --init $R/nostyle-peft/final.pt --cfg '{"style": false}' $CA && evaluate $(g 2) nostyle-causal $NEVAL final.pt --horizons inf,4,0 ) & LANES+=($!)
+  && train $(g 2) nostyle-causal --stage causal --init $R/nostyle-peft/best.pt --cfg '{"style": false}' $CA && evaluate $(g 2) nostyle-causal $NEVAL best.pt --horizons inf,4,0 ) & LANES+=($!)
 ( train $(g 3) seed1-peft --stage peft --init $B --seed 1 $PE \
-  && train $(g 3) seed1-causal --stage causal --init $R/seed1-peft/final.pt --seed 1 $CA && evaluate $(g 3) seed1-causal $NEVAL final.pt --horizons inf,4,0 \
-  && train $(g 3) seed1-state --stage state --init $R/seed1-causal/final.pt --seed 1 $ST && evaluate $(g 3) seed1-state $NEVAL final.pt --horizons 4 --closed-loop ) & LANES+=($!)
-( evaluate $(g 4) base $NEVAL final.pt --horizons inf,8,4,0; wait_for main-peft \
-  && train $(g 4) nocat-causal --stage causal --init $R/main-peft/final.pt --sc '{"p_stream": 0.0}' $CA && evaluate $(g 4) nocat-causal $NEVAL final.pt --horizons inf,8,4,2,0 ) & LANES+=($!)
+  && train $(g 3) seed1-causal --stage causal --init $R/seed1-peft/best.pt --seed 1 $CA && evaluate $(g 3) seed1-causal $NEVAL best.pt --horizons inf,4,0 \
+  && train $(g 3) seed1-state --stage state --init $R/seed1-causal/best.pt --seed 1 $ST && evaluate $(g 3) seed1-state $NEVAL best.pt --horizons 4 --closed-loop ) & LANES+=($!)
+( evaluate $(g 4) base $NEVAL best.pt --horizons inf,8,4,0; wait_for main-peft \
+  && train $(g 4) nocat-causal --stage causal --init $R/main-peft/best.pt --sc '{"p_stream": 0.0}' $CA && evaluate $(g 4) nocat-causal $NEVAL best.pt --horizons inf,8,4,2,0 ) & LANES+=($!)
 ( wait_for main-peft \
-  && train $(g 5) noop-causal --stage causal --init $R/main-peft/final.pt --sc '{"outpaint": false, "w_cont": 0.0}' $CA && evaluate $(g 5) noop-causal $NEVAL final.pt --horizons inf,4,0 ) & LANES+=($!)
+  && train $(g 5) noop-causal --stage causal --init $R/main-peft/best.pt --sc '{"outpaint": false, "w_cont": 0.0}' $CA && evaluate $(g 5) noop-causal $NEVAL best.pt --horizons inf,4,0 ) & LANES+=($!)
 ( wait_for main-peft \
-  && train $(g 6) fullft-causal --stage causal --init $R/main-peft/final.pt --unfreeze-flow $CA && evaluate $(g 6) fullft-causal $NEVAL final.pt --horizons inf,4,0 ) & LANES+=($!)
+  && train $(g 6) fullft-causal --stage causal --init $R/main-peft/best.pt --unfreeze-flow $CA && evaluate $(g 6) fullft-causal $NEVAL best.pt --horizons inf,4,0 ) & LANES+=($!)
 ( wait_for main-causal \
-  && train $(g 7) measured-state --stage state --init $R/main-causal/final.pt --sc '{"state_hist_measured": true}' $ST && evaluate $(g 7) measured-state $NEVAL final.pt --horizons 4 --closed-loop
-  wait_for main-causal && train $(g 7) unfreeze-state --stage state --init $R/main-causal/final.pt --unfreeze-flow $ST && evaluate $(g 7) unfreeze-state $NEVAL final.pt --horizons 4,0 --closed-loop ) & LANES+=($!)
+  && train $(g 7) measured-state --stage state --init $R/main-causal/best.pt --sc '{"state_hist_measured": true}' $ST && evaluate $(g 7) measured-state $NEVAL best.pt --horizons 4 --closed-loop
+  wait_for main-causal && train $(g 7) unfreeze-state --stage state --init $R/main-causal/best.pt --unfreeze-flow $ST && evaluate $(g 7) unfreeze-state $NEVAL best.pt --horizons 4,0 --closed-loop ) & LANES+=($!)
 WATCH=()
 for o in main-peft main-causal main-state; do ( mid_eval $(g 0) $o ) & WATCH+=($!); done
 wait "${LANES[@]}"

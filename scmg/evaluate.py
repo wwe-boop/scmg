@@ -18,7 +18,6 @@ import argparse, json
 from pathlib import Path
 import numpy as np
 import torch
-from scipy import linalg
 
 from .common import CHUNK_FRAMES, PROSODY_COLS, J, U80
 from .data import View, WindowDataset, VIEW
@@ -38,13 +37,13 @@ def kin_feats(q, win=50):
 
 
 def frechet(a, b):
-    a, b = np.asarray(a), np.asarray(b)
+    """Frechet distance; tr(sqrt(S1 S2)) from the eigenvalues of S1 S2 (real, >= 0 up to round-off): robust across
+    scipy versions (new sqrtm returned NaN on near-singular products)."""
+    a, b = np.asarray(a, np.float64), np.asarray(b, np.float64)
     m1, m2 = a.mean(0), b.mean(0); s1, s2 = np.cov(a, rowvar=False), np.cov(b, rowvar=False)
-    try:
-        cs, _ = linalg.sqrtm(s1 @ s2, disp=False)
-    except TypeError:                                   # scipy >= 1.14 dropped disp
-        cs = linalg.sqrtm(s1 @ s2)
-    return float(((m1 - m2) ** 2).sum() + np.trace(s1 + s2 - 2 * cs.real))
+    ev = np.linalg.eigvals(s1 @ s2)
+    tr = float(np.sqrt(np.clip(ev.real, 0, None)).sum())
+    return float(((m1 - m2) ** 2).sum() + np.trace(s1) + np.trace(s2) - 2 * tr)
 
 
 def beat_align(q, beat):
