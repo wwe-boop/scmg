@@ -72,6 +72,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     amask_k = model.chunk_audio_mask(K, N, H, dev) & ~drop_audio[:, None, None]
     text, tmask = model.text_tokens(batch['text'], batch['ttime'], batch['tmask'] & ~drop_text[:, None],
                                     drop=r(cfg.drop_time))
+    tidm_d = batch['tidm'] & ~drop_text[:, None] if 'tidm' in batch else None   # VoxCPM LM text: same text dropout
     src = torch.where(r(0.1), torch.zeros_like(batch['source']), batch['source'])
     g = model.global_cond(batch['spk'], batch['spk_valid'] * (~drop_spk), src)
 
@@ -88,19 +89,28 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         boundary = 3 * CHUNK_FRAMES
         sel = torch.rand(M, device=dev) < sc.p_state
         probs = (0., .3, .25, .25, .2)
-        act, sq, sdq, target, kind = simulate(plan_rad, boundary, probs=probs)
+        act, _, _, target, kind = simulate(plan_rad, boundary, probs=probs)
         target = torch.where(sel[:, None, None], target, plan_rad)
-        sq = torch.where(sel[:, None], sq, plan_rad[:, boundary - 1])
-        sdq = torch.where(sel[:, None], sdq, (plan_rad[:, boundary - 1] - plan_rad[:, boundary - 2]) * 50.)
+        # inference timing: the streamer emits a frame one latent late, so when chunk k is generated the robot has executed
+        # up to frame 16k - STRIDE; the last STRIDE frames before the boundary are committed-but-not-yet-sent PLAN frames.
+        # State token and measured history are built exactly like that here (they were aligned to 16k before: mismatch).
+        e_ = boundary - STRIDE                                                        # first not-yet-executed frame
+        hist_rad = torch.where(sel[:, None, None], act, plan_rad[:, :boundary])
+        sq = hist_rad[:, e_ - 1]; sdq = (hist_rad[:, e_ - 1] - hist_rad[:, e_ - 2]) * 50.
+        q_plan_s = plan_rad[:, e_ - 1]
         tn = (target - qm) / qs
         with torch.no_grad():
             mu_t, _ = vae.encode(tn)
             lat_t = (mu_t - model.lat_mean) / model.lat_std                         # [M, 16, z]
         tgt_lat = torch.where(sel[:, None, None], lat_t[:, -CHUNK:], tgt_lat)
-        if sc.state_hist_measured:
-            ctx_lat = torch.where(sel[:, None, None], lat_t[:, -CHUNK - cfg.ctx:-CHUNK], ctx_lat)
+        if sc.state_hist_measured:                    # measured = executed frames + the pending plan frames, as at inference
+            meas = torch.cat([hist_rad[:, :e_], plan_rad[:, e_:boundary]], 1)
+            with torch.no_grad():
+                mu_m, _ = vae.encode((meas - qm) / qs)
+            lat_m = (mu_m - model.lat_mean) / model.lat_std
+            ctx_lat = torch.where(sel[:, None, None], lat_m[:, -cfg.ctx:], ctx_lat)
         gt_frames = tn[:, -2 * CHUNK_FRAMES:]
-        sv = state_vector(sq, sdq, plan_rad[:, boundary - 1], qm, qs)
+        sv = state_vector(sq, sdq, q_plan_s, qm, qs)
         st_tok, st_ada = model.state_ad(sv)
         state_tok = st_tok.view(B, K, -1); state_ada = st_ada
         if sc.state_hist_measured:
@@ -119,8 +129,8 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         if cfg.mtc:
             mt, mt_mask = model.mt_memory(text, tmask, a, amask_k, g, sref, hist, state_tok, K)
             mflat, pm = model.planner_memory(mt, mt_mask)
-            return model.plan(lat_in, a, amask_k, text, tmask, g, mflat, pm, batch.get('tids'), batch.get('tidm'), sref)
-        return model.plan(lat_in, a, amask_k, text, tmask, g, tids=batch.get('tids'), tidm=batch.get('tidm'), sref=sref)
+            return model.plan(lat_in, a, amask_k, text, tmask, g, mflat, pm, batch.get('tids'), tidm_d, sref)
+        return model.plan(lat_in, a, amask_k, text, tmask, g, tids=batch.get('tids'), tidm=tidm_d, sref=sref)
 
     aw, awm = model.local_audio(a, H, K)
     aw, awm = aw.flatten(0, 1), awm.flatten(0, 1)

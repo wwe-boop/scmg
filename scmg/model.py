@@ -122,11 +122,12 @@ class StyleHead(nn.Module):
         self.out = nn.Linear(zd, d)
         nn.init.zeros_(self.out.weight); nn.init.zeros_(self.out.bias)
 
-    def forward(self, sref, h, x_target=None, temperature=1.0):
+    def forward(self, sref, h, x_target=None, temperature=1.0, generator=None):
         pin = torch.cat([sref, h], -1)
         mp, lp = self.prior(pin).chunk(2, -1); lp = lp.clamp(-8, 4)
-        if x_target is None:
-            z = mp + temperature * torch.randn_like(mp) * (0.5 * lp).exp(); kl = None
+        if x_target is None:                     # inference: draw z from the caller's generator (seeded streamer)
+            eps = torch.randn(mp.shape, device=mp.device, dtype=mp.dtype, generator=generator)
+            z = mp + temperature * eps * (0.5 * lp).exp(); kl = None
         else:
             mq, lq = self.post(torch.cat([pin, x_target.flatten(-2)], -1)).chunk(2, -1); lq = lq.clamp(-8, 4)
             z = mq + torch.randn_like(mq) * (0.5 * lq).exp()

@@ -30,19 +30,24 @@ def limits34(meta_lower, meta_upper, margin=0.03):
 
 
 class CBFFilter:
-    def __init__(self, lim, q0, brake_frac=0.5):
-        self.L = lim; self.A = brake_frac * lim['a']
+    def __init__(self, lim, q0, brake_frac=0.5, kp=15.0):
+        self.L = lim; self.A = brake_frac * lim['a']; self.kp = kp; self.q_ref_prev = None
         self.q = np.clip(np.asarray(q0, float), lim['lo'], lim['hi']); self.v = np.zeros_like(self.q); self.a = np.zeros_like(self.q)
         self.stats = dict(frames=0, modified=0, sum_abs=0., relaxed_jerk=0, relaxed_acc=0)
 
     def reset(self, q, v=None):
         self.q = np.asarray(q, float).copy(); self.v = np.zeros_like(self.q) if v is None else np.asarray(v, float).copy()
-        self.a = np.zeros_like(self.q)
+        self.a = np.zeros_like(self.q); self.q_ref_prev = None
 
     def step(self, q_ref):
         L, dt = self.L, DT
         q_ref = np.asarray(q_ref, float)
-        v_ref = (q_ref - self.q) / dt
+        # desired velocity = reference velocity (feed-forward) + position-error feedback. The first version asked for the
+        # velocity that reaches q_ref in ONE frame: whenever the filter lagged, that hit the bounds without planning the
+        # deceleration and overshot back and forth (on ground truth: every frame modified, speed x2, up to 114 deg off).
+        v_ff = np.zeros_like(q_ref) if self.q_ref_prev is None else (q_ref - self.q_ref_prev) / dt
+        self.q_ref_prev = q_ref.copy()
+        v_ref = v_ff + self.kp * (q_ref - self.q)
         # hard: velocity + 2nd-order position barrier
         d_hi = np.maximum(L['hi'] - self.q, 0.); d_lo = np.maximum(self.q - L['lo'], 0.)
         Ad = self.A * dt

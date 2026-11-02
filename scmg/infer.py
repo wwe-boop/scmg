@@ -48,6 +48,11 @@ class Streamer:
         else:
             self.hist0 = None
 
+    def _null_ids(self):
+        """Unconditional branch of CFG: the VoxCPM LM must not see the text either."""
+        t = self._ids()[1]
+        return None if t is None else torch.zeros_like(t)
+
     def _ids(self):
         c = self.cond
         if 'tids' not in c: return None, None
@@ -116,12 +121,18 @@ class Streamer:
         if cfg.style:
             sref = m.style_enc(c['ref'][None].float()) if float(c['ref_valid']) > .5 else m.style_null[None]
         st_tok = st_ada = None
+        lat_ctx = lat
         if self.hist_measured and executed is not None and len(executed) >= CHUNK_FRAMES and self.lat:
-            ex = torch.as_tensor(np.asarray(executed[-4 * CHUNK_FRAMES:]), device=self.dev).float()
+            # measured history = executed frames + the committed-but-not-yet-emitted plan frames (last latent), exactly as
+            # in training; only the LOCAL FLOW CONTEXT uses it, the planner keeps reading the committed history
+            L1 = len(self.lat); L0 = max(0, L1 - 4 * CHUNK)
+            y = self.vae.decode(torch.stack(self.lat[L0:L1])[None] * m.lat_std + m.lat_mean)[0] * self.qs + self.qm
+            pend = y[self.n_emitted - L0 * STRIDE:L1 * STRIDE]
+            ex = torch.cat([torch.as_tensor(np.asarray(executed), device=self.dev).float(), pend], 0)[-4 * CHUNK_FRAMES:]
             ex = ex[len(ex) % STRIDE:]
             mu, _ = self.vae.encode(((ex - self.qm) / self.qs)[None])
             meas = ((mu - m.lat_mean) / m.lat_std)[0, -CHUNK:]
-            if cur - 1 >= 0: lat[cur - 1] = meas                       # previous chunk = what was actually executed
+            if cur - 1 >= 0: lat_ctx = lat.clone(); lat_ctx[cur - 1] = meas
         if cfg.state and robot_q is not None and not self.hist_measured:
             q_plan = self.frames[-1] if self.frames else torch.as_tensor(robot_q, device=self.dev).float()
             sv = state_vector(torch.as_tensor(robot_q, device=self.dev).float()[None],
@@ -147,15 +158,15 @@ class Streamer:
                 if cfg.mtc:
                     mt_u, mtm_u = m.mt_memory(text, tm_u, a_u, am_u, g, sref, lat[None], stw, WIN)
                     mf_u, pm_u = m.planner_memory(mt_u, mtm_u)
-                    h_u = m.plan(lat[None], a_u, am_u, text, tm_u, g, mf_u, pm_u, *self._ids(), sref)
+                    h_u = m.plan(lat[None], a_u, am_u, text, tm_u, g, mf_u, pm_u, self._ids()[0], self._null_ids(), sref)
                 else:
-                    h_u = m.plan(lat[None], a_u, am_u, text, tm_u, g, tids=self._ids()[0], tidm=self._ids()[1], sref=sref)
+                    h_u = m.plan(lat[None], a_u, am_u, text, tm_u, g, tids=self._ids()[0], tidm=self._null_ids(), sref=sref)
                 hk_u = h_u[:, kw]
             style_tok = None
             if cfg.style:
-                style_tok, _, _ = m.style_head(sref, hk, temperature=self.temp)
+                style_tok, _, _ = m.style_head(sref, hk, temperature=self.temp, generator=self.g)
             # context = last ctx latents before chunk kw
-            prev = lat[kw - 1] if kw >= 1 else torch.zeros(CHUNK, z, device=self.dev)
+            prev = (lat_ctx if j == 0 else lat)[kw - 1] if kw >= 1 else torch.zeros(CHUNK, z, device=self.dev)
             has_ctx = (c0 + kw - 1 >= 0 and len(self.lat) > 0) or (c0 + kw - 1 == -1 and self.hist0 is not None) or j > 0
             L = cfg.ctx + CHUNK
             known = torch.zeros(1, L, dtype=torch.bool, device=self.dev); known[:, :cfg.ctx] = has_ctx
