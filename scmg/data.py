@@ -155,8 +155,9 @@ class WindowDataset(torch.utils.data.IterableDataset):
             if tkc is not None: text_c[:len(tk)] = tkc
         # LM token ids of the utterances overlapping the window, in order (VoxCPM-style planner)
         tids = np.zeros(self.KI, np.int64); tidm = np.zeros(self.KI, bool); titime = np.full(self.KI, np.nan, np.float32); tiseg = np.full(self.KI, np.nan, np.float32)
+        tiend = np.full(self.KI, np.nan, np.float32)
         if v.tok is not None:
-            seq = []; tsq = []; ssq = []
+            seq = []; tsq = []; ssq = []; endsq = []
             for it in c['items']:
                 i0 = it['offset'] - c['start']
                 if i0 + it['frames'] <= s or i0 >= s + n or it.get('text_null'): continue
@@ -167,9 +168,11 @@ class WindowDataset(torch.utils.data.IterableDataset):
                     # for ADSC arrival simulation (text streams ahead of / alongside the speech)
                     tsq.append((i0 - s + (np.arange(e[1]) + 0.5) / max(e[1], 1) * it['frames']) / 50.)
                     ssq.append(np.full(e[1], (i0 - s) / 50., np.float32))
+                    endsq.append(np.full(e[1], (i0 + it['frames'] - s) / 50., np.float32))
             if seq:
                 seq = np.concatenate(seq)[:self.KI]; tids[:len(seq)] = seq; tidm[:len(seq)] = True
                 titime[:len(seq)] = np.concatenate(tsq)[:self.KI]; tiseg[:len(seq)] = np.concatenate(ssq)[:self.KI]
+                tiend[:len(seq)] = np.concatenate(endsq)[:self.KI]
         # speaker / source conditions of the first utterance in the window
         it0 = next((it for it in c['items'] if it['offset'] - c['start'] + it['frames'] > s), c['items'][0])
         row = v.cond.get(str(it0['id']))
@@ -189,7 +192,7 @@ class WindowDataset(torch.utils.data.IterableDataset):
                 ref, rm, _, _ = self._window(cj, rs, self.R); ref_valid = 1.
         extra = dict(text_c=text_c) if text_c is not None else {}
         return dict(**extra, q=q, mask=m, feat=f, text=text, ttime=ttime, tmask=tmask, spk=spk, spk_valid=np.float32(spk_valid),
-                    source=np.int64(source), tids=tids, tidm=tidm, titime=titime, tseg=tseg, tiseg=tiseg, ref=ref, ref_valid=np.float32(ref_valid), clip=np.int64(ci), start=np.int64(s))
+                    source=np.int64(source), tids=tids, tidm=tidm, titime=titime, tseg=tseg, tiseg=tiseg, tiend=tiend, ref=ref, ref_valid=np.float32(ref_valid), clip=np.int64(ci), start=np.int64(s))
 
 
 def collate(batch):
@@ -200,3 +203,10 @@ def fixed_windows(view: View, frames=256, n=None):
     """Deterministic evaluation windows: every clip from its start (dev set: 380 items)."""
     out = [(i, 0) for i in range(len(view.clips))]
     return out[:n] if n else out
+
+
+def clip_lm_capacity(view, ci):
+    """Evaluation can retain the whole clip, then the streamer selects its training window."""
+    if view.tok is None: return 160
+    return max(160, sum(view.tok['index'].get(it['id'], (0, 0))[1]
+                        for it in view.clips[ci]['items'] if not it.get('text_null')))

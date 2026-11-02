@@ -25,9 +25,9 @@ WIN, LOOK = 16, 2
 
 class Streamer:
     def __init__(self, model, vae, feat, cond, stats, H=INF, steps=10, temperature=1.0, n_future=0, seed=0,
-                 standby=None, device='cuda', hist_measured=False, ctx_t=1.0, cfg_w=1.0, cfg_text=True,
+                 standby=None, device='cuda', hist_measured=False, ctx_t=1.0, cfg_w=1.0, cfg_text=True, cfg_t=None,
                  text_mode='final', x2_rate=15.0, x2_lag=0.15, seg_lead=0.3, deploy_timing=False,
-                 elastic=None):
+                 elastic=None, window_lm_text=False):
         """feat [T, 89] normalised (whole utterance; access is restricted to what has arrived);
         cond: dict(text [K,768], ttime [K] absolute s, tmask [K], spk [192], spk_valid, source, ref [R,J], ref_valid)."""
         require_causal_text(cond.get('text_c'), text_mode == 'x2', 'Streamer text_mode=x2')
@@ -44,6 +44,7 @@ class Streamer:
         self.st_hist = {}                 # chunk index -> robot-state token used when that chunk was generated
         self.timing = []
         self.cfg_w = cfg_w                   # classifier-free guidance (1 = off)
+        self.cfg_t = cfg_t                   # separate TEXT guidance (InstructPix2Pix-style): v_u + cfg_w (v_a - v_u) + cfg_t (v_at - v_a); None = joint CFG
         # online text arrival (ADSC): 'final' = whole text known; 'x2' = X2Streaming-TTS token streaming (committed text
         # at x2_rate tokens/s, never later than onset - x2_lag); 'segment' = TTS segment text arrives seg_lead s before its audio.
         # deploy_timing: token times exist only once voiced (TTS text_progress anchors) -- automatic for ADSC models.
@@ -59,6 +60,7 @@ class Streamer:
         elif text_mode == 'segment':
             self.arr_text = cc['tseg'].float() - seg_lead
             if 'tiseg' in cc: self.arr_lm = cc['tiseg'].float() - seg_lead
+        self.window_lm_text = window_lm_text
         self.cfg_text = cfg_text             # False: guide on audio only (models never trained with text dropped, e.g. r4 VoxCPM)
         self.ctx_t = ctx_t                   # <1: noise the committed context like in training (exposure-bias fix)
         self.hist_measured = hist_measured   # ablation: context latents = encoded EXECUTED motion, no state adapter
@@ -79,7 +81,15 @@ class Streamer:
     def _ids(self):
         c = self.cond
         if 'tids' not in c: return None, None
-        return c['tids'][None].long(), c['tidm'][None].bool()
+        mask = c['tidm'].bool()
+        if self.window_lm_text:
+            if 'tiend' not in c or 'tiseg' not in c:
+                raise ValueError('window_lm_text requires untruncated clip ids with tiseg/tiend')
+            start = (self.k - (WIN - 1 - LOOK)) * CHUNK_FRAMES / 50.
+            end = start + WIN * CHUNK_FRAMES / 50.
+            mask = mask & (c['tiseg'] < end) & (c['tiend'] > start)
+            mask = mask & (mask.long().cumsum(0) <= 160)
+        return c['tids'][None].long(), mask[None]
 
     @torch.no_grad()
     def _window(self):
@@ -225,6 +235,14 @@ class Streamer:
                 else:
                     h_u = m.plan(lat[None], a_u, am_u, text, tm_u, g, tids=self._ids()[0], tidm=self._null_ids(), sref=sref, tvis=tvis, lvis=lvis, sstate=sstate)
                 hk_u = h_u[:, kw]
+                if self.cfg_t is not None:                          # audio-only branch (text dropped, audio kept)
+                    if cfg.mtc:
+                        mt_a, mtm_a = m.mt_memory(text, tm_u, a, amask, g, sref, lat[None], stw, WIN, tvis=tvis)
+                        mf_a, pm_a = m.planner_memory(mt_a, mtm_a)
+                        h_a = m.plan(lat[None], a, amask, text, tm_u, g, mf_a, pm_a, self._ids()[0], self._null_ids(), sref, tvis=tvis, lvis=lvis, sstate=sstate)
+                    else:
+                        h_a = m.plan(lat[None], a, amask, text, tm_u, g, tids=self._ids()[0], tidm=self._null_ids(), sref=sref, tvis=tvis, lvis=lvis, sstate=sstate)
+                    hk_a = h_a[:, kw]
             style_tok = None
             if cfg.style:
                 style_tok, _, _ = m.style_head(sref, hk, temperature=self.temp, generator=self.g)
@@ -246,6 +264,9 @@ class Streamer:
                 aw_u = m.audio_null.expand_as(aw); awm_u = torch.zeros_like(awm)
                 mtk_u = mtmk_u = None
                 if cfg.mtc: mtk_u, mtmk_u = mt_u[:, kw], mtm_u[:, kw][:, None].expand(-1, cfg.ctx + CHUNK, -1)
+                if self.cfg_t is not None:
+                    mtk_a = mtmk_a = None
+                    if cfg.mtc: mtk_a, mtmk_a = mt_a[:, kw], mtm_a[:, kw][:, None].expand(-1, cfg.ctx + CHUNK, -1)
             mtk = mtmk = None
             if cfg.mtc: mtk, mtmk = mt[:, kw], mtm[:, kw][:, None].expand(-1, L, -1)
             ada = st_ada if j == 0 else None                         # the measured state only describes "now"
@@ -256,7 +277,11 @@ class Streamer:
                 v = m.flow_velocity(x, t, known, hk, g, aw, awm, style_tok, ada, mtk, mtmk)
                 if self.cfg_w != 1:
                     v_u = m.flow_velocity(x, t, known, hk_u, g, aw_u, awm_u, style_tok, ada, mtk_u, mtmk_u)
-                    v = v_u + self.cfg_w * (v - v_u)
+                    if self.cfg_t is not None:
+                        v_a = m.flow_velocity(x, t, known, hk_a, g, aw, awm, style_tok, ada, mtk_a, mtmk_a)
+                        v = v_u + self.cfg_w * (v_a - v_u) + self.cfg_t * (v - v_a)
+                    else:
+                        v = v_u + self.cfg_w * (v - v_u)
                 x = torch.where(known[..., None], x, x + v / self.steps)
             new = x[0, cfg.ctx:]
             lat[kw] = new
