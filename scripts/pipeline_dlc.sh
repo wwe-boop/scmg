@@ -20,9 +20,14 @@ PY=${PY:-python}
 D=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg
 TOKC=${TOKC:-}; BASECFG=${BASECFG:-{\}}          # VoxCPM-style planner: TOKC=<token cache>, BASECFG={"planner":"voxcpm"}
 C="--stats $D/STATS_v36_1.json --text-cache $D/text-e5-v36_1 --vae $VAE --workers ${WORKERS:-6} $EXTRA ${TOKC:+--tok-cache $TOKC}"
-cd $CODE && export PYTHONPATH=$CODE
+cd $CODE && export PYTHONPATH="$CODE:$CODE/vendor:${PYTHONPATH:-}"
 mkdir -p $R
-rm -f $R/*/FAILED                          # a resubmission retries lanes that failed in an earlier job
+# Retain failure evidence; no deletion on resubmission.
+for failed in "$R"/*/FAILED; do
+  if [ -f "$failed" ]; then
+    mkdir -p "$R/scratch"; mv "$failed" "$R/scratch/$(basename "$(dirname "$failed")").FAILED.$(date +%s%N)"
+  fi
+done
 steps() { python3 -c "print(max(4, int($1 * $SCALE)))"; }
 # lane -> GPU: index into the devices the job was GIVEN (CUDA_VISIBLE_DEVICES), never a bare 0..N-1 -- on a shared DSW a
 # selftest launched with CUDA_VISIBLE_DEVICES=1 was remapped to physical GPU 0 (forbidden there) by the old version (11-02)
@@ -63,13 +68,67 @@ mid_eval() {  # gpu dir until-file : evaluate every new snapshot (mid-training e
 
 # ---------------- runtime check (CUDA really computes on every GPU)
 $PY - <<'EOF' || exit 2
-import torch, sys
+import torch, sys, os, subprocess
+if os.environ.get("LOSSABL") == "1":
+    assert torch.cuda.is_available() and torch.cuda.device_count() == 8, "LOSSABL needs 8 compute-capable assigned GPUs"
+    print(subprocess.check_output(["nvidia-smi", "--query-gpu=driver_version,name", "--format=csv,noheader"], text=True), flush=True)
 print('torch', torch.__version__, 'cuda', torch.version.cuda, 'devices', torch.cuda.device_count(), flush=True)
 for i in range(torch.cuda.device_count()):
     x = torch.randn(1024, 1024, device=f'cuda:{i}'); y = (x @ x).sum().item()
     assert y == y, 'nan'
+if os.environ.get('LOSSABL') == '1':
+    print('libcuda', sorted({line.split()[-1] for line in open('/proc/self/maps') if 'libcuda.so' in line}), flush=True)
 print('CUDA_COMPUTE_OK', flush=True)
 EOF
+
+# ---------------- r8 loss ablation: ONE pod, eight independent single-GPU lanes.
+if [ "${LOSSABL:-0}" = 1 ]; then
+  BATCH=${LOSSABL_BATCH:-256}  # observed B64 ~19 GiB; dedicated A800 target ~60-70 GiB
+  [ "$NGPU" -eq 8 ] && [ "${#DEVS[@]}" -eq 8 ] || { echo 'LOSSABL requires exactly 8 assigned GPUs'; exit 2; }
+  INIT=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/dlc-scmg-train-r6-1102/main-peft/best.pt
+  test -f "$INIT" || exit 2
+  [[ "$R" = *-lossabl ]] || { echo 'LOSSABL requires output suffix -lossabl'; exit 2; }
+  export HF_HOME="${XDG_CACHE_HOME:?set dataset cache}/hf" TORCH_HOME="$XDG_CACHE_HOME/torch"
+  loss_eval() {
+    local gpu=$1 lane=$2 weight=$3 tag=$4
+    local dest="$R/$lane/eval-best$tag"
+    [ -f "$dest/RESULTS.json" ] && return 0
+    CUDA_VISIBLE_DEVICES="$gpu" "$PY" -m scmg.evaluate --ckpt "$R/$lane/best.pt" --vae "$VAE" \
+      --stats "$D/STATS_v36_1.json" --text-cache "$D/text-e5-v36_1" \
+      --cfg-w "$weight" --steps 10 --horizons inf,0 --out "$dest" --n "$NEVAL" \
+      >> "$R/$lane/eval$tag.log" 2>&1 && test -f "$dest/RESULTS.json"
+  }
+  loss_lane() {
+    local gpu=$1 lane=$2 options=$3
+    [ -f "$R/$lane/LOSSABL_DONE" ] && return 0
+    mkdir -p "$R/$lane"
+    mkdir "$R/$lane/.claim" || { echo "lane already claimed: $lane"; return 2; }
+    printf '%s %s %s\n' "${DLC_JOB_ID:-unset}" "$(hostname)" "$$" > "$R/$lane/.claim/owner"
+    local status=0
+    train "$gpu" "$lane" --stage causal --init "$INIT" --steps 4000 --lr 1e-4 --warmup 300 \
+      --eval-every 500 --save-every 500 --snap-every 0 --select gen --gen-cfg 2.5 --sc "$options" \
+      && loss_eval "$gpu" "$lane" 2.5 '' || status=$?
+    if [ "$status" -eq 0 ] && [ "$lane" = s1-mg ]; then loss_eval "$gpu" "$lane" 1.0 '-cfg1' || status=$?; fi
+    if [ "$status" -eq 0 ]; then
+      touch "$R/$lane/LOSSABL_DONE.tmp"; mv "$R/$lane/LOSSABL_DONE.tmp" "$R/$lane/LOSSABL_DONE"
+    fi
+    mkdir -p "$R/scratch"; mv "$R/$lane/.claim" "$R/scratch/$lane.claim.$(date +%s%N)"
+    return "$status"
+  }
+  PIDS=()
+  loss_lane "$(g 0)" ctl '{}' & PIDS+=($!)
+  loss_lane "$(g 1)" s1 '{"cfg_joint_drop":0.1}' & PIDS+=($!)
+  loss_lane "$(g 2)" s1-s2 '{"cfg_joint_drop":0.1,"p_hist_drop":0.15}' & PIDS+=($!)
+  loss_lane "$(g 3)" s1-nostream '{"cfg_joint_drop":0.1,"p_stream":0.0}' & PIDS+=($!)
+  loss_lane "$(g 4)" s1-nocont '{"cfg_joint_drop":0.1,"w_cont":0.0,"w_rhy":0.0}' & PIDS+=($!)
+  loss_lane "$(g 5)" s1-sf10 '{"cfg_joint_drop":0.1,"self_force_steps":10}' & PIDS+=($!)
+  loss_lane "$(g 6)" s1-dfm '{"cfg_joint_drop":0.1,"w_dfm":0.05}' & PIDS+=($!)
+  loss_lane "$(g 7)" s1-mg '{"cfg_joint_drop":0.1,"w_mg":1.0}' & PIDS+=($!)
+  STATUS=0; for pid in "${PIDS[@]}"; do wait "$pid" || STATUS=1; done
+  [ "$STATUS" -eq 0 ] || exit "$STATUS"
+  touch "$R/LOSSABL_DONE.tmp"; mv "$R/LOSSABL_DONE.tmp" "$R/LOSSABL_DONE"
+  exit 0
+fi
 
 # ---------------- VoxCPM module ablation (VOXABL=1): base stage only, one GPU per lane, identical budget; which parts of
 # the VoxCPM-style planner make it work (pretrained text LM / FSQ skeleton / residual LM / LocEnc / text in the sequence),

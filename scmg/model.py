@@ -61,6 +61,7 @@ class Config:
                                    # an extra LM token (which changed the base output at initialisation)
     adsc: bool = False             # Asynchronous Dual-Stream Conditioning: per-chunk text/audio visibility + stream-state token
     # condition dropout (classifier-free guidance)
+    hist_null: bool = False       # r8: allocate learnable latent null only when enabled
     drop_text: float = 0.1
     drop_audio: float = 0.1
     drop_spk: float = 0.2
@@ -231,14 +232,16 @@ class SCMG(nn.Module):
         self.register_buffer('lat_mean', torch.zeros(cfg.z)); self.register_buffer('lat_std', torch.ones(cfg.z))
         self.add_modules()
 
-    def forward(self, vae, batch, sc, stats):
+    def forward(self, vae, batch, sc, stats, ema_model=None):
         """Training losses (one call, so DistributedDataParallel sees the whole computation)."""
         from .losses import step_losses
-        return step_losses(self, vae, batch, sc, stats)
+        return step_losses(self, vae, batch, sc, stats, ema_model=ema_model)
 
     # ------------------------------------------------------------------ module surgery (stages 2-4)
     def add_modules(self):
         cfg, d = self.cfg, self.cfg.d
+        if cfg.hist_null and not hasattr(self, "hist_null"):
+            self.hist_null = nn.Parameter(torch.zeros(CHUNK, cfg.z))
         if cfg.mtc and not isinstance(self.flow[0], GatedXBlock):
             self.planner = nn.ModuleList([GatedXBlock(b, d, cfg.heads) for b in self.planner])
             self.flow = nn.ModuleList([GatedXBlock(b, d, cfg.heads) for b in self.flow])

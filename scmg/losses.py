@@ -7,7 +7,7 @@ Total = flow matching (unknown latents)                                       [a
       + w_kl   * style KL (free bits)                                          [style]
       + state-conditioned recovery: the flow/continuity targets become the simulated recovery trajectory  [state]
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -21,6 +21,12 @@ from .data import require_causal_text
 
 @dataclass
 class StageCfg:
+    cfg_joint_drop: float = 0.0
+    cfg_align_audio: bool = False
+    p_hist_drop: float = 0.0
+    w_dfm: float = 0.0
+    w_mg: float = 0.0
+    self_force_steps_random: bool = False  # uniform integer in [4, 10]
     p_stream: float = 0.0          # chunk-aware causal training: probability of a streaming (causal) sample
     horizons: tuple = (0, 2, 4, 8)  # audio horizon past the chunk start, in 80 ms units (0 = strictly causal)
     outpaint: bool = False         # random known/unknown masks
@@ -64,9 +70,18 @@ def segments(x, K, before, after):
     return x[:, idx.clamp(0, T - 1)], valid
 
 
-def step_losses(model, vae, batch, sc: StageCfg, stats):
+def step_losses(model, vae, batch, sc: StageCfg, stats, ema_model=None, diagnostic=None, diagnostic_seed=777):
     require_causal_text(batch.get('text_c'), sc.p_async > 0 and sc.p_async_seg < 1, 'ADSC training')
     cfg = model.cfg; dev = batch['q'].device
+    if not 0 <= sc.cfg_joint_drop <= 1 or not 0 <= sc.p_hist_drop <= 1:
+        raise ValueError('drop probabilities must be in [0, 1]')
+    if not 0 <= sc.w_dfm < 1 or sc.w_mg < 0 or sc.self_force_steps < 1:
+        raise ValueError('invalid loss weight / self-force steps')
+    aligned = sc.cfg_align_audio or sc.cfg_joint_drop > 0 or diagnostic is not None
+    if sc.p_hist_drop and not hasattr(model, 'hist_null'):
+        raise ValueError('p_hist_drop requires Config.hist_null')
+    if sc.w_mg and (ema_model is None or not aligned or sc.p_async or cfg.state):
+        raise ValueError('MG requires EMA, S1 alignment, and non-ADSC/non-state stage')
     q, mask, feat = batch['q'], batch['mask'], batch['feat']
     B, T, Jn = q.shape; N = T // STRIDE; K = N // CHUNK
     qm, qs = stats['qm'], stats['qs']
@@ -79,6 +94,14 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     # ---- condition dropout / modes
     r = lambda p: torch.rand(B, device=dev) < p
     drop_text, drop_audio, drop_spk = r(cfg.drop_text), r(cfg.drop_audio), r(cfg.drop_spk)
+    if sc.cfg_joint_drop > 0:
+        joint = r(sc.cfg_joint_drop)
+        drop_text = drop_text | joint; drop_audio = drop_audio | joint
+    if diagnostic is not None:
+        drop_text = torch.full_like(drop_text, diagnostic == 'no_text')
+        drop_audio = torch.full_like(drop_audio, diagnostic == 'no_audio')
+        drop_spk = torch.zeros_like(drop_spk)
+    hist_drop = r(sc.p_hist_drop) if sc.p_hist_drop else None
     if sc.p_async > 0:                    # ADSC lanes: offline / online text-final / online text-streaming
         stream = r(sc.p_adsc_stream); asy = stream & r(sc.p_async)
     else:
@@ -88,8 +111,10 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     a = model.audio(feat, causal=stream)
     a = torch.where(drop_audio[:, None, None], model.audio_null.expand_as(a), a)
     amask_k = model.chunk_audio_mask(K, N, H, dev) & ~drop_audio[:, None, None]
+    time_drop = r(cfg.drop_time)
+    if diagnostic is not None: time_drop = torch.zeros_like(time_drop)
     text, tmask = model.text_tokens(batch['text'], batch['ttime'], batch['tmask'] & ~drop_text[:, None],
-                                    drop=r(cfg.drop_time))
+                                    drop=time_drop)
     tidm_d = batch['tidm'] & ~drop_text[:, None] if 'tidm' in batch else None   # VoxCPM LM text: same text dropout
     tvis = lvis = sstate = None
     if sc.p_async > 0:                    # ADSC: what has arrived at the start of each chunk (window-relative seconds)
@@ -121,6 +146,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         text = torch.cat([text, tu], 1); tmask = torch.cat([tmask, tmask], 1)
         tvis = torch.cat([tvis & voiced, tvis & ~voiced], -1)
     src = torch.where(r(0.1), torch.zeros_like(batch['source']), batch['source'])
+    if diagnostic is not None: src = batch['source']
     g = model.global_cond(batch['spk'], batch['spk_valid'] * (~drop_spk), src)
 
     # ---- state simulation (stage 4): replaces targets of the selected chunks by recovery trajectories
@@ -169,12 +195,17 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     sref = style_tok = None; kl = None
     if cfg.style:
         ok = (batch['ref_valid'] > .5) & ~r(cfg.drop_ref)
+        if diagnostic is not None: ok = batch['ref_valid'] > .5
         sref = torch.where(ok[:, None], model.style_enc(batch['ref']), model.style_null)
     mt = mt_mask = None
 
+    lat_in = None
     def run_planner(hist):
-        nonlocal mt, mt_mask
+        nonlocal mt, mt_mask, lat_in
         lat_in = hist + sc.sigma_tf * torch.rand(B, 1, 1, 1, device=dev) * torch.randn_like(hist)
+        if hist_drop is not None:
+            lat_in = torch.where(hist_drop[:, None, None, None], model.hist_null[None, None], lat_in)
+            hist = torch.where(hist_drop[:, None, None, None], model.hist_null[None, None], hist)
         if cfg.mtc:
             mt, mt_mask = model.mt_memory(text, tmask, a, amask_k, g, sref, hist, state_tok, K, tvis=tvis)
             mflat, pm = model.planner_memory(mt, mt_mask)
@@ -184,6 +215,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
                           tvis=tvis, lvis=lvis, sstate=sstate)
 
     aw, awm = model.local_audio(a, H, K)
+    if aligned: awm = awm & ~drop_audio[:, None, None]
     aw, awm = aw.flatten(0, 1), awm.flatten(0, 1)
     gi = g[:, None].expand(-1, K, -1).flatten(0, 1)
     Lf = cfg.ctx + CHUNK
@@ -198,10 +230,11 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             kn0 = torch.zeros(M, Lf, dtype=torch.bool, device=dev); kn0[:, :cfg.ctx] = (torch.arange(K, device=dev).repeat(B) > 0)[:, None]
             x = torch.cat([ctx0, torch.randn(M, CHUNK, cfg.z, device=dev)], 1)
             mt0 = (mt.flatten(0, 1), mt_mask.flatten(0, 1)[:, None].expand(-1, Lf, -1)) if cfg.mtc else (None, None)
-            for i in range(sc.self_force_steps):
-                tt = torch.full((M, Lf), i / sc.self_force_steps, device=dev); tt[kn0] = 1.
+            sf_steps = int(torch.randint(4, 11, ())) if sc.self_force_steps_random else sc.self_force_steps
+            for i in range(sf_steps):
+                tt = torch.full((M, Lf), i / sf_steps, device=dev); tt[kn0] = 1.
                 v0 = model.flow_velocity(x, tt, kn0, h0.flatten(0, 1), gi, aw, awm, st0, None, *mt0)
-                x = torch.where(kn0[..., None], x, x + v0 / sc.self_force_steps)
+                x = torch.where(kn0[..., None], x, x + v0 / sf_steps)
             gen = x[:, cfg.ctx:].view(B, K, CHUNK, -1)
             gen = torch.where(lmask.view(B, K, CHUNK)[..., None], gen, lat_k)
         hist = gen
@@ -210,6 +243,8 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     else:
         out_sf = 0.
     h = run_planner(hist)
+    if hist_drop is not None:
+        ctx_lat = torch.where(hist_drop.repeat_interleave(K)[:, None, None], model.hist_null[-cfg.ctx:][None], ctx_lat)
     if cfg.mtc: mtp, mtpm = mt.flatten(0, 1), mt_mask.flatten(0, 1)
     if cfg.style:
         style_tok, kl, _ = model.style_head(sref[:, None].expand(-1, K, -1), h, x_target=lat_k)
@@ -229,8 +264,10 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     else:
         known[:, :cfg.ctx] = True
     known[:, :cfg.ctx] &= has_ctx[:, None]
-    t = logit_normal(M, dev)[:, None].expand(M, L).clone(); t[known] = 1.
-    noise = torch.randn_like(x1i)
+    # Dev uses a dedicated generator: identical t/noise even across style vs non-style architectures.
+    dg = torch.Generator(device=dev).manual_seed(diagnostic_seed) if diagnostic is not None else None
+    t = logit_normal(M, dev, generator=dg)[:, None].expand(M, L).clone(); t[known] = 1.
+    noise = torch.randn_like(x1i) if dg is None else torch.randn(x1i.shape, dtype=x1i.dtype, device=dev, generator=dg)
     xt = torch.where(known[..., None], x1i, t[..., None] * x1i + (1 - t[..., None]) * noise)
     if sc.ctx_noise_p > 0:                       # noisy-but-known context: its noise level is given to the model via t
         noisy = known.clone(); noisy[:, cfg.ctx:] = False
@@ -238,18 +275,84 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         tc = (sc.ctx_t[0] + (sc.ctx_t[1] - sc.ctx_t[0]) * torch.rand(M, device=dev))[:, None].expand(M, L)
         xt = torch.where(noisy[..., None], tc[..., None] * x1i + (1 - tc[..., None]) * noise, xt)
         t = torch.where(noisy, tc, t)
+    if hist_drop is not None:
+        hd = hist_drop.repeat_interleave(K)[:, None, None]
+        # Keep the null clean even when context-noising is enabled.
+        xt = torch.cat([torch.where(hd, model.hist_null[-cfg.ctx:][None], xt[:, :cfg.ctx]), xt[:, cfg.ctx:]], 1)
+        t[:, :cfg.ctx] = torch.where(hd[..., 0], torch.ones_like(t[:, :cfg.ctx]), t[:, :cfg.ctx])
     v = model.flow_velocity(xt, t, known, h.flatten(0, 1), gi, aw, awm, style_tok, state_ada,
                             mtp if cfg.mtc else None, mtpm[:, None].expand(-1, L, -1) if cfg.mtc else None)
     tgt_valid = lmask.view(B, K, CHUNK).flatten(0, 1)
     sup = ~known
     sup[:, cfg.ctx:] &= tgt_valid
     sup[:, :cfg.ctx] = False                                                          # past context never supervised
-    err = (v - (x1i - noise)).square().mean(-1)
+    target = x1i - noise
+    if sc.w_mg:
+        # EMA recomputes ALL conditions with its own weights, on the same xt/t/history.
+        em = ema_model
+        with torch.no_grad(), torch.random.fork_rng(devices=[dev.index or 0] if dev.type == 'cuda' else []):
+            eg = em.global_cond(batch['spk'], batch['spk_valid'] * (~drop_spk), src)
+            er = torch.where(ok[:, None], em.style_enc(batch['ref']), em.style_null) if cfg.style else None
+            ea = em.audio(feat, causal=stream)
+            et, etm = em.text_tokens(batch['text'], batch['ttime'], batch['tmask'], drop=time_drop)
+            teacher_style = None
+            def teacher(uncond):
+                nonlocal teacher_style
+                aa = em.audio_null.expand_as(ea) if uncond else ea
+                am = torch.zeros_like(amask_k) if uncond else em.chunk_audio_mask(K, N, H, dev)
+                tm = torch.zeros_like(etm) if uncond else etm
+                ids = torch.zeros_like(batch['tidm']) if uncond and 'tidm' in batch else batch.get('tidm')
+                memory = memory_mask = pmem = pmm = None
+                ehist = hist.detach()
+                ein = lat_in.detach()
+                if hist_drop is not None:
+                    ehist = torch.where(hist_drop[:, None, None, None], em.hist_null[None, None], ehist)
+                    ein = torch.where(hist_drop[:, None, None, None], em.hist_null[None, None], ein)
+                if cfg.mtc:
+                    memory, memory_mask = em.mt_memory(et, tm, aa, am, eg, er, ehist, None, K)
+                    pmem, pmm = em.planner_memory(memory, memory_mask)
+                hh = em.plan(ein, aa, am, et, tm, eg, pmem, pmm, batch.get('tids'), ids, er)
+                ww, wm = em.local_audio(aa, H, K)
+                if uncond: wm = torch.zeros_like(wm)
+                # Inference preserves the conditional style token in the empty branch.
+                if cfg.style and not uncond:
+                    teacher_style = em.style_head(er[:, None].expand(-1, K, -1), hh, x_target=lat_k)[0].flatten(0, 1)
+                st = teacher_style
+                return em.flow_velocity(xt, t, known, hh.flatten(0, 1), eg[:, None].expand(-1,K,-1).flatten(0,1),
+                    ww.flatten(0,1), wm.flatten(0,1), st, None,
+                    memory.flatten(0,1) if cfg.mtc else None,
+                    memory_mask.flatten(0,1)[:,None].expand(-1,L,-1) if cfg.mtc else None)
+            rng = torch.get_rng_state(); crng = torch.cuda.get_rng_state(dev) if dev.type == 'cuda' else None
+            vc = teacher(False)
+            torch.set_rng_state(rng)
+            if crng is not None: torch.cuda.set_rng_state(crng, dev)
+            vu = teacher(True)
+            keep = (~drop_audio & ~drop_text).repeat_interleave(K)[:,None,None]
+            correction = torch.where(keep, sc.w_mg * (vc - vu), torch.zeros_like(vc)).detach()
+        target = target + correction
+    err = (v - target).square().mean(-1)
     out = dict(flow=(err * sup).sum() / sup.sum().clamp(min=1), self_forced=torch.tensor(out_sf, device=dev))
+    if diagnostic is not None:
+        out['flow_sum'] = (err * sup).sum(); out['flow_count'] = sup.sum()
+        for bi, (lo, hi) in enumerate(zip((0., .2, .5, .8), (.2, .5, .8, 1.000001))):
+            bm = sup & (t >= lo) & (t < hi)
+            out[f't{bi}_sum'] = (err * bm).sum(); out[f't{bi}_count'] = bm.sum()
+    if sc.w_mg: out['mg_correction_rms'] = correction.square().mean().sqrt()
     aux = (model.p_aux(h) - lat_k.flatten(-2)).square().mean(-1)
     cm = lmask.view(B, K, CHUNK).all(-1).float()
     out['aux'] = (aux * cm).sum() / cm.sum().clamp(min=1)
     loss = out['flow'] + sc.w_aux * out['aux']
+    if sc.w_dfm:
+        # Recording identity, not a different window of the same recording.
+        clips = batch['clip']; eligible = clips[:, None] != clips[None, :]
+        if not eligible.any(1).all():
+            raise ValueError('DFM requires at least two distinct recordings in each batch')
+        neg = torch.multinomial(eligible.float(), 1).squeeze(1)
+        neg_target = (x1i - noise).view(B, K, L, -1)[neg].reshape(M, L, -1).detach()
+        neg_valid = tgt_valid.view(B, K, CHUNK)[neg].reshape(M, CHUNK)
+        dm = sup.clone(); dm[:, cfg.ctx:] &= neg_valid
+        out['dfm'] = -((v - neg_target).square().mean(-1) * dm).sum() / dm.sum().clamp(min=1)
+        loss = loss + sc.w_dfm * out['dfm']
 
     # ---- decoded continuity / rhythm
     if sc.w_cont > 0 or sc.w_rhy > 0 or sc.w_phys > 0:

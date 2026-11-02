@@ -19,6 +19,7 @@ from .common import CHUNK_FRAMES, STRIDE
 from .data import View, WindowDataset, collate, fixed_windows, VIEW
 from .model import SCMG, Config
 from .losses import step_losses, StageCfg
+from dataclasses import replace
 from .vae import MotionVAE
 
 STAGES = {
@@ -72,6 +73,83 @@ def build_model(base_cfg, prev_extra, new_extra, prev_state=None):
     return m, base_ids
 
 
+
+@torch.no_grad()
+def fixed_dev(model, vae, batches, stats, seed=777):
+    """Same random draws in all three branches; token-weighted sums across batches.
+
+    Explicit opt-in preserves legacy training/default dev. No training RNG is consumed.
+    """
+    dev = next(model.parameters()).device
+    sc = StageCfg(p_stream=0., p_async=0., outpaint=False, ctx_noise_p=0., self_force_p=0.,
+                  p_noctx=0., sigma_tf=0., w_aux=0., w_cont=0., w_rhy=0., w_kl=0.)
+    sums = {mode: {} for mode in ('full', 'no_audio', 'no_text')}
+    states = [(m, m.training) for parent in (model, vae) for m in parent.modules()]
+    try:
+        model.eval(); vae.eval()
+        with torch.random.fork_rng(devices=[dev.index or 0] if dev.type == 'cuda' else []):
+            for i, b in enumerate(batches):
+                b = {k: v.to(dev) for k, v in b.items()}
+                for mode in sums:
+                    torch.manual_seed(seed + i)
+                    with torch.autocast(dev.type, torch.bfloat16, enabled=dev.type == 'cuda'):
+                        vals = step_losses(model, vae, b, sc, stats, diagnostic=mode, diagnostic_seed=seed + i)
+                    for k, v in vals.items():
+                        if k.endswith(('_sum', '_count')): sums[mode][k] = sums[mode].get(k, 0.) + float(v)
+    finally:
+        for m, training in states: m.training = training
+    out = {}
+    for mode, vals in sums.items():
+        if not vals or vals['flow_count'] == 0: raise ValueError('empty dev supervision')
+        out[f'dev_{mode}_flow'] = vals['flow_sum'] / vals['flow_count']
+        for bi in range(4):
+            count = vals[f't{bi}_count']
+            out[f'dev_{mode}_t{bi}'] = vals[f't{bi}_sum'] / count if count else None
+            out[f'dev_{mode}_t{bi}_count'] = count
+    out['dev_flow'] = out['dev_full_flow']
+    out['delta_audio'] = out['dev_no_audio_flow'] - out['dev_flow']
+    out['delta_text'] = out['dev_no_text_flow'] - out['dev_flow']
+    return out
+
+
+def generation_key(result):
+    metrics = list(result['metrics'].values())
+    key = (float(np.mean([m['FKD'] for m in metrics])),
+           float(np.mean([abs(m['speed_ratio_macro'] - 1.) for m in metrics])))
+    if not all(math.isfinite(v) for v in key): raise ValueError('nonfinite generation selection metric')
+    return key
+
+
+def make_gen_evaluator(stats, device):
+    """Reuse eval-v2 proxy with exactly 12 fixed dev recordings (round-robin strata)."""
+    import pickle
+    from eval2.gen_proxy import ProxyEvaluator
+    from eval2.data import ROOT, FGD
+    from eval2.metrics import kin_feats, speed
+    from eval2.batch_stream import feature_windows
+    from eval2.fgd_model import Embedder
+    pack = pickle.load(open(ROOT / 'pack.pkl', 'rb'))
+    strata = {}
+    for row in pack: strata.setdefault((row['speaker'], row['language']), []).append(row)
+    groups = [sorted(rows, key=lambda r: (len(r['gt']), str(r['ci']))) for _, rows in sorted(strata.items())]
+    selected = []
+    while len(selected) < 12:
+        progressed = False
+        for rows in groups:
+            if rows and len(selected) < 12: selected.append(rows.pop(0)); progressed = True
+        if not progressed: raise ValueError('need 12 distinct dev recordings')
+    obj = ProxyEvaluator.__new__(ProxyEvaluator)
+    obj.pack = sorted(selected, key=lambda s: str(s['ci'])); obj.stats = stats; obj.device = torch.device(device)
+    base = Path('/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture/fgd-ex002-v2')
+    obj.embs = [Embedder(base / f'human_seed{i}/best.pt', device) for i in (0, 1)]
+    obj.gt_fkd = np.concatenate([kin_feats(s['gt']) for s in obj.pack])
+    obj.gt_emb = [np.concatenate([e.features(s['gt']) for s in obj.pack]) for e in obj.embs]
+    obj.gt_speed = [speed(s['gt'])['mean_rad_s'] for s in obj.pack]
+    obj.onsets = json.loads((FGD / 'AUDIO_ONSETS.json').read_text())
+    obj.windows = {'offline': feature_windows(obj.pack, stats, 'offline')[0],
+                   'H0': feature_windows(obj.pack, stats, 'offline_H4', 0)[0]}
+    return obj
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--stage', required=True, choices=['vae'] + list(STAGES))
@@ -94,7 +172,13 @@ def main():
     ap.add_argument('--overfit', type=int, default=0, help='train AND monitor on the first N long train clips only (sanity check)')
     ap.add_argument('--mmap', action='store_true', help='memory-map the arrays instead of loading them (smoke tests)')
     ap.add_argument('--max-hours', type=float, default=0, help='stop cleanly after this wall time (0 = no limit)')
+    ap.add_argument('--fixed-dev', action='store_true', help='r8 fixed dev and paired condition information gain')
+    ap.add_argument('--select', choices=['flow', 'gen'], default='flow')
+    ap.add_argument('--gen-cfg', type=float, default=2.5)
     a = ap.parse_args()
+    if a.select == 'gen':
+        if a.stage == 'vae' or a.overfit: raise ValueError('gen selection requires held-out dev and SCMG')
+        a.fixed_dev = True
     rank, world = ddp(); dev = torch.device('cuda')
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(a.seed + rank); np.random.seed(a.seed + rank)
@@ -123,6 +207,7 @@ def main():
         base_cfg.update(json.loads(a.cfg) if a.stage == 'base' else {})
         extra = dict(prev['extra_cfg']) if prev is not None else {}
         extra.update(spec['cfg']); extra.update(json.loads(a.cfg) if a.stage != 'base' else {})
+        if json.loads(a.sc).get('p_hist_drop', 0) > 0: extra['hist_null'] = True
         prev_extra = dict(prev['extra_cfg']) if prev is not None else {}
         model, base_ids = build_model(base_cfg, prev_extra, extra, prev['ema'] if prev is not None else None)
         if prev is None:
@@ -180,10 +265,13 @@ def main():
         if a.stage == 'vae':
             _, l = m(b['q'], b['mask'], deriv=min(1., step / a.deriv_ramp))
             return l
-        return m(vae, b, sc, st)
+        return m(vae, b, sc, st, ema_model=ema) if sc.w_mg else m(vae, b, sc, st)
 
     @torch.no_grad()
     def evaluate():
+        if a.fixed_dev and a.stage != 'vae':
+            dl_ = torch.utils.data.DataLoader(dev_ds, min(a.batch, 64), num_workers=0, collate_fn=collate)
+            return fixed_dev(ema, vae, dl_, st)
         g = torch.random.get_rng_state(); gc = torch.cuda.get_rng_state(); torch.manual_seed(777)
         acc = {}; n = 0
         dl_ = torch.utils.data.DataLoader(dev_ds, 64, num_workers=2, collate_fn=collate)
@@ -197,7 +285,8 @@ def main():
         return {f'dev_{k}': v / max(n, 1) for k, v in acc.items()}
 
     t0 = time.time(); tl = time.time(); agg = {}; skipped = 0
-    best_key = 'dev_rec' if a.stage == 'vae' else 'dev_flow'
+    proxy = make_gen_evaluator(stats, dev) if a.select == 'gen' and rank == 0 else None
+    best_key = 'dev_rec' if a.stage == 'vae' else ('gen_fkd' if a.select == 'gen' else 'dev_flow')
     best = json.loads((out / 'BEST.json').read_text()) if (out / 'BEST.json').exists() else dict(value=1e9, step=0)
     model.train()
     while step < a.steps:
@@ -237,9 +326,15 @@ def main():
                 (out / 'DIVERGED.json').write_text(json.dumps(rec)); raise SystemExit(3)
         if rank == 0 and step % a.eval_every == 0:
             model.eval(); ev = evaluate(); model.train(); ev['step'] = step
+            if proxy is not None:
+                from eval2.gen_proxy import gen_proxy
+                with torch.random.fork_rng(devices=[torch.cuda.current_device()]):
+                    gr = gen_proxy(ema, vae, evaluator=proxy, cfg=a.gen_cfg, steps=10, seed=777, ctx_t=sc.ctx_infer_t)
+                ev['gen_fkd'], ev['gen_speed_error'] = generation_key(gr)
+                log(out / 'gen.jsonl', dict(step=step, **gr))
             log(out / 'dev.jsonl', ev); print('DEV', json.dumps(ev), flush=True)
-            if ev.get(best_key, 1e9) < best['value']:              # model selection on the never-trained dev set
-                best = dict(value=ev[best_key], step=step, key=best_key); save(out / 'best.pt', final=True)
+            if (ev.get(best_key, 1e9) < best['value'] or (a.select == 'gen' and ev.get(best_key) == best['value'] and ev['gen_speed_error'] < best.get('speed_error', float('inf')))):              # model selection on the never-trained dev set
+                best = dict(value=ev[best_key], speed_error=ev.get('gen_speed_error', 0.), step=step, key=best_key); save(out / 'best.pt', final=True)
                 (out / 'BEST.json').write_text(json.dumps(best))
         if step % a.save_every == 0: save(ck)
         if a.snap_every and step % a.snap_every == 0: save(out / f'snap_{step:06d}.pt', final=True)
