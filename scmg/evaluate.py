@@ -92,6 +92,8 @@ def load(ckpt, vae_path, dev):
     m, _ = build_model(ck['base_cfg'], {}, ck['extra_cfg'])
     m.load_state_dict(ck['ema']); m.to(dev).eval()
     m.hist_measured = bool((ck.get('sc') or {}).get('state_hist_measured', False))
+    sc = ck.get('sc') or {}
+    m.ctx_t = float(sc.get('ctx_infer_t', 0.9)) if sc.get('ctx_noise_p', 0) > 0 else 1.0   # old checkpoints: clean ctx
     return m, vae
 
 
@@ -102,6 +104,7 @@ def main():
     ap.add_argument('--n', type=int, default=380); ap.add_argument('--horizons', default='inf,8,4,0')
     ap.add_argument('--steps', type=int, default=10); ap.add_argument('--closed-loop', action='store_true')
     ap.add_argument('--tok-cache', default=None)
+    ap.add_argument('--cfg-w', type=float, default=1.0, help='classifier-free guidance weight (audio + text)')
     ap.add_argument('--n-future', type=int, default=0, help='open loop: provisional chunks (closed loop always uses 1)')
     ap.add_argument('--ndiv', type=int, default=20, help='clips that get a second seed for the diversity metric'); ap.add_argument('--mmap', action='store_true')
     a = ap.parse_args()
@@ -127,7 +130,7 @@ def main():
             gens = []
             for seed in ((0, 1) if len(dv) < a.ndiv else (0,)):
                 cmd, _, tm = generate(m, vae, s['feat'], cond, stats, nch, H=H, steps=a.steps, seed=seed,
-                                      n_future=a.n_future, standby=standby)
+                                      n_future=a.n_future, standby=standby, ctx_t=m.ctx_t, cfg_w=a.cfg_w)
                 gens.append(cmd); ticks += list(tm[1:])
             g0 = gens[0]; n = min(len(g0), len(gt))
             F_gen += kin_feats(g0[:n]); F_gt += kin_feats(gt[:n])
@@ -165,7 +168,7 @@ def main():
                 else:
                     rb = robot
                 cmd, ex, _ = generate(m, vae, s['feat'], cond, stats, nch, robot=rb, H=4 * U80, steps=a.steps, seed=0,
-                                      n_future=1, standby=standby, hist_measured=hm)
+                                      n_future=1, standby=standby, hist_measured=hm, ctx_t=m.ctx_t, cfg_w=a.cfg_w)
                 n = min(len(cmd), len(ex)); rel = h0 + hl
                 if rel + 25 > n: continue
                 err = cmd[:n] - ex[:n]

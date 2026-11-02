@@ -30,7 +30,12 @@ class StageCfg:
     free_bits: float = 0.05
     p_state: float = 0.0           # fraction of instances with a simulated execution deviation
     state_hist_measured: bool = False   # ablation: feed the measured history as context latents instead of a state token
-    sigma_tf: float = 0.2          # planner teacher-forcing noise (exposure bias)
+    sigma_tf: float = 0.5          # planner teacher-forcing noise (exposure bias; r5: 0.2 -> 0.5)
+    ctx_noise_p: float = 0.9       # r5: probability that the KNOWN context latents are noised (exposure bias: with clean
+    ctx_t: tuple = (0.75, 1.0)     # GT context in training, free-running speed fell to 0.28 of GT vs 0.99 with GT history)
+    ctx_infer_t: float = 0.9       # context noise level used at inference by models trained with ctx noise
+    self_force_p: float = 0.5      # r5: probability that a batch uses ONE-STEP SELF-FORCED history (each chunk generated
+    self_force_steps: int = 4      # by the current model from GT history, no grad, then used as the next chunk's history)
 
 
 def logit_normal(n, device, generator=None):
@@ -102,19 +107,49 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             state_tok = None; state_ada = None
 
     # ---- planner (teacher forcing with noise)
-    lat_in = lat_k + sc.sigma_tf * torch.rand(B, 1, 1, 1, device=dev) * torch.randn_like(lat_k)
     sref = style_tok = None; kl = None
     if cfg.style:
         ok = (batch['ref_valid'] > .5) & ~r(cfg.drop_ref)
         sref = torch.where(ok[:, None], model.style_enc(batch['ref']), model.style_null)
     mt = mt_mask = None
-    if cfg.mtc:
-        mt, mt_mask = model.mt_memory(text, tmask, a, amask_k, g, sref, lat_k, state_tok, K)
-        mtp, mtpm = mt.flatten(0, 1), mt_mask.flatten(0, 1)
-        mflat, pm = model.planner_memory(mt, mt_mask)
-        h = model.plan(lat_in, a, amask_k, text, tmask, g, mflat, pm, batch.get('tids'), batch.get('tidm'), sref)
+
+    def run_planner(hist):
+        nonlocal mt, mt_mask
+        lat_in = hist + sc.sigma_tf * torch.rand(B, 1, 1, 1, device=dev) * torch.randn_like(hist)
+        if cfg.mtc:
+            mt, mt_mask = model.mt_memory(text, tmask, a, amask_k, g, sref, hist, state_tok, K)
+            mflat, pm = model.planner_memory(mt, mt_mask)
+            return model.plan(lat_in, a, amask_k, text, tmask, g, mflat, pm, batch.get('tids'), batch.get('tidm'), sref)
+        return model.plan(lat_in, a, amask_k, text, tmask, g, tids=batch.get('tids'), tidm=batch.get('tidm'), sref=sref)
+
+    aw, awm = model.local_audio(a, H, K)
+    aw, awm = aw.flatten(0, 1), awm.flatten(0, 1)
+    gi = g[:, None].expand(-1, K, -1).flatten(0, 1)
+    Lf = cfg.ctx + CHUNK
+    hist = lat_k
+    if sc.self_force_p > 0 and not cfg.state and float(torch.rand(())) < sc.self_force_p:
+        # exposure-bias fix: generate every chunk from GT history (parallel, no grad), then train chunk k on the
+        # GENERATED chunk k-1 as its history (planner input, multi-token history token and local-flow context)
+        with torch.no_grad():
+            h0 = run_planner(lat_k)
+            st0 = model.style_head(sref[:, None].expand(-1, K, -1), h0)[0].flatten(0, 1) if cfg.style else None
+            ctx0 = torch.cat([torch.zeros_like(lat_k[:, :1]), lat_k[:, :-1]], 1).flatten(0, 1)[:, -cfg.ctx:]
+            kn0 = torch.zeros(M, Lf, dtype=torch.bool, device=dev); kn0[:, :cfg.ctx] = (torch.arange(K, device=dev).repeat(B) > 0)[:, None]
+            x = torch.cat([ctx0, torch.randn(M, CHUNK, cfg.z, device=dev)], 1)
+            mt0 = (mt.flatten(0, 1), mt_mask.flatten(0, 1)[:, None].expand(-1, Lf, -1)) if cfg.mtc else (None, None)
+            for i in range(sc.self_force_steps):
+                tt = torch.full((M, Lf), i / sc.self_force_steps, device=dev); tt[kn0] = 1.
+                v0 = model.flow_velocity(x, tt, kn0, h0.flatten(0, 1), gi, aw, awm, st0, None, *mt0)
+                x = torch.where(kn0[..., None], x, x + v0 / sc.self_force_steps)
+            gen = x[:, cfg.ctx:].view(B, K, CHUNK, -1)
+            gen = torch.where(lmask.view(B, K, CHUNK)[..., None], gen, lat_k)
+        hist = gen
+        ctx_lat = torch.cat([torch.zeros_like(gen[:, :1]), gen[:, :-1]], 1).flatten(0, 1)[:, -cfg.ctx:]
+        out_sf = 1.
     else:
-        h = model.plan(lat_in, a, amask_k, text, tmask, g, tids=batch.get('tids'), tidm=batch.get('tidm'), sref=sref)
+        out_sf = 0.
+    h = run_planner(hist)
+    if cfg.mtc: mtp, mtpm = mt.flatten(0, 1), mt_mask.flatten(0, 1)
     if cfg.style:
         style_tok, kl, _ = model.style_head(sref[:, None].expand(-1, K, -1), h, x_target=lat_k)
         style_tok = style_tok.flatten(0, 1)
@@ -136,9 +171,12 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     t = logit_normal(M, dev)[:, None].expand(M, L).clone(); t[known] = 1.
     noise = torch.randn_like(x1i)
     xt = torch.where(known[..., None], x1i, t[..., None] * x1i + (1 - t[..., None]) * noise)
-    aw, awm = model.local_audio(a, H, K)
-    aw, awm = aw.flatten(0, 1), awm.flatten(0, 1)
-    gi = g[:, None].expand(-1, K, -1).flatten(0, 1)
+    if sc.ctx_noise_p > 0:                       # noisy-but-known context: its noise level is given to the model via t
+        noisy = known.clone(); noisy[:, cfg.ctx:] = False
+        noisy &= (torch.rand(M, device=dev) < sc.ctx_noise_p)[:, None]
+        tc = (sc.ctx_t[0] + (sc.ctx_t[1] - sc.ctx_t[0]) * torch.rand(M, device=dev))[:, None].expand(M, L)
+        xt = torch.where(noisy[..., None], tc[..., None] * x1i + (1 - tc[..., None]) * noise, xt)
+        t = torch.where(noisy, tc, t)
     v = model.flow_velocity(xt, t, known, h.flatten(0, 1), gi, aw, awm, style_tok, state_ada,
                             mtp if cfg.mtc else None, mtpm[:, None].expand(-1, L, -1) if cfg.mtc else None)
     tgt_valid = lmask.view(B, K, CHUNK).flatten(0, 1)
@@ -146,7 +184,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     sup[:, cfg.ctx:] &= tgt_valid
     sup[:, :cfg.ctx] = False                                                          # past context never supervised
     err = (v - (x1i - noise)).square().mean(-1)
-    out = dict(flow=(err * sup).sum() / sup.sum().clamp(min=1))
+    out = dict(flow=(err * sup).sum() / sup.sum().clamp(min=1), self_forced=torch.tensor(out_sf, device=dev))
     aux = (model.p_aux(h) - lat_k.flatten(-2)).square().mean(-1)
     cm = lmask.view(B, K, CHUNK).all(-1).float()
     out['aux'] = (aux * cm).sum() / cm.sum().clamp(min=1)

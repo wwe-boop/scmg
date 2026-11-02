@@ -44,6 +44,18 @@ def log(path, rec):
     with open(path, 'a') as f: f.write(json.dumps(rec) + '\n')
 
 
+def overfit_clips(view, n):
+    """Restrict `view` IN PLACE to a deterministic subset: the first n BEAT2 train clips of >= 8 s (real mocap, text
+    and speaker available); the per-speaker index used for reference-motion sampling is rebuilt."""
+    from collections import defaultdict
+    c = [x for x in view.clips if x['frames'] >= 400 and str(x['source']).startswith('beat2')]
+    view.clips = sorted(c, key=lambda x: x['clip'])[:n]
+    view.by_spk = defaultdict(list)
+    for i, x in enumerate(view.clips):
+        if x['speaker']: view.by_spk[x['speaker']].append(i)
+    return view.clips
+
+
 def build_model(base_cfg, prev_extra, new_extra, prev_state=None):
     """Base-config model -> remember base parameter ids -> rebuild the previous stage's modules -> load its weights
     -> add this stage's modules. LoRA keeps the wrapped Linear parameters, so base ids stay valid through surgery."""
@@ -79,6 +91,7 @@ def main():
     ap.add_argument('--snap-every', type=int, default=10000, help='EMA snapshot for mid-training evaluation')
     ap.add_argument('--deriv-ramp', type=int, default=3000, help='vae: steps to ramp in derivative losses, noise, KL')
     ap.add_argument('--tok-cache', default=None, help='LM token ids (voxcpm planner)')
+    ap.add_argument('--overfit', type=int, default=0, help='train AND monitor on the first N long train clips only (sanity check)')
     ap.add_argument('--mmap', action='store_true', help='memory-map the arrays instead of loading them (smoke tests)')
     ap.add_argument('--max-hours', type=float, default=0, help='stop cleanly after this wall time (0 = no limit)')
     a = ap.parse_args()
@@ -88,6 +101,8 @@ def main():
     stats = json.loads(Path(a.stats).read_text())
     view = View(a.view, 'train', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache)
     dview = View(a.view, 'val', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache)
+    if a.overfit:
+        overfit_clips(view, a.overfit); dview = view
     ds = WindowDataset(view, a.frames, seed=a.seed * 1000 + rank, semsynth_share=a.semsynth_share)
     dl = iter(torch.utils.data.DataLoader(ds, a.batch, num_workers=a.workers, collate_fn=collate, pin_memory=True,
                                           persistent_workers=a.workers > 0, prefetch_factor=4 if a.workers else None))

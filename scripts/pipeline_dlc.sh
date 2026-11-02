@@ -42,7 +42,7 @@ evaluate() {  # gpu dir n ckpt-name extra...
   local out=$R/$o/eval-${ck%.pt}
   [ -f $out/RESULTS.json ] && return 0
   CUDA_VISIBLE_DEVICES=$gpu $PY -m scmg.evaluate --ckpt $R/$o/$ck --vae $VAE --stats $D/STATS_v36_1.json \
-    --text-cache $D/text-e5-v36_1 ${TOKC:+--tok-cache $TOKC} --out $out --n $n "$@" $( [[ "$EXTRA" == *--mmap* ]] && echo --mmap ) >> $R/$o/eval.log 2>&1 \
+    --text-cache $D/text-e5-v36_1 ${TOKC:+--tok-cache $TOKC} --cfg-w ${CFGW:-2.5} --out $out --n $n "$@" $( [[ "$EXTRA" == *--mmap* ]] && echo --mmap ) >> $R/$o/eval.log 2>&1 \
     || echo "$(date -Is) eval FAILED $o/$ck"
 }
 wait_for() {  # dir : returns 1 if upstream failed

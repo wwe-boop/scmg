@@ -24,7 +24,7 @@ WIN, LOOK = 16, 2
 
 class Streamer:
     def __init__(self, model, vae, feat, cond, stats, H=INF, steps=10, temperature=1.0, n_future=0, seed=0,
-                 standby=None, device='cuda', hist_measured=False):
+                 standby=None, device='cuda', hist_measured=False, ctx_t=1.0, cfg_w=1.0):
         """feat [T, 89] normalised (whole utterance; access is restricted to what has arrived);
         cond: dict(text [K,768], ttime [K] absolute s, tmask [K], spk [192], spk_valid, source, ref [R,J], ref_valid)."""
         self.m, self.vae, self.dev = model.eval(), vae.eval(), device
@@ -37,6 +37,8 @@ class Streamer:
         self.frames = []                  # emitted joint frames (rad)
         self.k = 0; self.n_emitted = 0
         self.timing = []
+        self.cfg_w = cfg_w                   # classifier-free guidance on audio + text (1 = off)
+        self.ctx_t = ctx_t                   # <1: noise the committed context like in training (exposure-bias fix)
         self.hist_measured = hist_measured   # ablation: context latents = encoded EXECUTED motion, no state adapter
         z = model.cfg.z
         if standby is not None:           # rest pose as initial context (encoded like any history)
@@ -99,12 +101,17 @@ class Streamer:
         g = m.global_cond(c['spk'][None].float(), c['spk_valid'][None].float(), c['source'][None].long())
         # committed latents of the window chunks (zeros before the start)
         z = cfg.z
-        lat = torch.zeros(WIN, CHUNK, z, device=self.dev)
-        allc = torch.stack(self.lat).view(-1, CHUNK, z) if self.lat else None
-        for j in range(cur):
-            kc = c0 + j
-            if allc is not None and 0 <= kc < allc.shape[0]: lat[j] = allc[kc]
-            elif kc == -1 and self.hist0 is not None: lat[j] = self.hist0
+        def window(src):
+            w = torch.zeros(WIN, CHUNK, z, device=self.dev)
+            allc = torch.stack(src).view(-1, CHUNK, z) if src else None
+            for j in range(cur):
+                kc = c0 + j
+                if allc is not None and 0 <= kc < allc.shape[0]: w[j] = allc[kc]
+                elif kc == -1 and self.hist0 is not None: w[j] = self.hist0
+            return w
+        lat = window(self.lat)
+        # diagnostics: the planner may read a different history (e.g. ground truth) than the local flow context
+        plan_lat = window(self.plan_src) if getattr(self, 'plan_src', None) is not None else lat
         sref = None
         if cfg.style:
             sref = m.style_enc(c['ref'][None].float()) if float(c['ref_valid']) > .5 else m.style_null[None]
@@ -131,10 +138,19 @@ class Streamer:
             if cfg.mtc:
                 mt, mtm = m.mt_memory(text, tmask, a, amask, g, sref, lat[None], stw, WIN)
                 mflat, pm = m.planner_memory(mt, mtm)
-                h = m.plan(lat[None], a, amask, text, tmask, g, mflat, pm, *self._ids(), sref)
+                h = m.plan((plan_lat if j == 0 else lat)[None], a, amask, text, tmask, g, mflat, pm, *self._ids(), sref)
             else:
-                h = m.plan(lat[None], a, amask, text, tmask, g, tids=self._ids()[0], tidm=self._ids()[1], sref=sref)
+                h = m.plan((plan_lat if j == 0 else lat)[None], a, amask, text, tmask, g, tids=self._ids()[0], tidm=self._ids()[1], sref=sref)
             hk = h[:, kw]
+            if self.cfg_w != 1:                                     # unconditional branch: audio + text dropped
+                a_u = m.audio_null.expand_as(a); am_u = torch.zeros_like(amask); tm_u = torch.zeros_like(tmask)
+                if cfg.mtc:
+                    mt_u, mtm_u = m.mt_memory(text, tm_u, a_u, am_u, g, sref, lat[None], stw, WIN)
+                    mf_u, pm_u = m.planner_memory(mt_u, mtm_u)
+                    h_u = m.plan(lat[None], a_u, am_u, text, tm_u, g, mf_u, pm_u, *self._ids(), sref)
+                else:
+                    h_u = m.plan(lat[None], a_u, am_u, text, tm_u, g, tids=self._ids()[0], tidm=self._ids()[1], sref=sref)
+                hk_u = h_u[:, kw]
             style_tok = None
             if cfg.style:
                 style_tok, _, _ = m.style_head(sref, hk, temperature=self.temp)
@@ -144,16 +160,26 @@ class Streamer:
             L = cfg.ctx + CHUNK
             known = torch.zeros(1, L, dtype=torch.bool, device=self.dev); known[:, :cfg.ctx] = has_ctx
             x = torch.randn(1, L, z, device=self.dev, generator=self.g)
-            x[:, :cfg.ctx] = torch.where(known[:, :cfg.ctx, None], prev[-cfg.ctx:][None], x[:, :cfg.ctx])
+            c_ = prev[-cfg.ctx:][None]
+            if self.ctx_t < 1: c_ = self.ctx_t * c_ + (1 - self.ctx_t) * torch.randn(c_.shape, device=self.dev, generator=self.g)
+            x[:, :cfg.ctx] = torch.where(known[:, :cfg.ctx, None], c_, x[:, :cfg.ctx])
             aw, awm = m.local_audio(a, Hrel, WIN)
             aw, awm = aw[:, kw], awm[:, kw]
+            if self.cfg_w != 1:
+                aw_u = m.audio_null.expand_as(aw); awm_u = torch.zeros_like(awm)
+                mtk_u = mtmk_u = None
+                if cfg.mtc: mtk_u, mtmk_u = mt_u[:, kw], mtm_u[:, kw][:, None].expand(-1, cfg.ctx + CHUNK, -1)
             mtk = mtmk = None
             if cfg.mtc: mtk, mtmk = mt[:, kw], mtm[:, kw][:, None].expand(-1, L, -1)
             ada = st_ada if j == 0 else None                         # the measured state only describes "now"
             for s in range(self.steps):
                 tval = s / self.steps
                 t = torch.full((1, L), tval, device=self.dev); t[known] = 1.
+                if self.ctx_t < 1: t[:, :cfg.ctx] = torch.where(known[:, :cfg.ctx], torch.full_like(t[:, :cfg.ctx], self.ctx_t), t[:, :cfg.ctx])
                 v = m.flow_velocity(x, t, known, hk, g, aw, awm, style_tok, ada, mtk, mtmk)
+                if self.cfg_w != 1:
+                    v_u = m.flow_velocity(x, t, known, hk_u, g, aw_u, awm_u, style_tok, ada, mtk_u, mtmk_u)
+                    v = v_u + self.cfg_w * (v - v_u)
                 x = torch.where(known[..., None], x, x + v / self.steps)
             new = x[0, cfg.ctx:]
             lat[kw] = new

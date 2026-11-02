@@ -17,7 +17,7 @@ st = json.load(open(D + '/STATS_v36_1.json'))
 v = View(split='val', stats=st, mmap=True, text_cache=D + '/text-e5-v36_1')
 m, vae = load(sys.argv[1], sys.argv[2], 'cuda')
 qm, qs = np.asarray(st['q_mean'], np.float32), np.asarray(st['q_std'], np.float32)
-res = {k: [] for k in 'ABCDE'}; spd = {k: [] for k in ('B', 'E', 'E_steps20', 'E_cfg_temp0', 'E_steps50')}
+res = {k: [] for k in 'ABCDE'}; spd = {k: [] for k in ('B', 'E', 'E_steps20', 'E_cfg2', 'E_steps50')}
 sp = lambda x, g: float(np.abs(np.diff(x[:, 4:18], axis=0)).mean() / np.abs(np.diff(g[:, 4:18], axis=0)).mean())
 clips = [i for i, c in enumerate(v.clips) if c['frames'] >= 320][:int(sys.argv[3]) if len(sys.argv) > 3 else 12]
 for ci in clips:
@@ -40,6 +40,6 @@ for ci in clips:
     res['E'].append(boundary_ratio(gen)); n = min(len(gen), len(gt)); spd['E'].append(sp(gen[:n], gt[:n]))
     g2, _, _ = generate(m, vae, s['feat'], cond, st, nch, H=INF, steps=20, n_future=0, standby=qm); spd['E_steps20'].append(sp(g2[:n], gt[:n]))
     g4, _, _ = generate(m, vae, s['feat'], cond, st, nch, H=INF, steps=50, n_future=0, standby=qm); spd['E_steps50'].append(sp(g4[:n], gt[:n]))
-    g3, _, _ = generate(m, vae, s['feat'], cond, st, nch, H=INF, steps=10, n_future=0, standby=qm, temperature=0.); spd['E_cfg_temp0'].append(sp(g3[:n], gt[:n]))
+    g3, _, _ = generate(m, vae, s['feat'], cond, st, nch, H=INF, steps=10, n_future=0, standby=qm, temperature=0.); spd['E_cfg2'].append(sp(g3[:n], gt[:n]))
 print('boundary', json.dumps({k: round(float(np.mean(x)), 3) for k, x in res.items()}))
 print('speed ratio', json.dumps({k: round(float(np.mean(x)), 3) for k, x in spd.items()}))
