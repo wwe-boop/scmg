@@ -193,9 +193,25 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     # ---- decoded continuity / rhythm
     if sc.w_cont > 0 or sc.w_rhy > 0:
         x1hat = torch.where(known[..., None], x1i, xt + (1 - t[..., None]) * v)
-        y = vae.decode(x1hat * model.lat_std + model.lat_mean)                       # [M, 32, J]
+        # decode with the context the streamer has: 3 more history chunks before the known context (the decoder looks
+        # ~7 latents back) and the next chunk's first latent as look-ahead (inference emits a frame only once the latent
+        # after it is committed). The bare [ctx | target] window gave 9.9x boundary jerk / 0.77 deg error even for
+        # ground-truth latents (scripts/vae_consistency.py) -> the loss was fighting decoder artefacts.
+        Hx = 3 * CHUNK; Nl = lat_k.shape[1] * CHUNK
+        src = hist.reshape(B, Nl, -1)                                                 # GT, or self-forced history
+        padded = torch.cat([torch.zeros_like(src[:, :Hx + CHUNK]), src, x1.new_zeros(B, 1, src.shape[-1])], 1)
+        kk_ = torch.arange(K, device=dev)
+        ex_idx = kk_[:, None] * CHUNK + torch.arange(Hx, device=dev)[None]            # padded idx of latents [4k-16, 4k-4)
+        extra = padded[:, ex_idx].flatten(0, 1)                                       # [M, Hx, z]
+        nx = torch.clamp(kk_ + 1, max=K - 1) * CHUNK
+        x1_full = torch.cat([x1, x1[:, -1:]], 1)
+        nxt = torch.where((kk_ + 1 < K)[None, :, None], x1_full[:, nx], x1hat.view(B, K, L, -1)[:, :, -1]).flatten(0, 1)[:, None]
+        zz = torch.cat([extra, x1hat, nxt], 1)
+        yfull = vae.decode(zz * model.lat_std + model.lat_mean)
+        y = yfull[:, Hx * STRIDE:(Hx + L) * STRIDE]                                   # frames of [ctx | target]
         fv = seg_valid[:, -2 * CHUNK_FRAMES:].float() * torch.cat(
             [has_ctx[:, None].float().expand(M, CHUNK_FRAMES), tgt_valid.float().repeat_interleave(STRIDE, 1)], 1)
+        fv = fv * (kk.view(M) >= 4).float()[:, None]                                  # needs 4 chunks of history
         w_inst = t[:, -1]                                                             # trust low-noise estimates more
         rl = recon_losses(y[:, CHUNK_FRAMES - 4:], gt_frames[:, CHUNK_FRAMES - 4:], fv[:, CHUNK_FRAMES - 4:] * w_inst[:, None])
         out.update({f'cont_{k}': v_ for k, v_ in rl.items()})

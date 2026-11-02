@@ -19,7 +19,8 @@ GROUP_KP = dict(waist=3000., head=200., shoulder=900., elbow=600., wrist=150., f
 ARMATURE = dict(waist=0.5, head=0.02, shoulder=0.1, elbow=0.08, wrist=0.03, finger=0.002)  # kg m^2 (rotor inertia;
 # without it the fingers diverged at 2 ms steps)
 DELAY = 3                    # nominal pure latency (frames): real robot gain ~1, pure lag 50-80 ms
-CACHE = '/mnt/bulk/zehan/cache/scmg-ex002-servo.mjb'
+import os as _os
+CACHE = _os.environ.get('SCMG_SIM_CACHE', '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/cache/scmg-ex002-servo.mjb')
 
 
 def group(name):
@@ -86,6 +87,7 @@ class EX002Sim:
         self.d.qpos[self.qadr] = q
         if dq is not None: self.d.qvel[self.dadr] = dq
         self.d.ctrl[self.act] = q
+        self._queue = None                       # latency queue persists across rollouts (chunk after chunk)
         mujoco.mj_forward(self.m, self.d)
 
     def _build(self, model_path, kp_scale, dampratio, lift):
@@ -158,7 +160,7 @@ class EX002Sim:
         torque, frames) external joint torque. Returns per-frame arrays."""
         T = len(cmd); q = np.zeros((T, len(self.joints))); dq = np.zeros_like(q); tau = np.zeros_like(q)
         pen = np.zeros(T); sat = np.zeros(T)
-        queue = [cmd[0]] * self.delay
+        queue = getattr(self, '_queue', None) or [cmd[0]] * self.delay
         for t in range(T):
             queue.append(cmd[t]); c = queue.pop(0)
             self.d.ctrl[self.act] = c
@@ -170,6 +172,7 @@ class EX002Sim:
             lim_ = np.abs(self.frange).max(1); has = lim_ > 0               # head servos are unlimited
             sat[t] = np.mean(np.abs(tau[t][has]) >= 0.98 * lim_[has])
             pen[t] = sum(-c_.dist for c_ in self.d.contact[:self.d.ncon] if c_.dist < 0)
+        self._queue = queue
         return dict(q=q, dq=dq, tau=tau, sat=sat, pen=pen)
 
     # ------------------------------------------------------------------ calibration
