@@ -97,13 +97,14 @@ CA="--steps $(steps 8000) --lr 1e-4 --warmup $(steps 300) --eval-every $(steps 5
 ST="--steps $(steps 6000) --lr 1e-4 --warmup $(steps 300) --eval-every $(steps 500) --snap-every $(steps ${SNAP:-2000})"
 B=$R/base/best.pt
 LANES=()
-# ---------------- ADSC (Asynchronous Dual-Stream Conditioning) ablation: text arrives per TTS segment (or per token)
-# while audio streams; chunk k only sees what has arrived by its start.  adsc = masks + stream-state token,
-# adscmask = masks only; control = main-causal.  Streaming-text evals: segment text 0.3 s ahead / token text 0.5 s
-# ahead, audio horizon 2 (160 ms, robot TTS audio arrives 0.04-0.15 s before playback) and 0 (strictly causal).
-lead_evals() {  # gpu dir
-  EVTAG=-seg03 evaluate $1 $2 $NEVAL best.pt --horizons 2,0 --text-lead 0.3 --text-unit segment
-  EVTAG=-tok05 evaluate $1 $2 $NEVAL best.pt --horizons 2,0 --text-lead 0.5 --text-unit token
+# ---------------- ADSC (Asynchronous Dual-Stream Conditioning) ablation. Modes: offline (all audio + text + timing),
+# online text-final, online text-streaming (X2Streaming-TTS token commitment, or whole TTS segments); online samples
+# see token timing only once voiced. adsc = masks + stream-state token, adscmask = masks only, control = main-causal.
+# Online evals: audio horizon 2 (160 ms; robot TTS audio arrives 0.04-0.15 s before playback) and 0.
+lead_evals() {  # gpu dir : online modes, token times only once voiced (deployment information)
+  EVTAG=-onfinal evaluate $1 $2 $NEVAL best.pt --horizons 2,0 --deploy-timing
+  EVTAG=-x2 evaluate $1 $2 $NEVAL best.pt --horizons 2,0 --deploy-timing --text-mode x2 --x2-rate 15 --x2-lag 0.15
+  EVTAG=-seg evaluate $1 $2 $NEVAL best.pt --horizons 2,0 --deploy-timing --text-mode segment --seg-lead 0.3
 }
 ADSC_SC='{"p_async": 0.5}'
 adsc_lanes() {  # gA gB gC

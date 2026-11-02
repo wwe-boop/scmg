@@ -15,7 +15,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .common import J, FEAT, SPK, TEXT_DIM, STRIDE, CHUNK_FRAMES
+from .common import J, FEAT, SPK, TEXT_DIM, STRIDE, CHUNK_FRAMES, P
 
 VIEW = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/train-v1-20261101/views/data-v36_1'
 SEMSYNTH = ('semsynth_r7p1',)
@@ -35,7 +35,7 @@ class View:
     """Everything loaded once (RAM, ~8 GB) before DataLoader workers fork (shared copy-on-write)."""
 
     def __init__(self, view=VIEW, split='train', text_cache=None, stats=None, mmap=False, tok_cache=None):
-        v = Path(view); self.root = v
+        v = Path(P(view)); self.root = v
         items = json.loads((v / 'train.json').read_text())
         sp = json.loads((v / 'SPLIT.json').read_text())
         keep = set(sp['train_ids'] if split == 'train' else sp['val_ids'])
@@ -43,7 +43,7 @@ class View:
         mode = 'r' if mmap else None
         self.q = np.load(v / 'train_q.npy', mmap_mode=mode)
         # frames inside retargeting jumps (BEAT2 only, scripts/glitch_audit.py; jump frame +-1) are excluded from losses
-        gm = Path('/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/glitch-audit/GLITCH_MASK.npy')
+        gm = Path(P('/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/glitch-audit/GLITCH_MASK.npy'))
         self.glitch = np.load(gm, mmap_mode='r') if gm.exists() else None
         self.f = np.load(v / 'train_feat.npy', mmap_mode=mode)
         cond = json.loads((v / 'cond' / 'COND.json').read_text())
@@ -63,11 +63,11 @@ class View:
             if c['speaker']: self.by_spk[c['speaker']].append(i)
         self.tok = None
         if tok_cache:                                   # LM token ids for the VoxCPM-style planner (prep_tokens.py)
-            tc = Path(tok_cache)
+            tc = Path(P(tok_cache))
             self.tok = dict(ids=np.load(tc / 'TOK_IDS.npy'), index=json.loads((tc / 'TOK_INDEX.json').read_text()))
         self.text = None
         if text_cache:
-            tc = Path(text_cache)
+            tc = Path(P(text_cache))
             self.text = dict(feat=np.load(tc / 'TEXT_FEAT.npy', mmap_mode=mode), time=np.load(tc / 'TEXT_TIME.npy'),
                              index=json.loads((tc / 'TEXT_INDEX.json').read_text()))
 

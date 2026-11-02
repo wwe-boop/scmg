@@ -12,7 +12,7 @@ import torch
 import torch.nn.functional as F
 
 from .common import CHUNK, CHUNK_FRAMES, STRIDE, PROSODY_COLS, U80
-from .model import INF, arrival_mask, stream_state
+from .model import INF, arrival_mask, stream_state, x2_arrival
 from .sim import simulate, state_vector, ARMS
 from .vae import recon_losses
 
@@ -34,11 +34,13 @@ class StageCfg:
     ctx_noise_p: float = 0.9       # r5: probability that the KNOWN context latents are noised (exposure bias: with clean
     ctx_t: tuple = (0.75, 1.0)     # GT context in training, free-running speed fell to 0.28 of GT vs 0.99 with GT history)
     ctx_infer_t: float = 0.9       # context noise level used at inference by models trained with ctx noise
-    p_async: float = 0.0           # ADSC: probability of an asynchronous dual-stream sample (text arrives incrementally,
-    async_lead: tuple = (0.0, 3.0) # running 0-3 s ahead of the speech; audio streaming with a sampled horizon)
-    p_async_seg: float = 0.7       # arrival unit = TTS SEGMENT (our engine: edge-live hub 'begin' carries the whole segment
-                                   # text shortly before its audio); else token by token (LLM -> TTS character streaming)
-    seg_lead: tuple = (0.0, 1.0)   # segment text arrives 0-1 s before the segment's first audio sample
+    p_async: float = 0.0           # ADSC: among STREAMING samples, probability that the text also streams (else text final);
+                                   # streaming samples never see timing of not-yet-voiced tokens (offline samples do)
+    p_async_seg: float = 0.3       # text arrival unit: TTS segment (robot TTS / sentence-level engines) vs X2Streaming-TTS
+    seg_lead: tuple = (0.0, 1.0)   # token streaming (rate below, commitment lag); segment text arrives 0-1 s before its audio
+    x2_rate: tuple = (5.0, 40.0)   # committed text tokens / s (LLM + causal commitment)
+    x2_lag: tuple = (0.05, 0.4)    # commitment + first-audio delay of a token (s)
+    p_adsc_stream: float = 0.67    # ADSC lanes: share of streaming (online) samples; the rest is the offline mode
     self_force_p: float = 0.5      # r5: probability that a batch uses ONE-STEP SELF-FORCED history (each chunk generated
     self_force_steps: int = 4      # by the current model from GT history, no grad, then used as the next chunk's history)
 
@@ -69,8 +71,10 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     # ---- condition dropout / modes
     r = lambda p: torch.rand(B, device=dev) < p
     drop_text, drop_audio, drop_spk = r(cfg.drop_text), r(cfg.drop_audio), r(cfg.drop_spk)
-    asy = r(sc.p_async)
-    stream = r(sc.p_stream) | asy                                                    # partial text implies streaming audio
+    if sc.p_async > 0:                    # ADSC lanes: offline / online text-final / online text-streaming
+        stream = r(sc.p_adsc_stream); asy = stream & r(sc.p_async)
+    else:
+        stream = r(sc.p_stream); asy = torch.zeros_like(stream)
     hz = U80 * torch.tensor(sc.horizons, device=dev)[torch.randint(len(sc.horizons), (B,), device=dev)]
     H = torch.where(stream, hz, torch.full_like(hz, INF))
     a = model.audio(feat, causal=stream)
@@ -81,19 +85,28 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     tidm_d = batch['tidm'] & ~drop_text[:, None] if 'tidm' in batch else None   # VoxCPM LM text: same text dropout
     tvis = lvis = sstate = None
     if sc.p_async > 0:                    # ADSC: what has arrived at the start of each chunk (window-relative seconds)
-        seg = r(sc.p_async_seg)
-        l_seg = sc.seg_lead[0] + (sc.seg_lead[1] - sc.seg_lead[0]) * torch.rand(B, device=dev)
-        l_tok = sc.async_lead[0] + (sc.async_lead[1] - sc.async_lead[0]) * torch.rand(B, device=dev)
-        lead = torch.where(asy, torch.where(seg, l_seg, l_tok), torch.full((B,), float('inf'), device=dev))
+        U = lambda lohi: lohi[0] + (lohi[1] - lohi[0]) * torch.rand(B, device=dev)
+        seg = r(sc.p_async_seg); rate, lag, slead = U(sc.x2_rate), U(sc.x2_lag), U(sc.seg_lead)
         now = torch.arange(K, device=dev).float() * CHUNK_FRAMES / 50.
+        final = ~asy
         tvalid = batch['tmask'] & ~drop_text[:, None]
-        pick = lambda tok, sg: torch.where(seg[:, None], sg, tok)                     # arrival time per token
-        tvis = arrival_mask(pick(batch['ttime'], batch['tseg']), tvalid, lead, now)
-        if tidm_d is not None and 'titime' in batch: lvis = arrival_mask(pick(batch['titime'], batch['tiseg']), tidm_d, lead, now)
+        arr = torch.where(seg[:, None], batch['tseg'] - slead[:, None], x2_arrival(batch['ttime'], tvalid, rate, lag))
+        tvis = arrival_mask(arr, tvalid, final, now)
+        if tidm_d is not None and 'titime' in batch:
+            larr = torch.where(seg[:, None], batch['tiseg'] - slead[:, None], x2_arrival(batch['titime'], tidm_d, rate, lag))
+            lvis = arrival_mask(larr, tidm_d, final, now)
         nvalid = mask.sum(1)                                                          # frames before the clip end
-        reach = (torch.arange(K, device=dev)[None] * CHUNK + torch.clamp(H, max=10 ** 6)[:, None]) * STRIDE
+        Hc = torch.clamp(H, max=10 ** 6)
+        reach = (torch.arange(K, device=dev)[None] * CHUNK + Hc[:, None]) * STRIDE
         afin = (H[:, None] >= INF) | ((nvalid[:, None] < T) & (reach >= nvalid[:, None]))
         if hasattr(model, 'stream_emb'): sstate = stream_state(tvis, tvalid, afin)
+        # timing exists only for voiced tokens when streaming (audio, and with it the anchors, arrived up to now + H)
+        heard = now[None] + Hc[:, None].float() * STRIDE / 50.                        # [B, K]
+        voiced = torch.isfinite(batch['ttime'])[:, None] & (torch.nan_to_num(batch['ttime'], 1e9)[:, None] <= heard[:, :, None])
+        voiced = voiced | ~stream[:, None, None]
+        tu, _ = model.text_tokens(batch['text'], batch['ttime'], tmask, drop=torch.ones(B, dtype=torch.bool, device=dev))
+        text = torch.cat([text, tu], 1); tmask = torch.cat([tmask, tmask], 1)
+        tvis = torch.cat([tvis & voiced, tvis & ~voiced], -1)
     src = torch.where(r(0.1), torch.zeros_like(batch['source']), batch['source'])
     g = model.global_cond(batch['spk'], batch['spk_valid'] * (~drop_spk), src)
 

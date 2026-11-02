@@ -8,7 +8,7 @@ import json, sys
 import numpy as np, torch
 from scmg.data import View, WindowDataset, collate
 from scmg.losses import StageCfg, step_losses
-from scmg.model import INF, arrival_mask
+from scmg.model import INF, arrival_mask, x2_arrival
 from scmg.train import build_model
 from scmg.vae import MotionVAE
 from scmg.infer import generate
@@ -64,12 +64,12 @@ with torch.no_grad():
         k0 = 8; now = torch.arange(K, device=dev).float() * 0.32
         if name == 'main':
             tt = torch.where(b['tmask'], torch.full_like(b['ttime'], 0.32 * k0 - 0.01), b['ttime'])
-            vis = arrival_mask(tt, b['tmask'], torch.zeros(B, device=dev), now)
+            vis = arrival_mask(tt, b['tmask'], torch.zeros(B, dtype=torch.bool, device=dev), now)
             text2 = text + torch.randn_like(text) * b['tmask'][..., None]
             hA = plan(m, lat, a, amask, text, tmask, g, tvis=vis); hB = plan(m, lat, a, amask, text2, tmask, g, tvis=vis)
         else:
             ti = torch.where(b['tidm'], torch.full_like(b['titime'], 0.32 * k0 - 0.01), b['titime'])
-            vis = arrival_mask(ti, b['tidm'], torch.zeros(B, device=dev), now)
+            vis = arrival_mask(ti, b['tidm'], torch.zeros(B, dtype=torch.bool, device=dev), now)
             hA = plan(m, lat, a, amask, text, tmask, g, lvis=vis)
             tids0 = b['tids'].clone(); b['tids'] = torch.where(b['tidm'], (b['tids'] + 17) % 150000, b['tids'])
             hB = plan(m, lat, a, amask, text, tmask, g, lvis=vis); b['tids'] = tids0
@@ -91,12 +91,30 @@ for name, path in (('main', sys.argv[1]), ('vox', sys.argv[2])):
     loss.backward(); gn = float(m.stream_emb.weight.grad.norm())
     c3 = bool(torch.isfinite(loss)) and gn > 0; ok &= c3
     print(f'[{name}] 3 train step p_async=1: loss {float(loss):.4f} stream_emb grad {gn:.2e}', 'OK' if c3 else 'FAIL')
-    # 4 streamer with text arriving 0.5 s ahead vs text final
+    # 4 streamer in every mode
     m.eval()
     s = ds.sample(0, 0, np.random.default_rng(0)); T = 160
     cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm', 'titime', 'tseg', 'tiseg')}
-    ys = [generate(m, vae, s['feat'][:T], cond, st, T // 16, H=0, steps=4, seed=0, standby=st['q_mean'], text_lead=lead)[0] for lead in (None, 0.5)]
-    d4 = float(np.abs(ys[0] - ys[1]).max()); c4 = np.isfinite(ys[1]).all(); ok &= bool(c4)
-    print(f'[{name}] 4 streamer text_lead 0.5 vs final: finite {c4}, max diff {d4:.3f} rad')
+    gen = lambda **kw: generate(m, vae, s['feat'][:T], cond, st, T // 16, steps=4, seed=0, standby=st['q_mean'], **kw)[0]
+    y_off = gen(H=10 ** 6); y_fin = gen(H=0); y_x2 = gen(H=0, text_mode='x2'); y_seg = gen(H=0, text_mode='segment')
+    c4 = all(np.isfinite(y).all() for y in (y_off, y_fin, y_x2, y_seg)); ok &= bool(c4)
+    print(f'[{name}] 4 streamer offline/online-final/x2/segment finite {c4}; x2 vs final {np.abs(y_x2 - y_fin).max():.3f} rad, '
+          f'segment vs final {np.abs(y_seg - y_fin).max():.3f} rad')
     del m; torch.cuda.empty_cache()
+# 5 X2 arrival model: never later than onset - lag, monotone in token order, rate-limited
+on = torch.tensor([[0.5, 0.7, 0.9, 3.0, 3.2, float('nan')]], device=dev); vm = torch.tensor([[1, 1, 1, 1, 1, 0]], dtype=torch.bool, device=dev)
+ar = x2_arrival(on, vm, torch.tensor([10.], device=dev), torch.tensor([0.1], device=dev))[0, :5]
+c5 = bool((ar <= on[0, :5] - 0.1 + 1e-6).all() and (ar[1:] >= ar[:-1] - 1e-6).all() and abs(float(ar[3]) - 0.7) < 1e-5); ok &= c5
+print('5 x2 arrival', [round(float(x), 2) for x in ar], 'OK' if c5 else 'FAIL')
+# 6 no timing leak online: changing the TIME of a token not yet voiced must not change chunks generated before it is heard
+m = load(sys.argv[1], True).eval()
+s = ds.sample(0, 0, np.random.default_rng(0)); T = 256
+cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm', 'titime', 'tseg', 'tiseg')}
+late = np.where(np.isfinite(cond['ttime']) & (cond['ttime'] > 3.0))[0]
+c2_ = dict(cond); c2_['ttime'] = cond['ttime'].copy(); c2_['ttime'][late] += 0.7
+gA = generate(m, vae, s['feat'][:T], cond, st, T // 16, H=0, steps=4, seed=0, standby=st['q_mean'])[0]
+gB = generate(m, vae, s['feat'][:T], c2_, st, T // 16, H=0, steps=4, seed=0, standby=st['q_mean'])[0]
+e6 = float(np.abs(gA[:140] - gB[:140]).max()) if len(late) else 0.
+c6 = e6 < 1e-4; ok &= c6
+print(f'6 no future timing online: {len(late)} late tokens retimed, frames before 2.8 s diff {e6:.2e}', 'OK' if c6 else 'FAIL')
 print('ALL_OK' if ok else 'SOME_FAIL')

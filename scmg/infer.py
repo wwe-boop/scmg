@@ -15,8 +15,8 @@ import os, time
 import numpy as np
 import torch
 
-from .common import CHUNK, CHUNK_FRAMES, STRIDE
-from .model import INF, arrival_mask, stream_state
+from .common import CHUNK, CHUNK_FRAMES, STRIDE, U80
+from .model import INF, arrival_mask, stream_state, x2_arrival
 from .sim import state_vector
 
 WIN, LOOK = 16, 2
@@ -25,7 +25,8 @@ WIN, LOOK = 16, 2
 class Streamer:
     def __init__(self, model, vae, feat, cond, stats, H=INF, steps=10, temperature=1.0, n_future=0, seed=0,
                  standby=None, device='cuda', hist_measured=False, ctx_t=1.0, cfg_w=1.0, cfg_text=True,
-                 text_lead=None, text_unit='segment'):
+                 text_mode='final', x2_rate=15.0, x2_lag=0.15, seg_lead=0.3, deploy_timing=False,
+                 elastic=None):
         """feat [T, 89] normalised (whole utterance; access is restricted to what has arrived);
         cond: dict(text [K,768], ttime [K] absolute s, tmask [K], spk [192], spk_valid, source, ref [R,J], ref_valid)."""
         self.m, self.vae, self.dev = model.eval(), vae.eval(), device
@@ -39,8 +40,21 @@ class Streamer:
         self.k = 0; self.n_emitted = 0
         self.timing = []
         self.cfg_w = cfg_w                   # classifier-free guidance (1 = off)
-        self.text_lead = text_lead           # ADSC evaluation: text streams this many s ahead of the speech (None = text final)
-        self.text_unit = text_unit           # 'segment' (TTS segment text arrives whole) | 'token'
+        # online text arrival (ADSC): 'final' = whole text known; 'x2' = X2Streaming-TTS token streaming (committed text
+        # at x2_rate tokens/s, never later than onset - x2_lag); 'segment' = TTS segment text arrives seg_lead s before its audio.
+        # deploy_timing: token times exist only once voiced (TTS text_progress anchors) -- automatic for ADSC models.
+        self.text_mode, self.deploy_timing = text_mode, deploy_timing
+        # elastic look-ahead (latents, max): per tick H = largest trained horizon (0/2/4/8 x 80 ms) covered by the audio that has
+        # actually arrived -- the first chunk starts as soon as any audio is there, later chunks use the TTS buffer ahead
+        self.elastic = elastic
+        cc = self.cond; one = lambda x: torch.tensor([float(x)], device=device)
+        self.arr_text = self.arr_lm = None
+        if text_mode == 'x2':
+            self.arr_text = x2_arrival(cc['ttime'][None].float(), cc['tmask'][None].bool(), one(x2_rate), one(x2_lag))[0]
+            if 'titime' in cc: self.arr_lm = x2_arrival(cc['titime'][None].float(), cc['tidm'][None].bool(), one(x2_rate), one(x2_lag))[0]
+        elif text_mode == 'segment':
+            self.arr_text = cc['tseg'].float() - seg_lead
+            if 'tiseg' in cc: self.arr_lm = cc['tiseg'].float() - seg_lead
         self.cfg_text = cfg_text             # False: guide on audio only (models never trained with text dropped, e.g. r4 VoxCPM)
         self.ctx_t = ctx_t                   # <1: noise the committed context like in training (exposure-bias fix)
         self.hist_measured = hist_measured   # ablation: context latents = encoded EXECUTED motion, no state adapter
@@ -93,8 +107,12 @@ class Streamer:
         return self._emit(final=True)
 
     @torch.no_grad()
-    def tick(self, robot_q=None, robot_dq=None, executed=None):
-        """SCMG_BF16=1: run the whole tick under bf16 autocast (latency; quality checked separately)."""
+    def tick(self, robot_q=None, robot_dq=None, executed=None, arrived_s=None):
+        """SCMG_BF16=1: run the whole tick under bf16 autocast (latency; quality checked separately).
+        arrived_s: seconds of speech audio received so far (elastic look-ahead)."""
+        if self.elastic is not None:
+            ahead = int(np.floor((arrived_s if arrived_s is not None else 1e9) / 0.08 + 1e-6)) - self.k * CHUNK // U80
+            self.H = max(h for h in (0, 2, 4, 8) if h <= max(0, min(ahead, self.elastic))) * U80
         if os.environ.get('SCMG_BF16') == '1':
             with torch.autocast('cuda', torch.bfloat16):
                 return self._tick(robot_q, robot_dq, executed)
@@ -117,19 +135,28 @@ class Streamer:
         tt = c['ttime'] - f0 / 50.
         text, tmask = m.text_tokens(c['text'][None].float(), tt[None].float(), c['tmask'][None].bool())
         tvis = lvis = sstate = None
-        if self.text_lead is not None or hasattr(m, 'stream_emb'):
-            lead = torch.tensor([float('inf') if self.text_lead is None else float(self.text_lead)], device=self.dev)
+        adsc_m = hasattr(m, 'stream_emb')
+        if self.text_mode != 'final' or self.deploy_timing or adsc_m:
             now = torch.arange(WIN, device=self.dev).float() * CHUNK_FRAMES / 50.         # window-relative chunk starts
-            seg = self.text_unit == 'segment' and 'tseg' in c
-            tarr = (c['tseg'] - f0 / 50.) if seg else tt
-            tvis = arrival_mask(tarr[None].float(), c['tmask'][None].bool(), lead, now)
-            if 'titime' in c and 'tidm' in c:
-                larr = c['tiseg'] if (seg and 'tiseg' in c) else c['titime']
-                lvis = arrival_mask((larr - f0 / 50.)[None].float(), c['tidm'][None].bool(), lead, now)
-            if hasattr(m, 'stream_emb'):
+            final = torch.tensor([self.text_mode == 'final'], device=self.dev)
+            tm0 = c['tmask'][None].bool()
+            nan = lambda n: torch.full((1, n), float('nan'), device=self.dev)
+            arr = (self.arr_text - f0 / 50.)[None] if self.arr_text is not None else nan(tm0.shape[1])
+            tvis = arrival_mask(arr, tm0, final, now)
+            if 'tidm' in c:
+                larr = (self.arr_lm - f0 / 50.)[None] if self.arr_lm is not None else nan(c['tidm'].shape[0])
+                lvis = arrival_mask(larr, c['tidm'][None].bool(), final, now)
+            if adsc_m:
                 kg = torch.arange(WIN, device=self.dev) + c0
                 afin = torch.full((1, WIN), self.H >= INF, device=self.dev) | ((kg * CHUNK + min(self.H, 10 ** 6)) * STRIDE >= self.feat.shape[0])[None]
-                sstate = stream_state(tvis, c['tmask'][None].bool(), afin)
+                sstate = stream_state(tvis, tm0, afin)
+            if (self.deploy_timing or adsc_m) and self.H < INF:              # timing only for tokens voiced by now + H
+                heard = now + self.H * STRIDE / 50.
+                ttw = tt.float()
+                voiced = (torch.isfinite(ttw)[None] & (torch.nan_to_num(ttw, 1e9)[None] <= heard[:, None]))[None]
+                tu, _ = m.text_tokens(c['text'][None].float(), ttw[None], tm0, drop=torch.ones(1, dtype=torch.bool, device=self.dev))
+                text = torch.cat([text, tu], 1); tmask = torch.cat([tmask, tmask], 1)
+                tvis = torch.cat([tvis & voiced, tvis & ~voiced], -1)
         g = m.global_cond(c['spk'][None].float(), c['spk_valid'][None].float(), c['source'][None].long())
         # committed latents of the window chunks (zeros before the start)
         z = cfg.z

@@ -149,15 +149,35 @@ class StateAdapter(nn.Module):
         return tok, self.ada(tok)
 
 
-def arrival_mask(t, valid, lead, now):
-    """ADSC text visibility. t [B, Kt] token times (s, same origin as `now`; NaN unknown); valid [B, Kt]; lead [B] seconds
-    the text stream runs ahead of the speech (inf = text final); now [B, K] or [K] chunk start times.
-    Token j is visible to chunk k iff it has arrived: t_j - lead <= now_k (unknown-time tokens only when text final)."""
-    now = now if now.dim() == 2 else now[None].expand(t.shape[0], -1)
-    fin = torch.isfinite(t)
-    arr = torch.nan_to_num(t, 0.) - lead[:, None]                                          # inf lead -> -inf
-    vis = torch.where(fin[:, None, :], arr[:, None, :] <= now[:, :, None], torch.isinf(lead)[:, None, None])
-    return vis & valid[:, None, :]
+def arrival_mask(arr, valid, final, now):
+    """ADSC text visibility [B, K, Kt]. arr [B, Kt] arrival time of each token (s, same origin as `now`; NaN = never
+    timed); final [B] bool: text final (everything visible); now [B, K] or [K] chunk start times."""
+    now = now if now.dim() == 2 else now[None].expand(arr.shape[0], -1)
+    vis = torch.where(torch.isfinite(arr)[:, None, :], torch.nan_to_num(arr, 0.)[:, None, :] <= now[:, :, None],
+                      torch.zeros((), dtype=torch.bool, device=arr.device))
+    return (vis | final[:, None, None]) & valid[:, None, :]
+
+
+def x2_arrival(onset, valid, rate, lag):
+    """Committed-text arrival under token-level streaming TTS (X2Streaming-TTS: text chunks from the LLM pass causal
+    commitment, then are voiced; the TTS never speaks a token before it arrived). onset [B, Kt] speech onset of each
+    token (s), rate [B] committed tokens / s, lag [B] commit + first-audio delay (s).
+    arrival_j = min(onset_j - lag, onset_first - lag + j / rate)."""
+    idx = (valid.long().cumsum(1) - 1).clamp(min=0).float()
+    on = torch.where(valid & torch.isfinite(onset), onset, torch.full_like(onset, float('inf')))
+    first = on.min(1).values
+    first = torch.where(torch.isfinite(first), first, torch.zeros_like(first))
+    cursor = first[:, None] - lag[:, None] + idx / rate[:, None]
+    return torch.where(torch.isfinite(on), torch.minimum(on - lag[:, None], cursor), cursor)
+
+
+def dual_text(model, text, ttime, tmask, tvis, voiced):
+    """Timing only exists for tokens already voiced (TTS text_progress anchors come with the audio): every token gets a
+    TIMED and an UNTIMED copy; chunk k reads the timed copy iff the token was voiced by then. Returns text [B, 2Kt, d],
+    tmask [B, 2Kt], tvis [B, K, 2Kt]."""
+    tt, _ = model.text_tokens(text, ttime, tmask)
+    tu, _ = model.text_tokens(text, ttime, tmask, drop=torch.ones(text.shape[0], dtype=torch.bool, device=text.device))
+    return torch.cat([tt, tu], 1), torch.cat([tmask, tmask], 1), torch.cat([tvis & voiced, tvis & ~voiced], -1)
 
 
 def stream_state(tvis, tvalid, audio_final):

@@ -6,6 +6,17 @@ f // STRIDE and chunk f // (STRIDE*CHUNK).
 """
 import os
 FPS = 50
+CPFS = '/mnt/cpfs/zbl-cpfs-new'
+
+
+def P(path):
+    """Local mirror of CPFS inputs (SCMG_LOCAL_MIRROR=<dir> holding the same relative paths, e.g. ~/bulk/cpfs-mirror on
+    the 5090 host where CPFS is only an sshfs mount): returns the mirrored path when it exists, else the original."""
+    m = os.environ.get('SCMG_LOCAL_MIRROR'); p = str(path)
+    if m and p.startswith(CPFS):
+        q = m.rstrip('/') + p[len(CPFS):]
+        if os.path.exists(q): return q
+    return p
 STRIDE = int(os.environ.get('SCMG_STRIDE', '4'))   # frames per latent: 4 -> 12.5 Hz latents (default), 2 -> 25 Hz
 if STRIDE not in (2, 4): raise ValueError('SCMG_STRIDE must be 2 or 4')
 CHUNK_FRAMES = 16          # a motion chunk is always 320 ms

@@ -25,7 +25,11 @@ from scmg.common import U80                                     # noqa: E402
 from scmg.safety import limits34, CBFFilter                        # noqa: E402
 
 D = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg'
-CK, OUT, HL = sys.argv[1], Path(sys.argv[2]), int(sys.argv[3])
+CK, OUT, HA = sys.argv[1], Path(sys.argv[2]), sys.argv[3]          # H: int latents | 'inf' offline | 'eN' elastic up to N
+ELASTIC = int(HA[1:]) if HA.startswith('e') else None
+HL = -1 if HA == 'inf' else (0 if ELASTIC is not None else int(HA))
+RTF = float(os.environ.get('SCMG_TTS_RTF', '1.0'))      # TTS audio production: x s of speech exist at ttft + x * RTF
+TTFT = float(os.environ.get('SCMG_TTS_TTFT', '0.0'))
 CFGW = float(sys.argv[4]) if len(sys.argv) > 4 else 1.0; CFGT = bool(int(sys.argv[5])) if len(sys.argv) > 5 else True
 NC = int(sys.argv[6]) if len(sys.argv) > 6 else 12; STEPS = int(sys.argv[7]) if len(sys.argv) > 7 else 10
 dev = 'cuda'; FS = 24000; CH_S = CHUNK_FRAMES / 50
@@ -66,36 +70,44 @@ for ci in clips:
     s = WindowDataset(v, T, max_tokens=256).sample(ci, 0, np.random.default_rng(ci))
     cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm') if k in s}
     S = Streamer(m, vae, np.zeros((T, fm.shape[0]), np.float32), cond, st, H=H, steps=STEPS, standby=st['q_mean'],
-                 ctx_t=getattr(m, 'ctx_t', 1.0), cfg_w=CFGW, cfg_text=CFGT)
+                 ctx_t=getattr(m, 'ctx_t', 1.0), cfg_w=CFGW, cfg_text=CFGT, elastic=ELASTIC)
     pf = PrefixFeatures(P, taps); cbf = CBFFilter(lim, np.asarray(st['q_mean'], float))
-    ready = 0.; recs = []
+    ready = 0.; recs = []; dur = len(pcm) / FS
+    arrived = lambda t: float(np.clip((t - TTFT) / RTF, 0., dur))         # seconds of speech received at wall time t
+    at = lambda x: TTFT + min(x, dur) * RTF                               # wall time when speech second x has arrived
     for k in range(nch):
-        need_s = len(pcm) / FS if H >= INF else min(k * CH_S + HL * 0.08, len(pcm) / FS)   # Streamer: audio < 16k+4H frames
+        t_start = max(ready, at(k * CH_S))                                  # earliest: the chunk start itself has arrived
+        if H >= INF: t_start = max(t_start, at(dur))
+        elif ELASTIC is None: t_start = max(t_start, at(k * CH_S + HL * 0.08))
+        a_s = arrived(t_start)
         t0 = time.perf_counter()
+        need_s = dur if H >= INF else a_s
         n = max(int(need_s * FS), 960)
         feat, _, _ = pf.at(text, pcm[:n], [a for a in anchors if a['output_sample_start'] < n], n >= len(pcm), len(pcm))
         nf = min(len(feat), T); S.feat[:nf] = torch.as_tensor((feat[:nf] - fm) / fs_, device=dev)
         t1 = time.perf_counter()
-        fr = S.tick(); torch.cuda.synchronize()
+        fr = S.tick(arrived_s=a_s); torch.cuda.synchronize()
         t2 = time.perf_counter()
         fr = fr.cpu().numpy() if torch.is_tensor(fr) else np.asarray([f.cpu().numpy() for f in fr]) if len(fr) else np.zeros((0, 34))
         for f in fr: cbf.step(f.astype(float))
         t3 = time.perf_counter()
-        comp = t3 - t0; ready = max(need_s, ready) + comp
+        comp = t3 - t0; ready = t_start + comp
         e = (S.n_emitted - len(fr)) / 50                                   # timeline start of the emitted frames
-        recs.append(dict(k=k, arrive=need_s, feat_ms=1e3 * (t1 - t0), model_ms=1e3 * (t2 - t1), cbf_ms=1e3 * (t3 - t2),
-                         total_ms=1e3 * comp, ready=ready, emit_start=e, nframes=len(fr), D=ready - e if len(fr) else None))
+        recs.append(dict(k=k, start=t_start, arrived=a_s, H_used=S.H if S.H < INF else -1, feat_ms=1e3 * (t1 - t0),
+                         model_ms=1e3 * (t2 - t1), cbf_ms=1e3 * (t3 - t2), total_ms=1e3 * comp, ready=ready, emit_start=e,
+                         nframes=len(fr), D=ready - TTFT - e if len(fr) else None))
     rows.append(dict(clip=c['clip'], lang=c['items'][0].get('lang'), seconds=T / 50, ticks=recs))
     Dk = [r['D'] for r in recs if r['D'] is not None]
     print(c['clip'], f"ticks {len(recs)} total p50 {np.median([r['total_ms'] for r in recs]):.0f} ms  D max {max(Dk):.3f} s", flush=True)
 allr = [r for x in rows for r in x['ticks'][1:]]                         # tick 0 includes CUDA warm-up effects per clip
 q = lambda key, p: float(np.percentile([r[key] for r in allr], p))
 Dall = [r['D'] for x in rows for r in x['ticks'] if r['D'] is not None]
-summ = dict(ckpt=CK, steps=STEPS, bf16=os.environ.get('SCMG_BF16') == '1', H_latents=HL, cfg_w=CFGW, cfg_text=CFGT, clips=len(rows), ticks=len(allr),
+summ = dict(ckpt=CK, H_arg=HA, tts_rtf=RTF, tts_ttft=TTFT, H_used_mean=float(np.mean([r['H_used'] for r in allr])), steps=STEPS, bf16=os.environ.get('SCMG_BF16') == '1', H_latents=HL, cfg_w=CFGW, cfg_text=CFGT, clips=len(rows), ticks=len(allr),
             feat_ms=[q('feat_ms', 50), q('feat_ms', 95)], model_ms=[q('model_ms', 50), q('model_ms', 95)],
             cbf_ms=[q('cbf_ms', 50), q('cbf_ms', 95)], total_ms=[q('total_ms', 50), q('total_ms', 95), q('total_ms', 99)],
             realtime_frac=float(np.mean([r['total_ms'] < 320 for r in allr])),
             sound_delay_s=dict(p50=float(np.percentile(Dall, 50)), p95=float(np.percentile(Dall, 95)), max=float(np.max(Dall))),
-            first_motion_s=float(np.median([x['ticks'][0]['ready'] for x in rows])),
+            first_motion_s=float(np.median([x['ticks'][0]['ready'] - TTFT for x in rows])),     # after the first audio
+            first_frames_s=float(np.median([next(r['ready'] for r in x['ticks'] if r['nframes']) - TTFT for x in rows])),
             gpu=torch.cuda.get_device_name(0))
 OUT.write_text(json.dumps(dict(summary=summ, rows=rows), ensure_ascii=False, indent=1)); print(json.dumps(summ))

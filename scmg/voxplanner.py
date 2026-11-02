@@ -12,7 +12,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .common import CHUNK, SPK
+from .common import CHUNK, SPK, P
 from .nn import Encoder, sincos
 
 LM = '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/models/scmg/Qwen2.5-0.5B'
@@ -49,7 +49,7 @@ class VoxPlanner(nn.Module):
         super().__init__()
         from transformers import AutoModel
         d = cfg.d
-        self.lm = AutoModel.from_pretrained(lm_path, torch_dtype=torch.float32, attn_implementation='sdpa')
+        self.lm = AutoModel.from_pretrained(P(lm_path), torch_dtype=torch.float32, attn_implementation='sdpa')
         H = self.lm.config.hidden_size; self.H = H
         self.locenc = LocEnc(cfg.z, d, cfg.heads)
         self.start = nn.Parameter(torch.zeros(d))
