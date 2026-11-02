@@ -20,10 +20,11 @@ from scmg.safety import limits34, CBFFilter
 D = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg'
 st = json.load(open(D + '/STATS_v36_1.json'))
 meta = json.load(open('/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/train-v1-20261101/views/data-v36_1/META.json'))
-v = View(split='val', stats=st, mmap=True, text_cache=D + '/text-e5-v36_1')
+v = View(split='val', stats=st, mmap=True, text_cache=D + '/text-e5-v36_1', tok_cache=D + '/tok-qwen25-v36_1')
 m, vae = load(sys.argv[1], sys.argv[2], 'cuda')
 OUT = sys.argv[3]; NC = int(sys.argv[4]) if len(sys.argv) > 4 else 20; NCAND = int(sys.argv[5]) if len(sys.argv) > 5 else 6
 CFGW = float(sys.argv[6]) if len(sys.argv) > 6 else 1.0
+CFG_TEXT = (sys.argv[7] != 'audio') if len(sys.argv) > 7 else True
 qm, qs = np.asarray(st['q_mean'], np.float32), np.asarray(st['q_std'], np.float32)
 lim = limits34(meta['lower'], meta['upper'])
 sim = EX002Sim(); A = slice(4, 18)
@@ -47,7 +48,7 @@ def score_candidate(fr, d_now, cbf_now):
 
 def run(policy, s, nch, seed0):
     cond = {k: s[k] for k in COND}
-    S = Streamer(m, vae, s['feat'], cond, st, H=INF, steps=10, standby=qm, ctx_t=getattr(m, 'ctx_t', 1.0), cfg_w=CFGW)
+    S = Streamer(m, vae, s['feat'], cond, st, H=INF, steps=10, standby=qm, ctx_t=getattr(m, 'ctx_t', 1.0), cfg_w=CFGW, cfg_text=CFG_TEXT)
     q0 = sim.rest(); sim.nominalize(); sim.reset(q0)
     cbf = CBFFilter(lim, q0)
     executed, commanded, log = [], [], []

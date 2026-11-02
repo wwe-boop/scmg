@@ -105,6 +105,9 @@ def main():
     ap.add_argument('--steps', type=int, default=10); ap.add_argument('--closed-loop', action='store_true')
     ap.add_argument('--tok-cache', default=None)
     ap.add_argument('--cfg-w', type=float, default=1.0, help='classifier-free guidance weight (audio + text)')
+    ap.add_argument('--text-lead', type=float, default=None, help='ADSC eval: text streams this many s ahead of speech (default: text final)')
+    ap.add_argument('--text-unit', default='segment', choices=['segment', 'token'])
+    ap.add_argument('--cfg-audio-only', action='store_true', help='guide audio only (planner LM text dropout was ineffective before r6)')
     ap.add_argument('--n-future', type=int, default=0, help='open loop: provisional chunks (closed loop always uses 1)')
     ap.add_argument('--ndiv', type=int, default=20, help='clips that get a second seed for the diversity metric'); ap.add_argument('--mmap', action='store_true')
     a = ap.parse_args()
@@ -124,13 +127,13 @@ def main():
             if nch < 3: continue
             ds = WindowDataset(view, nch * CHUNK_FRAMES, max_tokens=256)
             s = ds.sample(ci, 0, np.random.default_rng(ci))
-            cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm')}
+            cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm', 'titime', 'tseg', 'tiseg') if k in s}
             gt = s['q'] * qs + qm
             beat = np.clip(s['feat'][:, PROSODY_COLS['onset']] + s['feat'][:, PROSODY_COLS['beat']], 0, None)
             gens = []
             for seed in ((0, 1) if len(dv) < a.ndiv else (0,)):
                 cmd, _, tm = generate(m, vae, s['feat'], cond, stats, nch, H=H, steps=a.steps, seed=seed,
-                                      n_future=a.n_future, standby=standby, ctx_t=m.ctx_t, cfg_w=a.cfg_w)
+                                      n_future=a.n_future, standby=standby, ctx_t=m.ctx_t, cfg_w=a.cfg_w, cfg_text=not a.cfg_audio_only, text_lead=a.text_lead, text_unit=a.text_unit)
                 gens.append(cmd); ticks += list(tm[1:])
             g0 = gens[0]; n = min(len(g0), len(gt))
             F_gen += kin_feats(g0[:n]); F_gt += kin_feats(gt[:n])
@@ -156,7 +159,7 @@ def main():
                 if nch < 6: continue
                 ds = WindowDataset(view, nch * CHUNK_FRAMES, max_tokens=256)
                 s = ds.sample(ci, 0, np.random.default_rng(ci))
-                cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm')}
+                cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm', 'titime', 'tseg', 'tiseg') if k in s}
                 rg = np.random.default_rng(ci)
                 hl = int(rg.integers(20, 51)); h0 = int(rg.integers(2 * CHUNK_FRAMES, max(2 * CHUNK_FRAMES + 1, (nch - 2) * CHUNK_FRAMES - hl)))
                 robot = Robot(standby, hold_start=h0, hold_len=hl, seed=ci)
@@ -168,7 +171,7 @@ def main():
                 else:
                     rb = robot
                 cmd, ex, _ = generate(m, vae, s['feat'], cond, stats, nch, robot=rb, H=4 * U80, steps=a.steps, seed=0,
-                                      n_future=1, standby=standby, hist_measured=hm, ctx_t=m.ctx_t, cfg_w=a.cfg_w)
+                                      n_future=1, standby=standby, hist_measured=hm, ctx_t=m.ctx_t, cfg_w=a.cfg_w, cfg_text=not a.cfg_audio_only, text_lead=a.text_lead, text_unit=a.text_unit)
                 n = min(len(cmd), len(ex)); rel = h0 + hl
                 if rel + 25 > n: continue
                 err = cmd[:n] - ex[:n]

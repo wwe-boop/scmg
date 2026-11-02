@@ -10,11 +10,13 @@ cd $P && sha256sum -c --quiet FILES.sha256
 [ "$PHASE" = full25 ] || { echo "$(cat $P/VAE_SHA256)  $VAE" | sha256sum -c -; }
 export USE_TF=0 USE_FLAX=0 OMP_NUM_THREADS=4 PYTHONUNBUFFERED=1
 case $PHASE in
-  full|full25|fullvox)
+  full|full25|fullvox|adsc|adscvox)
     : "${DLC_JOB_ID:?real DLC job required}"
     case $(hostname) in dsw*) echo "refusing to run the full phase on DSW"; exit 78;; esac
     SUF=""
-    if [ "$PHASE" = fullvox ]; then                    # VoxCPM-style planner (TSLM Qwen2.5-0.5B + FSQ + RALM + LocEnc)
+    [ "$PHASE" = adsc ] && export ONLY_ADSC=1        # add-on: ADSC lanes on an already running main pipeline (same OUT)
+    [ "$PHASE" = adscvox ] && export ONLY_ADSC=1
+    if [ "$PHASE" = fullvox ] || [ "$PHASE" = adscvox ]; then                    # VoxCPM-style planner (TSLM Qwen2.5-0.5B + FSQ + RALM + LocEnc)
       SUF=-vox; export TOKC=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/tok-qwen25-v36_1 BASECFG='{"planner": "voxcpm"}'
     fi
     if [ "$PHASE" = full25 ]; then                     # 25 Hz motion latents ablation: own VAE, own output root
@@ -24,7 +26,9 @@ case $PHASE in
     if [ -z "${CUDA_VISIBLE_DEVICES:-}" ]; then
       export CUDA_VISIBLE_DEVICES=$(nvidia-smi --query-gpu=index --format=csv,noheader | paste -sd, -)
     fi
-    OUT=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/dlc-$(cat $P/RUN_NAME)$SUF
+    RUN=$(cat $P/RUN_NAME)
+    [ "${ONLY_ADSC:-0}" = 1 ] && RUN=$(cat $P/ADSC_TARGET)      # add-on lanes write into the running pipeline's root
+    OUT=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/dlc-$RUN$SUF
     mkdir -p $OUT; echo "$DLC_JOB_ID $(hostname) $(date -Is)" >> $OUT/JOBS.txt
     NGPU=$(echo $CUDA_VISIBLE_DEVICES | tr ',' '\n' | wc -l) PY=/usr/local/bin/python \
       exec bash $P/scripts/pipeline_dlc.sh $P $OUT $VAE ;;

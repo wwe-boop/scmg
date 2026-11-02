@@ -11,12 +11,12 @@ Every tick (one motion chunk = 320 ms):
 The sliding window mirrors training: WIN chunks (= training window), current chunk at index WIN - 1 - LOOK so that
 LOOK chunks of audio look-ahead fit inside the window.
 """
-import time
+import os, time
 import numpy as np
 import torch
 
 from .common import CHUNK, CHUNK_FRAMES, STRIDE
-from .model import INF
+from .model import INF, arrival_mask, stream_state
 from .sim import state_vector
 
 WIN, LOOK = 16, 2
@@ -24,7 +24,8 @@ WIN, LOOK = 16, 2
 
 class Streamer:
     def __init__(self, model, vae, feat, cond, stats, H=INF, steps=10, temperature=1.0, n_future=0, seed=0,
-                 standby=None, device='cuda', hist_measured=False, ctx_t=1.0, cfg_w=1.0):
+                 standby=None, device='cuda', hist_measured=False, ctx_t=1.0, cfg_w=1.0, cfg_text=True,
+                 text_lead=None, text_unit='segment'):
         """feat [T, 89] normalised (whole utterance; access is restricted to what has arrived);
         cond: dict(text [K,768], ttime [K] absolute s, tmask [K], spk [192], spk_valid, source, ref [R,J], ref_valid)."""
         self.m, self.vae, self.dev = model.eval(), vae.eval(), device
@@ -37,7 +38,10 @@ class Streamer:
         self.frames = []                  # emitted joint frames (rad)
         self.k = 0; self.n_emitted = 0
         self.timing = []
-        self.cfg_w = cfg_w                   # classifier-free guidance on audio + text (1 = off)
+        self.cfg_w = cfg_w                   # classifier-free guidance (1 = off)
+        self.text_lead = text_lead           # ADSC evaluation: text streams this many s ahead of the speech (None = text final)
+        self.text_unit = text_unit           # 'segment' (TTS segment text arrives whole) | 'token'
+        self.cfg_text = cfg_text             # False: guide on audio only (models never trained with text dropped, e.g. r4 VoxCPM)
         self.ctx_t = ctx_t                   # <1: noise the committed context like in training (exposure-bias fix)
         self.hist_measured = hist_measured   # ablation: context latents = encoded EXECUTED motion, no state adapter
         z = model.cfg.z
@@ -51,7 +55,8 @@ class Streamer:
     def _null_ids(self):
         """Unconditional branch of CFG: the VoxCPM LM must not see the text either."""
         t = self._ids()[1]
-        return None if t is None else torch.zeros_like(t)
+        if t is None or not self.cfg_text: return t
+        return torch.zeros_like(t)
 
     def _ids(self):
         c = self.cond
@@ -75,7 +80,8 @@ class Streamer:
         m = self.m
         L1 = len(self.lat); L0 = max(0, L1 - 4 * CHUNK)
         zz = torch.stack(self.lat[L0:L1])[None] * m.lat_std + m.lat_mean
-        y = self.vae.decode(zz)[0] * self.qs + self.qm              # global frames [L0*STRIDE, L1*STRIDE)
+        with torch.autocast('cuda', enabled=False):                  # decode in fp32 even under the bf16 option
+            y = self.vae.decode(zz.float())[0] * self.qs + self.qm  # global frames [L0*STRIDE, L1*STRIDE)
         end = L1 * STRIDE if final else (L1 - 1) * STRIDE           # last latent waits for its look-ahead
         fr = y[self.n_emitted - L0 * STRIDE:end - L0 * STRIDE]
         for f in fr: self.frames.append(f)
@@ -88,6 +94,13 @@ class Streamer:
 
     @torch.no_grad()
     def tick(self, robot_q=None, robot_dq=None, executed=None):
+        """SCMG_BF16=1: run the whole tick under bf16 autocast (latency; quality checked separately)."""
+        if os.environ.get('SCMG_BF16') == '1':
+            with torch.autocast('cuda', torch.bfloat16):
+                return self._tick(robot_q, robot_dq, executed)
+        return self._tick(robot_q, robot_dq, executed)
+
+    def _tick(self, robot_q=None, robot_dq=None, executed=None):
         """Advance one chunk. robot_q / robot_dq: measured state (rad, rad/s) at the end of the executed motion;
         executed: [F, J] executed frames so far (rad), used only by the history = measured ablation."""
         m, cfg = self.m, self.m.cfg
@@ -103,6 +116,20 @@ class Streamer:
         c = self.cond
         tt = c['ttime'] - f0 / 50.
         text, tmask = m.text_tokens(c['text'][None].float(), tt[None].float(), c['tmask'][None].bool())
+        tvis = lvis = sstate = None
+        if self.text_lead is not None or hasattr(m, 'stream_emb'):
+            lead = torch.tensor([float('inf') if self.text_lead is None else float(self.text_lead)], device=self.dev)
+            now = torch.arange(WIN, device=self.dev).float() * CHUNK_FRAMES / 50.         # window-relative chunk starts
+            seg = self.text_unit == 'segment' and 'tseg' in c
+            tarr = (c['tseg'] - f0 / 50.) if seg else tt
+            tvis = arrival_mask(tarr[None].float(), c['tmask'][None].bool(), lead, now)
+            if 'titime' in c and 'tidm' in c:
+                larr = c['tiseg'] if (seg and 'tiseg' in c) else c['titime']
+                lvis = arrival_mask((larr - f0 / 50.)[None].float(), c['tidm'][None].bool(), lead, now)
+            if hasattr(m, 'stream_emb'):
+                kg = torch.arange(WIN, device=self.dev) + c0
+                afin = torch.full((1, WIN), self.H >= INF, device=self.dev) | ((kg * CHUNK + min(self.H, 10 ** 6)) * STRIDE >= self.feat.shape[0])[None]
+                sstate = stream_state(tvis, c['tmask'][None].bool(), afin)
         g = m.global_cond(c['spk'][None].float(), c['spk_valid'][None].float(), c['source'][None].long())
         # committed latents of the window chunks (zeros before the start)
         z = cfg.z
@@ -147,20 +174,20 @@ class Streamer:
             stw = None
             if st_tok is not None: stw = st_tok[:, None].expand(1, WIN, -1)
             if cfg.mtc:
-                mt, mtm = m.mt_memory(text, tmask, a, amask, g, sref, lat[None], stw, WIN)
+                mt, mtm = m.mt_memory(text, tmask, a, amask, g, sref, lat[None], stw, WIN, tvis=tvis)
                 mflat, pm = m.planner_memory(mt, mtm)
-                h = m.plan((plan_lat if j == 0 else lat)[None], a, amask, text, tmask, g, mflat, pm, *self._ids(), sref)
+                h = m.plan((plan_lat if j == 0 else lat)[None], a, amask, text, tmask, g, mflat, pm, *self._ids(), sref, tvis=tvis, lvis=lvis, sstate=sstate)
             else:
-                h = m.plan((plan_lat if j == 0 else lat)[None], a, amask, text, tmask, g, tids=self._ids()[0], tidm=self._ids()[1], sref=sref)
+                h = m.plan((plan_lat if j == 0 else lat)[None], a, amask, text, tmask, g, tids=self._ids()[0], tidm=self._ids()[1], sref=sref, tvis=tvis, lvis=lvis, sstate=sstate)
             hk = h[:, kw]
             if self.cfg_w != 1:                                     # unconditional branch: audio + text dropped
-                a_u = m.audio_null.expand_as(a); am_u = torch.zeros_like(amask); tm_u = torch.zeros_like(tmask)
+                a_u = m.audio_null.expand_as(a); am_u = torch.zeros_like(amask); tm_u = torch.zeros_like(tmask) if self.cfg_text else tmask
                 if cfg.mtc:
-                    mt_u, mtm_u = m.mt_memory(text, tm_u, a_u, am_u, g, sref, lat[None], stw, WIN)
+                    mt_u, mtm_u = m.mt_memory(text, tm_u, a_u, am_u, g, sref, lat[None], stw, WIN, tvis=tvis)
                     mf_u, pm_u = m.planner_memory(mt_u, mtm_u)
-                    h_u = m.plan(lat[None], a_u, am_u, text, tm_u, g, mf_u, pm_u, self._ids()[0], self._null_ids(), sref)
+                    h_u = m.plan(lat[None], a_u, am_u, text, tm_u, g, mf_u, pm_u, self._ids()[0], self._null_ids(), sref, tvis=tvis, lvis=lvis, sstate=sstate)
                 else:
-                    h_u = m.plan(lat[None], a_u, am_u, text, tm_u, g, tids=self._ids()[0], tidm=self._null_ids(), sref=sref)
+                    h_u = m.plan(lat[None], a_u, am_u, text, tm_u, g, tids=self._ids()[0], tidm=self._null_ids(), sref=sref, tvis=tvis, lvis=lvis, sstate=sstate)
                 hk_u = h_u[:, kw]
             style_tok = None
             if cfg.style:

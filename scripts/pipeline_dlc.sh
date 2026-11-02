@@ -39,7 +39,7 @@ train() {  # gpu out args...
 }
 evaluate() {  # gpu dir n ckpt-name extra...
   local gpu=$1 o=$2 n=$3 ck=$4; shift 4
-  local out=$R/$o/eval-${ck%.pt}
+  local out=$R/$o/eval-${ck%.pt}${EVTAG:-}
   [ -f $out/RESULTS.json ] && return 0
   CUDA_VISIBLE_DEVICES=$gpu $PY -m scmg.evaluate --ckpt $R/$o/$ck --vae $VAE --stats $D/STATS_v36_1.json \
     --text-cache $D/text-e5-v36_1 ${TOKC:+--tok-cache $TOKC} --cfg-w ${CFGW:-2.5} --out $out --n $n "$@" $( [[ "$EXTRA" == *--mmap* ]] && echo --mmap ) >> $R/$o/eval.log 2>&1 \
@@ -77,7 +77,9 @@ if [ ! -f $VAE ]; then
 fi
 
 # ---------------- base: all GPUs, DDP
-if [ ! -f $R/base/DONE.json ]; then
+if [ "${ONLY_ADSC:-0}" = 1 ]; then
+  wait_for base || { echo 'base FAILED upstream'; exit 1; }
+elif [ ! -f $R/base/DONE.json ]; then
   mkdir -p $R/base; echo "$(date -Is) start base on $NGPU GPUs"
   ( mid_eval $(g 7) base ) & BASEWATCH=$!          # keeps evaluating snapshots in the background; never blocks lanes
   if [ $NGPU -gt 1 ]; then
@@ -95,6 +97,26 @@ CA="--steps $(steps 8000) --lr 1e-4 --warmup $(steps 300) --eval-every $(steps 5
 ST="--steps $(steps 6000) --lr 1e-4 --warmup $(steps 300) --eval-every $(steps 500) --snap-every $(steps ${SNAP:-2000})"
 B=$R/base/best.pt
 LANES=()
+# ---------------- ADSC (Asynchronous Dual-Stream Conditioning) ablation: text arrives per TTS segment (or per token)
+# while audio streams; chunk k only sees what has arrived by its start.  adsc = masks + stream-state token,
+# adscmask = masks only; control = main-causal.  Streaming-text evals: segment text 0.3 s ahead / token text 0.5 s
+# ahead, audio horizon 2 (160 ms, robot TTS audio arrives 0.04-0.15 s before playback) and 0 (strictly causal).
+lead_evals() {  # gpu dir
+  EVTAG=-seg03 evaluate $1 $2 $NEVAL best.pt --horizons 2,0 --text-lead 0.3 --text-unit segment
+  EVTAG=-tok05 evaluate $1 $2 $NEVAL best.pt --horizons 2,0 --text-lead 0.5 --text-unit token
+}
+ADSC_SC='{"p_async": 0.5}'
+adsc_lanes() {  # gA gB gC
+  ( wait_for main-peft && train $1 adsc-causal --stage causal --init $R/main-peft/best.pt --cfg '{"adsc": true}' --sc "$ADSC_SC" $CA \
+      && evaluate $1 adsc-causal $NEVAL best.pt --horizons inf,4,0 && lead_evals $1 adsc-causal ) & LANES+=($!)
+  ( wait_for main-peft && train $2 adscmask-causal --stage causal --init $R/main-peft/best.pt --sc "$ADSC_SC" $CA \
+      && evaluate $2 adscmask-causal $NEVAL best.pt --horizons inf,4,0 && lead_evals $2 adscmask-causal ) & LANES+=($!)
+  ( wait_for main-causal && lead_evals $3 main-causal ) & LANES+=($!)
+}
+if [ "${ONLY_ADSC:-0}" = 1 ]; then         # add-on job for a pipeline that is already running elsewhere (same R)
+  adsc_lanes $(g 0) $(g 1) $(g 2)
+  wait "${LANES[@]}"; echo "$(date -Is) ADSC_DONE"; touch $R/ADSC_DONE; exit 0
+fi
 ( train $(g 0) main-peft --stage peft --init $B $PE && evaluate $(g 0) main-peft $NEVAL best.pt --horizons inf,4,0 \
   && train $(g 0) main-causal --stage causal --init $R/main-peft/best.pt $CA && evaluate $(g 0) main-causal $NFULL best.pt --horizons inf,8,4,2,0 \
   && train $(g 0) main-state --stage state --init $R/main-causal/best.pt $ST && evaluate $(g 0) main-state $NFULL best.pt --horizons 4,0 --closed-loop ) & LANES+=($!)
@@ -109,8 +131,13 @@ LANES=()
   && train $(g 4) nocat-causal --stage causal --init $R/main-peft/best.pt --sc '{"p_stream": 0.0}' $CA && evaluate $(g 4) nocat-causal $NEVAL best.pt --horizons inf,8,4,2,0 ) & LANES+=($!)
 ( wait_for main-peft \
   && train $(g 5) noop-causal --stage causal --init $R/main-peft/best.pt --sc '{"outpaint": false, "w_cont": 0.0}' $CA && evaluate $(g 5) noop-causal $NEVAL best.pt --horizons inf,4,0 ) & LANES+=($!)
+( wait_for noop-causal; wait_for main-peft && train $(g 5) adsc-causal --stage causal --init $R/main-peft/best.pt --cfg '{"adsc": true}' --sc "$ADSC_SC" $CA \
+  && evaluate $(g 5) adsc-causal $NEVAL best.pt --horizons inf,4,0 && lead_evals $(g 5) adsc-causal ) & LANES+=($!)
 ( wait_for main-peft \
   && train $(g 6) fullft-causal --stage causal --init $R/main-peft/best.pt --unfreeze-flow $CA && evaluate $(g 6) fullft-causal $NEVAL best.pt --horizons inf,4,0 ) & LANES+=($!)
+( wait_for fullft-causal; wait_for main-peft && train $(g 6) adscmask-causal --stage causal --init $R/main-peft/best.pt --sc "$ADSC_SC" $CA \
+  && evaluate $(g 6) adscmask-causal $NEVAL best.pt --horizons inf,4,0 && lead_evals $(g 6) adscmask-causal ) & LANES+=($!)
+( wait_for nocat-causal; wait_for main-causal && lead_evals $(g 4) main-causal ) & LANES+=($!)
 ( wait_for main-causal \
   && train $(g 7) measured-state --stage state --init $R/main-causal/best.pt --sc '{"state_hist_measured": true}' $ST && evaluate $(g 7) measured-state $NEVAL best.pt --horizons 4 --closed-loop
   wait_for main-causal && train $(g 7) unfreeze-state --stage state --init $R/main-causal/best.pt --unfreeze-flow $ST && evaluate $(g 7) unfreeze-state $NEVAL best.pt --horizons 4,0 --closed-loop ) & LANES+=($!)

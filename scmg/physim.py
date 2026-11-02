@@ -200,10 +200,11 @@ def physics_score(r, cmd, lim=None):
     acc = np.diff(r['dq'], axis=0) * 50
     terms = dict(track_rms=float(np.sqrt((err ** 2).mean())), track_max=float(err.max()),
                  sat=float(r['sat'].mean()), pen_mm=float(r['pen'].mean() * 1000),
+                 collision_rate=float((r['pen'] > 1e-4).mean()),      # frames with a non-structural self-contact > 0.1 mm
                  energy=float(np.abs(r['tau'] * r['dq']).sum(1).mean()),
                  acc_p99=float(np.percentile(np.abs(acc), 99)) if len(acc) else 0.)
     if lim is not None:
         terms['limit_viol'] = float(((r['q'] < lim['lo']) | (r['q'] > lim['hi'])).any(1).mean())
-    w = dict(track_rms=10., sat=5., pen_mm=1., energy=0.002, acc_p99=0.01, limit_viol=5.)
+    w = dict(track_rms=10., sat=5., pen_mm=1., collision_rate=5., energy=0.002, acc_p99=0.01, limit_viol=5.)
     terms['total'] = float(sum(w[k] * terms[k] for k in w if k in terms))
     return terms

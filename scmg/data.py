@@ -42,6 +42,9 @@ class View:
         self.items = [it for it in items if it['id'] in keep]
         mode = 'r' if mmap else None
         self.q = np.load(v / 'train_q.npy', mmap_mode=mode)
+        # frames inside retargeting jumps (BEAT2 only, scripts/glitch_audit.py; jump frame +-1) are excluded from losses
+        gm = Path('/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/glitch-audit/GLITCH_MASK.npy')
+        self.glitch = np.load(gm, mmap_mode='r') if gm.exists() else None
         self.f = np.load(v / 'train_feat.npy', mmap_mode=mode)
         cond = json.loads((v / 'cond' / 'COND.json').read_text())
         self.cond = cond['items']; self.spk_emb = np.load(v / 'cond' / 'SPK_EMB.npy').astype(np.float32)
@@ -102,6 +105,7 @@ class WindowDataset(torch.utils.data.IterableDataset):
         c = self.v.clips[ci]; a = c['start'] + s; n = max(0, min(T, c['frames'] - s))
         q = np.zeros((T, J), np.float32); m = np.zeros(T, np.float32)
         q[:n] = (np.asarray(self.v.q[a:a + n], np.float32) - self.v.qm) / self.v.qs; m[:n] = 1
+        if self.v.glitch is not None and n > 0: m[:n] *= 1 - np.asarray(self.v.glitch[a:a + n], np.float32)
         if n < T and n > 0: q[n:] = q[n - 1]                         # hold last pose (masked anyway)
         return q, m, a, n
 
@@ -112,7 +116,7 @@ class WindowDataset(torch.utils.data.IterableDataset):
         f = np.zeros((T, FEAT), np.float32)
         f[:n] = (np.asarray(v.f[a:a + n], np.float32) - v.fm) / v.fs
         # text tokens of every utterance overlapping [s, s+n)
-        toks, times = [], []
+        toks, times, segs = [], [], []                 # segs: start time of the TTS segment (utterance) of each token
         if v.text is not None:
             off = c['start']
             for it in c['items']:
@@ -123,25 +127,33 @@ class WindowDataset(torch.utils.data.IterableDataset):
                 k0, kn = e
                 toks.append(np.asarray(v.text['feat'][k0:k0 + kn], np.float32))
                 times.append(v.text['time'][k0:k0 + kn] + (i0 - s) / 50.)
+                segs.append(np.full(kn, (i0 - s) / 50., np.float32))
         K = self.K
         text = np.zeros((K, TEXT_DIM), np.float32); ttime = np.full(K, np.nan, np.float32); tmask = np.zeros(K, bool)
+        tseg = np.full(K, np.nan, np.float32)
         if toks:
-            tk, tt = np.concatenate(toks), np.concatenate(times)
+            tk, tt, ts_ = np.concatenate(toks), np.concatenate(times), np.concatenate(segs)
             if len(tk) > K:                                            # keep tokens closest to the window
                 order = np.argsort(np.nan_to_num(np.abs(tt - T / 100.), nan=1e9))[:K]; order.sort()
-                tk, tt = tk[order], tt[order]
-            text[:len(tk)] = tk; ttime[:len(tk)] = tt; tmask[:len(tk)] = True
+                tk, tt, ts_ = tk[order], tt[order], ts_[order]
+            text[:len(tk)] = tk; ttime[:len(tk)] = tt; tmask[:len(tk)] = True; tseg[:len(tk)] = ts_
         # LM token ids of the utterances overlapping the window, in order (VoxCPM-style planner)
-        tids = np.zeros(self.KI, np.int64); tidm = np.zeros(self.KI, bool)
+        tids = np.zeros(self.KI, np.int64); tidm = np.zeros(self.KI, bool); titime = np.full(self.KI, np.nan, np.float32); tiseg = np.full(self.KI, np.nan, np.float32)
         if v.tok is not None:
-            seq = []
+            seq = []; tsq = []; ssq = []
             for it in c['items']:
                 i0 = it['offset'] - c['start']
                 if i0 + it['frames'] <= s or i0 >= s + n or it.get('text_null'): continue
                 e = v.tok['index'].get(it['id'])
-                if e: seq.append(v.tok['ids'][e[0]:e[0] + e[1]])
+                if e:
+                    seq.append(v.tok['ids'][e[0]:e[0] + e[1]])
+                    # LM tokens carry no timing: spread them evenly over the utterance (window-relative s) -- used only
+                    # for ADSC arrival simulation (text streams ahead of / alongside the speech)
+                    tsq.append((i0 - s + (np.arange(e[1]) + 0.5) / max(e[1], 1) * it['frames']) / 50.)
+                    ssq.append(np.full(e[1], (i0 - s) / 50., np.float32))
             if seq:
                 seq = np.concatenate(seq)[:self.KI]; tids[:len(seq)] = seq; tidm[:len(seq)] = True
+                titime[:len(seq)] = np.concatenate(tsq)[:self.KI]; tiseg[:len(seq)] = np.concatenate(ssq)[:self.KI]
         # speaker / source conditions of the first utterance in the window
         it0 = next((it for it in c['items'] if it['offset'] - c['start'] + it['frames'] > s), c['items'][0])
         row = v.cond.get(str(it0['id']))
@@ -160,7 +172,7 @@ class WindowDataset(torch.utils.data.IterableDataset):
                 rs = int(rng.integers(0, max(1, Lr - self.R + 1)))
                 ref, rm, _, _ = self._window(cj, rs, self.R); ref_valid = 1.
         return dict(q=q, mask=m, feat=f, text=text, ttime=ttime, tmask=tmask, spk=spk, spk_valid=np.float32(spk_valid),
-                    source=np.int64(source), tids=tids, tidm=tidm, ref=ref, ref_valid=np.float32(ref_valid), clip=np.int64(ci), start=np.int64(s))
+                    source=np.int64(source), tids=tids, tidm=tidm, titime=titime, tseg=tseg, tiseg=tiseg, ref=ref, ref_valid=np.float32(ref_valid), clip=np.int64(ci), start=np.int64(s))
 
 
 def collate(batch):

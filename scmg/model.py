@@ -50,6 +50,7 @@ class Config:
     planner: str = 'chunk'         # 'chunk' (from-scratch chunk transformer) | 'voxcpm' (TSLM + FSQ + RALM + LocEnc)
     lm_lr_scale: float = 0.1       # learning-rate scale of the pretrained LM (voxcpm planner)
     lora_r: int = 0                # >0: LoRA on planner/flow linear layers (base frozen by the trainer)
+    adsc: bool = False             # Asynchronous Dual-Stream Conditioning: per-chunk text/audio visibility + stream-state token
     # condition dropout (classifier-free guidance)
     drop_text: float = 0.1
     drop_audio: float = 0.1
@@ -148,6 +149,24 @@ class StateAdapter(nn.Module):
         return tok, self.ada(tok)
 
 
+def arrival_mask(t, valid, lead, now):
+    """ADSC text visibility. t [B, Kt] token times (s, same origin as `now`; NaN unknown); valid [B, Kt]; lead [B] seconds
+    the text stream runs ahead of the speech (inf = text final); now [B, K] or [K] chunk start times.
+    Token j is visible to chunk k iff it has arrived: t_j - lead <= now_k (unknown-time tokens only when text final)."""
+    now = now if now.dim() == 2 else now[None].expand(t.shape[0], -1)
+    fin = torch.isfinite(t)
+    arr = torch.nan_to_num(t, 0.) - lead[:, None]                                          # inf lead -> -inf
+    vis = torch.where(fin[:, None, :], arr[:, None, :] <= now[:, :, None], torch.isinf(lead)[:, None, None])
+    return vis & valid[:, None, :]
+
+
+def stream_state(tvis, tvalid, audio_final):
+    """[B, K] long: text state (0 nothing arrived / 1 partial / 2 final) * 2 + audio state (0 streaming / 1 final)."""
+    nv = tvis.sum(-1); nt = tvalid.sum(-1, keepdim=True)
+    ts = torch.where(nv >= nt, 2, torch.where(nv > 0, 1, 0))
+    return ts * 2 + audio_final.long()
+
+
 class SCMG(nn.Module):
     def __init__(self, cfg: Config):
         super().__init__()
@@ -201,10 +220,17 @@ class SCMG(nn.Module):
             self.style_head = StyleHead(cfg)
         if cfg.state and not hasattr(self, 'state_ad'):
             self.state_ad = StateAdapter(cfg)
+        if cfg.adsc and not hasattr(self, 'stream_emb'):
+            self._init_adsc()
         if cfg.lora_r > 0 and not getattr(self, '_lora', False):
             for m in (self.planner, self.flow, self.audio) + ((self.vox.ralm,) if hasattr(self, 'vox') else ()):
                 apply_lora(m, r=cfg.lora_r)
             self._lora = True
+
+    def _init_adsc(self):
+        """Stream-state token (text: 0 nothing yet / 1 partial / 2 final) x (audio: 0 streaming / 1 final), zero-init so
+        loading a non-ADSC checkpoint starts from exactly the old function."""
+        self.stream_emb = nn.Embedding(6, self.cfg.d); nn.init.zeros_(self.stream_emb.weight)
 
     # ------------------------------------------------------------------ conditions
     def text_tokens(self, text, ttime, tmask, drop=None):
@@ -225,19 +251,23 @@ class SCMG(nn.Module):
         return i[None, None, :] < lim
 
     # ------------------------------------------------------------------ planner
-    def plan(self, lat, a, amask, text, tmask, g, mt=None, mt_mask=None, tids=None, tidm=None, sref=None):
+    def plan(self, lat, a, amask, text, tmask, g, mt=None, mt_mask=None, tids=None, tidm=None, sref=None,
+             tvis=None, lvis=None, sstate=None):
         """lat [B, K, CHUNK, z] latents of chunks 0..K-1 (teacher forcing: chunk k's input is chunk k-1);
         a [B, N, d]; amask [B, K, N]; returns h [B, K, d]."""
         B, K = lat.shape[:2]
         own = (amask & self._own_chunk(K, a.shape[1], a.device)[None]).float()          # visible audio of chunk k
         pooled = torch.einsum('bkn,bnd->bkd', own, a) / own.sum(-1, keepdim=True).clamp(min=1)
         pooled = torch.where(own.sum(-1, keepdim=True) > 0, pooled, self.audio_null)
+        semb = self.stream_emb(sstate) if (sstate is not None and hasattr(self, 'stream_emb')) else None
         if self.cfg.planner == 'voxcpm':
-            return self.vox(lat, pooled, tids, tidm, g, sref)[0]
+            return self.vox(lat, pooled, tids, tidm, g, sref, lvis=lvis, semb=semb)[0]
         prev = torch.cat([self.p_start.expand(B, 1, -1), self.p_in(lat[:, :-1].flatten(-2))], 1)
         x = prev + self.p_audio(pooled) + sincos(torch.arange(K, device=lat.device), self.cfg.d)[None]
+        if semb is not None: x = x + semb
         causal = torch.ones(K, K, dtype=torch.bool, device=lat.device).tril()[None]
         tm = tmask[:, None, :].expand(B, K, -1)
+        if tvis is not None: tm = tm & tvis                                           # ADSC: text arrived by chunk k
         for blk in self.planner:
             if isinstance(blk, GatedXBlock): x = blk(x, g, causal, text, tm, mt, mt_mask)
             else: x = blk(x, g, causal, text, tm)
@@ -283,7 +313,7 @@ class SCMG(nn.Module):
         eye = torch.eye(K, dtype=torch.bool, device=mt.device).repeat_interleave(M, 1)          # [K, K*M]
         return mt.flatten(1, 2), eye[None] & mt_mask.flatten(1)[:, None, :]
 
-    def mt_memory(self, text, tmask, a, amask_k, g_spk, sref, hist_lat, state_tok, K):
+    def mt_memory(self, text, tmask, a, amask_k, g_spk, sref, hist_lat, state_tok, K, tvis=None):
         """Per chunk typed memory: text tokens, visible audio tokens (pooled per chunk to keep it small), speaker,
         reference style, last committed chunk, robot state. Returns mt [B, K, M, d], mask [B, K, M]."""
         B = text.shape[0]; T = self.mt_type.weight
@@ -293,6 +323,7 @@ class SCMG(nn.Module):
         audio_toks = torch.stack([pa(prev_own), pa(own)], 2) + T[1]                 # [B, K, 2, d]
         audio_mask = torch.stack([prev_own.sum(-1) > 0, own.sum(-1) > 0], 2)
         tt = (text + T[0])[:, None].expand(B, K, -1, -1); tm = tmask[:, None].expand(B, K, -1)
+        if tvis is not None: tm = tm & tvis
         parts = [tt, audio_toks, (g_spk + T[2])[:, None, None].expand(B, K, 1, -1)]
         masks = [tm, audio_mask, torch.ones(B, K, 1, dtype=torch.bool, device=a.device)]
         if sref is not None:

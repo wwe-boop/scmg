@@ -60,13 +60,14 @@ class VoxPlanner(nn.Module):
         self.ralm = Encoder(d, cfg.heads, ralm_layers)
         self.d = d
 
-    def forward(self, lat, pooled_audio, tids, tidm, g, sref=None):
+    def forward(self, lat, pooled_audio, tids, tidm, g, sref=None, lvis=None, semb=None):
         """lat [B, K, CHUNK, z] (teacher forcing: chunk k's input is chunk k-1); pooled_audio [B, K, d] visible audio
         of each chunk; tids/tidm [B, Kt] LM token ids + mask; g [B, d] global speaker/source cond; sref [B, d] or None.
         Returns h [B, K, d] and the quantised skeleton codes [B, K, fsq_dim]."""
         B, K = lat.shape[:2]
         prev = torch.cat([self.start.expand(B, 1, -1), self.locenc(lat[:, :-1])], 1)          # [B, K, d]
         au = self.audio_in(pooled_audio)
+        if semb is not None: au = au + semb                                                  # ADSC stream state
         emb = self.lm.get_input_embeddings()
         text = emb(tids.clamp(min=0))                                                         # [B, Kt, H]
         pre = [self.spk_in(g)[:, None]]
@@ -76,7 +77,16 @@ class VoxPlanner(nn.Module):
         m = torch.cat([torch.ones(B, len(pre), dtype=torch.bool, device=x.device), tidm,
                        torch.ones(B, K, dtype=torch.bool, device=x.device)], 1)
         pos = (m.long().cumsum(1) - 1).clamp(min=0)
-        hs = self.lm(inputs_embeds=x, attention_mask=m.long(), position_ids=pos).last_hidden_state[:, -K:]
+        if lvis is None:
+            am = m.long()
+        else:                                    # ADSC: chunk k attends only to the LM tokens that had arrived by its start
+            S = x.shape[1]; P = len(pre); Kt = tids.shape[1]
+            allow = torch.ones(S, S, dtype=torch.bool, device=x.device).tril()[None] & m[:, None, :]
+            allow = allow.clone()
+            allow[:, P + Kt:, P:P + Kt] &= lvis
+            allow |= torch.eye(S, dtype=torch.bool, device=x.device)[None]             # no empty rows (padding queries)
+            am = torch.zeros(allow.shape, dtype=x.dtype, device=x.device).masked_fill(~allow, torch.finfo(x.dtype).min)[:, None]
+        hs = self.lm(inputs_embeds=x, attention_mask=am, position_ids=pos).last_hidden_state[:, -K:]
         q = self.fsq(self.fsq_in(hs))
         base = self.fsq_out(q)
         r_in = self.ralm_in(torch.cat([base, prev, au], -1)) + sincos(torch.arange(K, device=x.device), self.d)[None]

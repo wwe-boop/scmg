@@ -12,7 +12,7 @@ import torch
 import torch.nn.functional as F
 
 from .common import CHUNK, CHUNK_FRAMES, STRIDE, PROSODY_COLS, U80
-from .model import INF
+from .model import INF, arrival_mask, stream_state
 from .sim import simulate, state_vector, ARMS
 from .vae import recon_losses
 
@@ -34,6 +34,11 @@ class StageCfg:
     ctx_noise_p: float = 0.9       # r5: probability that the KNOWN context latents are noised (exposure bias: with clean
     ctx_t: tuple = (0.75, 1.0)     # GT context in training, free-running speed fell to 0.28 of GT vs 0.99 with GT history)
     ctx_infer_t: float = 0.9       # context noise level used at inference by models trained with ctx noise
+    p_async: float = 0.0           # ADSC: probability of an asynchronous dual-stream sample (text arrives incrementally,
+    async_lead: tuple = (0.0, 3.0) # running 0-3 s ahead of the speech; audio streaming with a sampled horizon)
+    p_async_seg: float = 0.7       # arrival unit = TTS SEGMENT (our engine: edge-live hub 'begin' carries the whole segment
+                                   # text shortly before its audio); else token by token (LLM -> TTS character streaming)
+    seg_lead: tuple = (0.0, 1.0)   # segment text arrives 0-1 s before the segment's first audio sample
     self_force_p: float = 0.5      # r5: probability that a batch uses ONE-STEP SELF-FORCED history (each chunk generated
     self_force_steps: int = 4      # by the current model from GT history, no grad, then used as the next chunk's history)
 
@@ -64,7 +69,8 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     # ---- condition dropout / modes
     r = lambda p: torch.rand(B, device=dev) < p
     drop_text, drop_audio, drop_spk = r(cfg.drop_text), r(cfg.drop_audio), r(cfg.drop_spk)
-    stream = r(sc.p_stream)
+    asy = r(sc.p_async)
+    stream = r(sc.p_stream) | asy                                                    # partial text implies streaming audio
     hz = U80 * torch.tensor(sc.horizons, device=dev)[torch.randint(len(sc.horizons), (B,), device=dev)]
     H = torch.where(stream, hz, torch.full_like(hz, INF))
     a = model.audio(feat, causal=stream)
@@ -73,6 +79,21 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     text, tmask = model.text_tokens(batch['text'], batch['ttime'], batch['tmask'] & ~drop_text[:, None],
                                     drop=r(cfg.drop_time))
     tidm_d = batch['tidm'] & ~drop_text[:, None] if 'tidm' in batch else None   # VoxCPM LM text: same text dropout
+    tvis = lvis = sstate = None
+    if sc.p_async > 0:                    # ADSC: what has arrived at the start of each chunk (window-relative seconds)
+        seg = r(sc.p_async_seg)
+        l_seg = sc.seg_lead[0] + (sc.seg_lead[1] - sc.seg_lead[0]) * torch.rand(B, device=dev)
+        l_tok = sc.async_lead[0] + (sc.async_lead[1] - sc.async_lead[0]) * torch.rand(B, device=dev)
+        lead = torch.where(asy, torch.where(seg, l_seg, l_tok), torch.full((B,), float('inf'), device=dev))
+        now = torch.arange(K, device=dev).float() * CHUNK_FRAMES / 50.
+        tvalid = batch['tmask'] & ~drop_text[:, None]
+        pick = lambda tok, sg: torch.where(seg[:, None], sg, tok)                     # arrival time per token
+        tvis = arrival_mask(pick(batch['ttime'], batch['tseg']), tvalid, lead, now)
+        if tidm_d is not None and 'titime' in batch: lvis = arrival_mask(pick(batch['titime'], batch['tiseg']), tidm_d, lead, now)
+        nvalid = mask.sum(1)                                                          # frames before the clip end
+        reach = (torch.arange(K, device=dev)[None] * CHUNK + torch.clamp(H, max=10 ** 6)[:, None]) * STRIDE
+        afin = (H[:, None] >= INF) | ((nvalid[:, None] < T) & (reach >= nvalid[:, None]))
+        if hasattr(model, 'stream_emb'): sstate = stream_state(tvis, tvalid, afin)
     src = torch.where(r(0.1), torch.zeros_like(batch['source']), batch['source'])
     g = model.global_cond(batch['spk'], batch['spk_valid'] * (~drop_spk), src)
 
@@ -127,10 +148,12 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         nonlocal mt, mt_mask
         lat_in = hist + sc.sigma_tf * torch.rand(B, 1, 1, 1, device=dev) * torch.randn_like(hist)
         if cfg.mtc:
-            mt, mt_mask = model.mt_memory(text, tmask, a, amask_k, g, sref, hist, state_tok, K)
+            mt, mt_mask = model.mt_memory(text, tmask, a, amask_k, g, sref, hist, state_tok, K, tvis=tvis)
             mflat, pm = model.planner_memory(mt, mt_mask)
-            return model.plan(lat_in, a, amask_k, text, tmask, g, mflat, pm, batch.get('tids'), tidm_d, sref)
-        return model.plan(lat_in, a, amask_k, text, tmask, g, tids=batch.get('tids'), tidm=tidm_d, sref=sref)
+            return model.plan(lat_in, a, amask_k, text, tmask, g, mflat, pm, batch.get('tids'), tidm_d, sref,
+                              tvis=tvis, lvis=lvis, sstate=sstate)
+        return model.plan(lat_in, a, amask_k, text, tmask, g, tids=batch.get('tids'), tidm=tidm_d, sref=sref,
+                          tvis=tvis, lvis=lvis, sstate=sstate)
 
     aw, awm = model.local_audio(a, H, K)
     aw, awm = aw.flatten(0, 1), awm.flatten(0, 1)
