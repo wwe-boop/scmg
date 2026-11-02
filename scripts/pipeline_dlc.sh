@@ -77,6 +77,30 @@ EOF
 # ---------------- Qwen text-LM ablation (VOXQ=1): same budget as VOXABL; each lane with its own LM and token cache.
 # 11-02 VOXABL finding: Qwen2.5 RANDOM init (FKD 1.25 / speed 0.93) and NO text (1.75 / 0.68) beat the pretrained LM
 # (4.62 / 0.42) -> lanes test whether a newer pretrained LM changes that, and whether the cause is pretraining or text.
+# ---------------- VoxCPM component ablation around the BEST base (VOXABL2=1, 11-03): VOXABL removed components from the
+# pretrained-Qwen base, which is itself poor (4.62); here every lane starts from the random-init LM (vox-randlm, 1.25 / 0.93)
+# so each component's effect is measured on a working model. Seed noise: vox-randlm (seed 0, VOXABL), qwen25-random-seed1
+# (VOXQ), r-seed2 here; chunk-planner-seed1 gives the chunk planner's seed noise.
+if [ "${VOXABL2:-0}" = 1 ]; then
+  VB="--stage base --steps $(steps 8000) --lr 3e-4 --warmup $(steps 1000) --eval-every $(steps 500) --snap-every 0"
+  V='"planner": "voxcpm", "vox_lm_init": "random"'
+  vlane() {  # gpu dir cfg-json extra...
+    local gpu=$1 o=$2 cf=$3; shift 3
+    train $gpu $o $VB --cfg "$cf" "$@" && CFGW=2.0 evaluate $gpu $o $NEVAL best.pt --horizons inf,0
+  }
+  L4=()
+  ( vlane $(g 0) r-lmlr1 "{$V, \"lm_lr_scale\": 1.0}" ) & L4+=($!)
+  ( vlane $(g 1) r-nofsq "{$V, \"vox_fsq\": false}" ) & L4+=($!)
+  ( vlane $(g 2) r-noralm "{$V, \"vox_ralm\": false}" ) & L4+=($!)
+  ( vlane $(g 3) r-nolocenc "{$V, \"vox_locenc\": false}" ) & L4+=($!)
+  ( vlane $(g 4) r-notext "{$V, \"vox_text\": false}" ) & L4+=($!)
+  ( vlane $(g 5) r-fsqtanh "{$V, \"vox_fsq\": \"tanh\"}" ) & L4+=($!)
+  ( vlane $(g 6) r-seed2 "{$V}" --seed 2 ) & L4+=($!)
+  ( vlane $(g 7) chunk-planner-seed1 "{}" --seed 1 ) & L4+=($!)
+  wait "${L4[@]}"
+  $PY -m scmg.summarize $R > $R/SUMMARY.md 2>&1 || true
+  echo "$(date -Is) VOXABL2_DONE"; touch $R/VOXABL2_DONE; exit 0
+fi
 if [ "${VOXQ:-0}" = 1 ]; then
   M=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models
   VB="--stage base --steps $(steps 8000) --lr 3e-4 --warmup $(steps 1000) --eval-every $(steps 500) --snap-every 0"

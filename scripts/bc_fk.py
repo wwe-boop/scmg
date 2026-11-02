@@ -18,6 +18,8 @@ ap = argparse.ArgumentParser()
 ap.add_argument('proxy'); ap.add_argument('onsets'); ap.add_argument('out'); ap.add_argument('dirs', nargs='*')
 ap.add_argument('--bodies', default=''); ap.add_argument('--validate', default='')
 ap.add_argument('--sigma', type=float, default=0.3); ap.add_argument('--fps', type=int, default=50)
+ap.add_argument('--onset-gap', type=float, default=0.0, help='sparsify audio onsets: keep onsets >= gap s apart')
+ap.add_argument('--grid', action='store_true', help='validation over sigma x onset-gap')
 a = ap.parse_args()
 kin = Kinematics(a.proxy, 'cpu')
 z = np.load(a.proxy)
@@ -41,21 +43,27 @@ def speeds(q):
     return np.linalg.norm(v, axis=-1)                               # [T, nb_sel] m/s
 
 
-def bc(sp, onsets, scale):
+def bc(sp, onsets, scale, sigma=None):
+    sigma = a.sigma if sigma is None else sigma
     on = np.asarray(onsets, float); on = on[(on >= 0) & (on < len(sp) / a.fps)]
     if not len(on): return None
     s = sp / np.maximum(scale, 1e-8); out = []
     for j in range(s.shape[1]):
         ids = argrelextrema(s[:, j], np.less, order=order)[0]; ids = ids[s[ids, j] > 0.3]
         if not len(ids): out.append(0.); continue
-        d = np.abs(on[:, None] - ids[None] / a.fps).min(1); out.append(float(np.exp(-d * d / (2 * a.sigma ** 2)).mean()))
+        d = np.abs(on[:, None] - ids[None] / a.fps).min(1); out.append(float(np.exp(-d * d / (2 * sigma ** 2)).mean()))
     return float(np.mean(out))
 
 
 ons = json.load(open(a.onsets)); ons = ons.get('onsets', ons) if isinstance(ons, dict) else ons
-def onset_of(ci):
+def onset_of(ci, gap=None):
     v = ons[str(ci)] if str(ci) in ons else ons[int(ci)]
-    return v['times_s'] if isinstance(v, dict) else v
+    t = sorted(v['times_s'] if isinstance(v, dict) else v); g = a.onset_gap if gap is None else gap
+    if g <= 0: return t
+    out = []
+    for x in t:
+        if not out or x - out[-1] >= g: out.append(x)
+    return out
 pairs = {}
 for spec in a.dirs:
     lab, d = spec.split('=', 1)
@@ -67,19 +75,23 @@ cis = sorted(gts)
 # dev GT is used here because it is what every row is compared against -- same scale for all rows)
 scale = np.mean(np.concatenate([speeds(gts[ci]) for ci in cis]), 0)
 res = {}
+SP = {ci: speeds(gts[ci]) for ci in cis}
 if a.validate:
-    rng = np.random.default_rng(0); rows = {}
-    for name, fn in [('gt', lambda ci, sp: bc(sp, onset_of(ci), scale))] + \
-            [(f'shift{s:+.1f}s', (lambda s: lambda ci, sp: bc(sp, np.asarray(onset_of(ci)) + s, scale))(s)) for s in (0.5, 1.0, -0.5, -1.0)]:
-        rows[name] = float(np.mean([v for v in (fn(ci, speeds(gts[ci])) for ci in cis) if v is not None]))
-    other = []
-    for i, ci in enumerate(cis):
-        cj = cis[(i + 7) % len(cis)]; n = min(len(gts[ci]), len(gts[cj]))
-        other.append(bc(speeds(gts[cj][:n]), onset_of(ci), scale))
-    rows['other_clip_motion'] = float(np.mean([v for v in other if v is not None]))
-    rnd = [bc(speeds(gts[ci][0] + np.cumsum(rng.normal(0, 0.01, gts[ci].shape), 0)), onset_of(ci), scale) for ci in cis]
-    rows['random_walk_motion'] = float(np.mean([v for v in rnd if v is not None]))
-    res['validation'] = rows; print(json.dumps(rows, indent=1))
+    rng = np.random.default_rng(0)
+    RW = {ci: speeds(gts[ci][0] + np.cumsum(rng.normal(0, 0.01, gts[ci].shape), 0)) for ci in cis}
+    grid = [(sg, gp) for sg in (0.3, 0.1, 0.05) for gp in (0.0, 0.3)] if a.grid else [(a.sigma, a.onset_gap)]
+    rows = {}
+    for sg, gp in grid:
+        m = lambda f: float(np.mean([v for v in (f(ci) for ci in cis) if v is not None]))
+        r = dict(gt=m(lambda ci: bc(SP[ci], onset_of(ci, gp), scale, sg)))
+        for sh in (0.5, 1.0, -0.5, -1.0):
+            r[f'shift{sh:+.1f}s'] = m(lambda ci: bc(SP[ci], np.asarray(onset_of(ci, gp)) + sh, scale, sg))
+        r['other_clip'] = m(lambda ci: bc(SP[cis[(cis.index(ci) + 7) % len(cis)]][:len(SP[ci])], onset_of(ci, gp), scale, sg))
+        r['random_walk'] = m(lambda ci: bc(RW[ci], onset_of(ci, gp), scale, sg))
+        sh_mean = np.mean([r[k] for k in r if k.startswith('shift')])
+        r['gt_minus_shift'] = r['gt'] - sh_mean; r['gt_over_shift'] = r['gt'] / max(sh_mean, 1e-9)
+        rows[f'sigma{sg}_gap{gp}'] = r; print(f'sigma {sg} gap {gp}', {k: round(v, 4) for k, v in r.items()}, flush=True)
+    res['validation'] = rows
 for lab, files in pairs.items():
     vals = [bc(speeds(np.load(f)), onset_of(ci), scale) for ci, f in sorted(files.items()) if ci in gts]
     res[lab] = dict(BC=float(np.mean([v for v in vals if v is not None])), clips=len(vals)); print(lab, res[lab])
