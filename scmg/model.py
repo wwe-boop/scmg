@@ -51,8 +51,9 @@ class Config:
     lm_lr_scale: float = 0.1       # learning-rate scale of the pretrained LM (voxcpm planner)
     lora_r: int = 0                # >0: LoRA on planner/flow linear layers (base frozen by the trainer)
     # VoxCPM planner ablations (11-02, user: which VoxCPM modules make it work); defaults = the full design
-    vox_lm: str = ''               # VoxCPM text-LM directory ('' = the default Qwen2.5-0.5B); Qwen ablation (11-02)
-    vox_lm_init: str = 'pretrained'   # 'random': same Qwen2.5-0.5B architecture, no pretrained weights
+    vox_lm: str = ''               # VoxCPM text-LM directory ('' = Qwen2.5-0.5B); MiniCPM4 also needs the trust flag
+    vox_lm_trust_remote_code: bool = False  # opt-in for pinned local MiniCPM4 code; legacy Qwen path unchanged
+    vox_lm_init: str = 'pretrained'   # 'random': selected LM architecture, no pretrained weights
     vox_fsq: bool | str = True     # True: FSQ; 'tanh': bounded continuous; False: unbounded continuous
     vox_ralm: bool = True          # False: plan = FSQ skeleton only (no residual LM)
     vox_locenc: bool = True        # False: previous chunk enters through a linear layer (as in the chunk planner)

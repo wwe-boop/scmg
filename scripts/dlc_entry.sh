@@ -7,16 +7,24 @@ PHASE=${1:?phase}
 P=$(cd "$(dirname "$0")/.." && pwd)                       # package root (contains scmg/ scripts/ FILES.sha256)
 VAE=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/trained/vae-r3/final.pt
 cd $P && sha256sum -c --quiet FILES.sha256
+if [ "$PHASE" = voxt ] && [ -z "${DLC_JOB_ID:-}" ]; then echo 'real DLC job required'; exit 78; fi
 [ "$PHASE" = full25 ] || { echo "$(cat $P/VAE_SHA256)  $VAE" | sha256sum -c -; }
 export USE_TF=0 USE_FLAX=0 OMP_NUM_THREADS=4 PYTHONUNBUFFERED=1
 # prefix-causal e5 features for ADSC token streaming (prep_text --causal; 11-02 review fix)
 TC=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models/text-e5-causal-v36_1
 [ -f $TC/TEXT_FEAT.npy ] && export SCMG_TEXT_CAUSAL=$TC
 case $PHASE in
-  full|full25|fullvox|adsc|adscvox|voxabl|voxq)
+  full|full25|fullvox|adsc|adscvox|voxabl|voxq|voxt)
     : "${DLC_JOB_ID:?real DLC job required}"
     case $(hostname) in dsw*) echo "refusing to run the full phase on DSW"; exit 78;; esac
     SUF=""
+    if [ "$PHASE" = voxt ]; then
+      export VOXT=1; SUF=-voxt${VOXT_RUN_SUFFIX:-}
+      export HF_HOME=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/dlc-cache/$DLC_JOB_ID/$(hostname)/hf
+      export HF_MODULES_CACHE=$HF_HOME/modules TORCH_HOME=$HF_HOME/torch XDG_CACHE_HOME=$HF_HOME/xdg
+      : "${VOXT_READY:?reviewed VOXT READY file required}"
+      test -s "$VOXT_READY" || exit 78
+    fi
     [ "$PHASE" = adsc ] && export ONLY_ADSC=1        # add-on: ADSC lanes on an already running main pipeline (same OUT)
     [ "$PHASE" = adscvox ] && export ONLY_ADSC=1
     if [ "$PHASE" = voxq ]; then export VOXQ=1 TOKC=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/tok-qwen25-v36_1; SUF=-voxq; fi
@@ -41,7 +49,8 @@ case $PHASE in
       exec bash $P/scripts/pipeline_dlc.sh $P $OUT $VAE ;;
   selftest)
     : "${SCMG_DSW_RUNID:?explicit DSW run id required}"
-    OUT=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/selftest/$SCMG_DSW_RUNID; rm -rf $OUT   # CPFS, never the shared /tmp
+    OUT=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/selftest/$SCMG_DSW_RUNID
+    if [ -e "$OUT" ]; then mkdir -p "$(dirname "$OUT")/scratch"; mv "$OUT" "$(dirname "$OUT")/scratch/$SCMG_DSW_RUNID-$(date +%s%N)"; fi #   # CPFS, never the shared /tmp
     export RANK=0 WORLD_SIZE=1 MASTER_ADDR=localhost MASTER_PORT=29500   # what DLC sets on every pod
     [ "${SCMG_STRIDE:-4}" = 2 ] && VAE=$OUT/vae25/final.pt
     [ "${SCMG_VOX:-0}" = 1 ] && export TOKC=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/tok-qwen25-v36_1 BASECFG='{"planner": "voxcpm", "d": 256}'

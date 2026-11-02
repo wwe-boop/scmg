@@ -2,7 +2,7 @@
 
   sequence = [speaker tok | ref-style tok | text tokens (pretrained LM embeddings) | chunk_0 ... chunk_{K-1}]
   chunk_k input = LocEnc(latents of chunk k-1) + proj(visible audio of chunk k)
-  TSLM  = pretrained Qwen2.5-0.5B (text-semantic LM), causal; text precedes the motion chunks in ONE sequence
+  TSLM  = Qwen2.5-0.5B by default, or pinned MiniCPM4/VoxCPM TSLM; causal text + motion in ONE sequence
   FSQ   = finite scalar quantisation of the TSLM output at chunk positions (semi-discrete semantic/rhythm skeleton,
           straight-through gradients)
   RALM  = small causal residual LM over chunk positions: input FSQ(h_k) + LocEnc(prev) + audio, output r_k
@@ -51,7 +51,20 @@ class VoxPlanner(nn.Module):
         d = cfg.d
         import os
         lp = P(getattr(cfg, 'vox_lm', '') or lm_path)
-        if os.environ.get('SCMG_LM_CONFIG'):              # weights come from the SCMG checkpoint anyway (no LM read)
+        if getattr(cfg, 'vox_lm_trust_remote_code', False):
+            from transformers import AutoConfig
+            config_path = os.environ.get('SCMG_LM_CONFIG') or lp
+            lm_cfg = AutoConfig.from_pretrained(config_path, trust_remote_code=True)
+            if os.environ.get('SCMG_LM_CONFIG') or getattr(cfg, 'vox_lm_init', 'pretrained') == 'random':
+                self.lm = AutoModel.from_config(lm_cfg, trust_remote_code=True, torch_dtype=torch.float32,
+                                                attn_implementation='sdpa')
+            else:
+                self.lm = AutoModel.from_pretrained(lp, config=lm_cfg, trust_remote_code=True,
+                                                    torch_dtype=torch.float32, attn_implementation='sdpa')
+            if self.lm.config.model_type == 'minicpm':
+                # SCMG recomputes the entire sequence; MiniCPM's default cache requires a Cache object.
+                self.lm.config.use_cache = False
+        elif os.environ.get('SCMG_LM_CONFIG'):              # weights come from the SCMG checkpoint anyway (no LM read)
             from transformers import AutoConfig
             self.lm = AutoModel.from_config(AutoConfig.from_pretrained(os.environ['SCMG_LM_CONFIG']), torch_dtype=torch.float32,
                                             attn_implementation='sdpa')
@@ -87,6 +100,9 @@ class VoxPlanner(nn.Module):
         if semb is not None: au = au + semb                                                  # ADSC stream state
         emb = self.lm.get_input_embeddings()
         text = emb(tids.clamp(min=0))                                                         # [B, Kt, H]
+        if self.lm.config.model_type == 'minicpm':
+            # Official VoxCPM scales TEXT before mixing modalities; HF inputs_embeds bypasses this scale.
+            text = text * (self.lm.config.scale_emb if getattr(self.lm.config, 'use_mup', True) else 1.0)
         pre = [self.spk_in(g)[:, None]]
         if sref is not None:
             if hasattr(self, 'ref_gate'): pre[0] = pre[0] + torch.tanh(self.ref_gate) * self.ref_in(sref)[:, None]

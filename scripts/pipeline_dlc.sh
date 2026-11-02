@@ -22,7 +22,9 @@ TOKC=${TOKC:-}; BASECFG=${BASECFG:-{\}}          # VoxCPM-style planner: TOKC=<t
 C="--stats $D/STATS_v36_1.json --text-cache $D/text-e5-v36_1 --vae $VAE --workers ${WORKERS:-6} $EXTRA ${TOKC:+--tok-cache $TOKC}"
 cd $CODE && export PYTHONPATH=$CODE
 mkdir -p $R
-rm -f $R/*/FAILED                          # a resubmission retries lanes that failed in an earlier job
+for failed_marker in "$R"/*/FAILED; do
+  [ ! -e "$failed_marker" ] || { mkdir -p "$R/scratch"; mv "$failed_marker" "$R/scratch/$(basename "$(dirname "$failed_marker")")-FAILED-$(date +%s%N)"; }
+done #                          # a resubmission retries lanes that failed in an earlier job
 steps() { python3 -c "print(max(4, int($1 * $SCALE)))"; }
 # lane -> GPU: index into the devices the job was GIVEN (CUDA_VISIBLE_DEVICES), never a bare 0..N-1 -- on a shared DSW a
 # selftest launched with CUDA_VISIBLE_DEVICES=1 was remapped to physical GPU 0 (forbidden there) by the old version (11-02)
@@ -77,6 +79,46 @@ EOF
 # ---------------- Qwen text-LM ablation (VOXQ=1): same budget as VOXABL; each lane with its own LM and token cache.
 # 11-02 VOXABL finding: Qwen2.5 RANDOM init (FKD 1.25 / speed 0.93) and NO text (1.75 / 0.68) beat the pretrained LM
 # (4.62 / 0.42) -> lanes test whether a newer pretrained LM changes that, and whether the cause is pretraining or text.
+# ---------------- VoxCPM's own TSLM versus MiniCPM4 (same VOXABL base budget).
+if [ "${VOXT:-0}" = 1 ]; then
+  M=${VOXT_MODELS:-/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models}
+  VB="--stage base --steps $(steps 8000) --lr 3e-4 --warmup $(steps 1000) --eval-every $(steps 500) --snap-every 0"
+  command -v flock >/dev/null || { echo 'VOXT requires flock'; exit 2; }
+  mkdir -p "$R/.claims"
+  tnames=(voxcpm15-tslm minicpm4-pretrained minicpm4-random voxcpm15-tslm-lmlr1)
+  tlane() {
+    local idx=$1 gpu=$2 name=${tnames[$1]} lm tc init=pretrained scale=0.1
+    local claim_fd
+    exec {claim_fd}> "$R/.claims/$name.lock"
+    flock -n "$claim_fd" || { echo "already claimed: $name"; return 1; }
+    case $idx in
+      0|3) lm=$M/voxcpm15-tslm-hf; tc=$M/tok-voxcpm15-v36_1 ;;
+      1|2) lm=$M/minicpm4-pretrained-hf; tc=$M/tok-minicpm4-v36_1 ;;
+    esac
+    [ "$idx" = 2 ] && init=random
+    [ "$idx" = 3 ] && scale=1.0
+    local cf="{\"planner\":\"voxcpm\",\"vox_lm\":\"$lm\",\"vox_lm_trust_remote_code\":true,\"vox_lm_init\":\"$init\",\"lm_lr_scale\":$scale}"
+    train "$gpu" "$name" $VB --tok-cache "$tc" --cfg "$cf" || return 1
+    $PY -c 'import json,sys; assert json.load(open(sys.argv[1]))["step"] == int(sys.argv[2]), "incomplete lane budget"' "$R/$name/DONE.json" "$(steps 8000)" || return 1
+    TOKC=$tc CFGW=2.0 evaluate "$gpu" "$name" "$NEVAL" best.pt --horizons inf,0
+    # Legacy evaluate logs failures but returns zero: VOXT must fail closed.
+    test -s "$R/$name/eval-best/RESULTS.json" || return 1
+    $PY -c 'import json,sys; r=json.load(open(sys.argv[1])); assert all(r[h]["clips"]>0 for h in ("inf","0"))' "$R/$name/eval-best/RESULTS.json" || return 1
+    flock -u "$claim_fd"
+  }
+  # One sequential queue per assigned GPU; NGPU=1 never starts four overlapping trainers.
+  nslots=${#DEVS[@]}; [ "$nslots" -gt 4 ] && nslots=4
+  TPIDS=()
+  for ((slot=0; slot<nslots; slot++)); do
+    ( for ((idx=slot; idx<4; idx+=nslots)); do tlane "$idx" "$(g "$slot")" || exit 1; done ) & TPIDS+=($!)
+  done
+  failed=0
+  for pid in "${TPIDS[@]}"; do wait "$pid" || failed=1; done
+  [ "$failed" = 0 ] || { echo VOXT_FAILED; exit 1; }
+  $PY -m scmg.summarize "$R" > "$R/SUMMARY.md" 2>&1 || true
+  touch "$R/VOXT_DONE"; echo "$(date -Is) VOXT_DONE"; exit 0
+fi
+
 if [ "${VOXQ:-0}" = 1 ]; then
   M=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models
   VB="--stage base --steps $(steps 8000) --lr 3e-4 --warmup $(steps 1000) --eval-every $(steps 500) --snap-every 0"
