@@ -57,6 +57,8 @@ class Config:
     vox_ralm: bool = True          # False: plan = FSQ skeleton only (no residual LM)
     vox_locenc: bool = True        # False: previous chunk enters through a linear layer (as in the chunk planner)
     vox_text: bool = True          # False: no text tokens in the LM sequence (audio / motion only)
+    vox_prefsq_norm: bool = False  # 11-03: RMSNorm on the LM output before FSQ (fixes tanh saturation with a pretrained LM)
+    vox_in_match: bool = False     # 11-03: non-text LM inputs scaled to the RMS of the LM's token embeddings (learnable gain)
     vox_ref_gate: bool = False     # VoxCPM style reference: zero-gated add onto the speaker token (11-02 review fix) instead of
                                    # an extra LM token (which changed the base output at initialisation)
     adsc: bool = False             # Asynchronous Dual-Stream Conditioning: per-chunk text/audio visibility + stream-state token

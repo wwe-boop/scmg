@@ -18,6 +18,14 @@ from .nn import Encoder, sincos
 LM = '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/models/scmg/Qwen2.5-0.5B'
 
 
+class RMSNorm(nn.Module):
+    def __init__(self, d, eps=1e-6):
+        super().__init__(); self.w = nn.Parameter(torch.ones(d)); self.eps = eps
+
+    def forward(self, x):
+        return x * torch.rsqrt(x.pow(2).mean(-1, keepdim=True) + self.eps) * self.w
+
+
 class FSQ(nn.Module):
     def __init__(self, dim=8, levels=9):
         super().__init__()
@@ -71,6 +79,16 @@ class VoxPlanner(nn.Module):
         self.chunk_in = nn.Linear(d, H); self.audio_in = nn.Linear(d, d)
         self.spk_in = nn.Linear(d, H); self.ref_in = nn.Linear(d, H)
         self.fsq_in = nn.Linear(H, fsq_dim); self.fsq = FSQ(fsq_dim, fsq_levels); self.fsq_out = nn.Linear(fsq_dim, d)
+        # 11-03 text-use fixes (SANA arXiv 2410.10629 / massive activations arXiv 2402.17762): decoder-LM hidden states have a
+        # large, outlier-dominated scale -> 38% of pre-FSQ values saturate tanh with the pretrained LM (code review).
+        #   vox_prefsq_norm: RMSNorm on the LM output before fsq_in;  vox_in_match: non-text inputs (speaker / reference /
+        #   chunk tokens) are RMS-normalised and scaled to the RMS of the LM's own token embeddings (learnable gain).
+        self.prefsq_norm = RMSNorm(H) if getattr(cfg, 'vox_prefsq_norm', False) else None   # own class: DLC image has torch 2.3 (no nn.RMSNorm)
+        if getattr(cfg, 'vox_in_match', False):
+            with torch.no_grad():
+                w = self.lm.get_input_embeddings().weight
+                r = float(w.float().pow(2).mean().sqrt())
+            self.in_gain = nn.Parameter(torch.tensor(r))
         self.ralm_in = nn.Linear(3 * d, d)
         self.ralm = Encoder(d, cfg.heads, ralm_layers)
         self.d = d
@@ -92,6 +110,9 @@ class VoxPlanner(nn.Module):
             if hasattr(self, 'ref_gate'): pre[0] = pre[0] + torch.tanh(self.ref_gate) * self.ref_in(sref)[:, None]
             else: pre.append(self.ref_in(sref)[:, None])                                   # legacy (r4-r6 checkpoints)
         chunks = self.chunk_in(prev + au)                                                     # [B, K, H]
+        if hasattr(self, 'in_gain'):
+            nrm = lambda t: t * torch.rsqrt(t.pow(2).mean(-1, keepdim=True) + 1e-6) * self.in_gain
+            chunks = nrm(chunks); pre = [nrm(t) for t in pre]
         x = torch.cat(pre + [text.to(chunks.dtype), chunks], 1)
         m = torch.cat([torch.ones(B, len(pre), dtype=torch.bool, device=x.device), tidm,
                        torch.ones(B, K, dtype=torch.bool, device=x.device)], 1)
@@ -106,6 +127,7 @@ class VoxPlanner(nn.Module):
             allow |= torch.eye(S, dtype=torch.bool, device=x.device)[None]             # no empty rows (padding queries)
             am = torch.zeros(allow.shape, dtype=x.dtype, device=x.device).masked_fill(~allow, torch.finfo(x.dtype).min)[:, None]
         hs = self.lm(inputs_embeds=x, attention_mask=am, position_ids=pos).last_hidden_state[:, -K:]
+        if self.prefsq_norm is not None: hs = self.prefsq_norm(hs)
         if self.ab['fsq'] == 'tanh':
             q = torch.tanh(self.fsq_in(hs))
         else:

@@ -49,6 +49,7 @@ def build_manifest(a):
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     I = json.load(open(_rec_file('INDEX.json', a.rec)))
     classes = I['meta']['classes']; cidx = {k: i for i, k in enumerate(classes)}
+    kept_keys = {k for c in classes[1:] for k in c.split('+')}
     st = json.load(open(P(D + '/STATS_v36_1.json')))
     v = View(VIEW, 'train', D + '/text-e5-v36_1', st, mmap=True, tok_cache=D + '/tok-qwen25-v36_1'); v.glitch = None
     by_id = {}
@@ -61,7 +62,7 @@ def build_manifest(a):
     rng = np.random.default_rng(a.seed)
     per_cls = defaultdict(list)
     for cid, rs in pos.items():
-        rare = max(rs, key=lambda r: cidx[r['key']])['key']        # the clip's rarest class (classes sorted by frequency)
+        rare = max(rs, key=lambda r: cidx[r['cls']])['cls']        # the clip's rarest class (classes sorted by frequency)
         per_cls[rare].append(cid)
     for k in per_cls: rng.shuffle(per_cls[k])
     order = sorted(per_cls, key=lambda k: cidx[k], reverse=True)
@@ -77,12 +78,12 @@ def build_manifest(a):
         s = WindowDataset(v, T, max_tokens=256, max_ids=clip_lm_capacity(v, ci)).sample(ci, 0, np.random.default_rng(ci))
         np.savez(out / f'cond_{ci}.npz', **{k: np.asarray(x) for k, x in s.items()})
         gt = np.asarray(v.q[c['start']:c['start'] + T], np.float32); np.save(out / f'gt_{ci}.npy', gt)
-        evs = [dict(key=r['key'], cls=cidx[r['key']], t_on=r['t_on'], t_off=r['t_off'], centre_frame=r['c'],
+        evs = [dict(key=r['key'], cls=cidx[r['cls']], cls_name=r['cls'], t_on=r['t_on'], t_off=r['t_off'], centre_frame=r['c'],
                     tok_item=r.get('tok_item'), tok_pos=r.get('tok_pos')) for r in sorted(pos[cid], key=lambda r: r['c']) if r['c'] < T]
         negs = [r['c'] for r in I['rows'] if r['clip'] == cid and r['kind'] == 'neg_syn' and r['c'] < T]
         entries.append(dict(file=f'gen_{ci}.npy', ci=ci, clip_id=cid, item_ids=info['items'], start_frame=0, frames=T,
                             chunks=nch, text=info['text'], rhythm_source=info.get('rhythm'), events=evs, neg_centres=negs,
-                            other_events=[e for e in info['events'] if e['key'] not in cidx]))
+                            other_events=[e for e in info['events'] if e['key'] not in kept_keys]))
     man = dict(version='semantic-eval-manifest-v1', recognizer=a.rec, view=VIEW, view_split='train', fps=50, window_frames=W,
                classes=classes, note=('clips are in the recogniser TEST split but in the generator TRAIN view (no semsynth '
                                       'clip exists in the val view): this measures text-sensitivity, not generalisation'),
@@ -90,7 +91,7 @@ def build_manifest(a):
                                      'spk', 'spk_valid', 'source', 'ref', 'ref_valid'],
                text_causal_env=os.environ.get('SCMG_TEXT_CAUSAL'), seed=a.seed, entries=entries)
     (out / 'MANIFEST.json').write_text(json.dumps(man, ensure_ascii=False, indent=1, default=int))
-    cnt = Counter(e['key'] for x in entries for e in x['events'])
+    cnt = Counter(e['cls_name'] for x in entries for e in x['events'])
     print(json.dumps(dict(clips=len(entries), events=sum(cnt.values()), classes=len(cnt), neg=sum(len(x['neg_centres']) for x in entries),
                           per_class=cnt.most_common()), ensure_ascii=False))
 
@@ -119,7 +120,7 @@ def score(a):
             pk = p[k]; y = ev['cls']
             j = int(pk[:, y].argmax()) if S > 0 else 0                          # best centre for the intended class
             pr = pk[j].copy(); pr0 = pk[shifts.index(0)] if 0 in shifts else pk[0]
-            ev_rows.append(dict(file=e['file'], key=ev['key'], y=y, prob=pr, prob_centre=pr0, shift_s=shifts[j] / 50, all=pk))
+            ev_rows.append(dict(file=e['file'], key=ev.get('cls_name', ev['key']), y=y, prob=pr, prob_centre=pr0, shift_s=shifts[j] / 50, all=pk))
         ncs = [c - st for c in e.get('neg_centres', []) if 0 <= c - st < len(q)]
         if ncs:
             with torch.no_grad():

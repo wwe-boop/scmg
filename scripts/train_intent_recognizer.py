@@ -155,7 +155,8 @@ def main():
     ap.add_argument('--index', required=True); ap.add_argument('--windows', required=True); ap.add_argument('--out', required=True)
     ap.add_argument('--epochs', type=int, default=40); ap.add_argument('--bs', type=int, default=256); ap.add_argument('--lr', type=float, default=1e-3)
     ap.add_argument('--width', type=int, default=192); ap.add_argument('--jit', type=int, default=20); ap.add_argument('--seed', type=int, default=0)
-    ap.add_argument('--val-frac', type=float, default=0.1); ap.add_argument('--fpr', type=float, default=0.10)
+    ap.add_argument('--val-frac', type=float, default=0.1); ap.add_argument('--fpr', type=float, default=0.01)
+    ap.add_argument('--eval-only', action='store_true', help='skip training; recalibrate + score the saved model.pt')
     a = ap.parse_args()
     torch.manual_seed(a.seed); np.random.seed(a.seed)
     dev = 'cuda'
@@ -176,7 +177,7 @@ def main():
     tri = np.where(tr)[0]; steps = a.epochs * (len(tri) // a.bs); sched = torch.optim.lr_scheduler.OneCycleLR(opt, a.lr, total_steps=steps, pct_start=0.05)
     yt = torch.tensor(y, device=dev)
     best, best_ep, log = -1, -1, []
-    for ep in range(a.epochs):
+    for ep in range(0 if a.eval_only else a.epochs):
         model.train(); t0 = time.time(); perm = np.random.permutation(tri); tl = 0
         for b in range(len(tri) // a.bs):
             idx = torch.tensor(perm[b * a.bs:(b + 1) * a.bs], device=dev); B = len(idx)
@@ -204,8 +205,10 @@ def main():
                             meta={k: meta[k] for k in ('version', 'window_frames', 'margin_frames', 'neg_gap_s', 'class_vocab_id')}), out / 'model.pt')
     m, fz, s = load_recognizer(out / 'model.pt', dev)
     pv = predict(m, fz, X[torch.tensor(np.where(va)[0], device=dev)])
-    dv = 1 - pv[:, 0]; negv = dv[kind[va] != 'pos']
-    thr = float(np.quantile(negv, 1 - a.fpr))                       # detection threshold: FPR = a.fpr on val negatives
+    dv = 1 - pv[:, 0]; negv = dv[kind[va] != 'pos']; posv = dv[kind[va] == 'pos']
+    # detection threshold: midway between the (1 - fpr) quantile of val negatives and the fpr quantile of val positives
+    # (scores are near-saturated: negatives ~0.46, positives ~1.0 -- a pure negative quantile sits inside the negative mode)
+    thr = float(0.5 * (np.quantile(negv, 1 - a.fpr) + np.quantile(posv, a.fpr)))
     res = dict(best_epoch=best_ep, val=metrics(pv, y[va], kind[va], classes, thr))
     tei = torch.tensor(np.where(te)[0], device=dev)
     pt = predict(m, fz, X[tei]); res['test'] = metrics(pt, y[te], kind[te], classes, thr)
@@ -213,8 +216,9 @@ def main():
     for sh in (-20, -10, 10, 20):
         p2 = predict(m, fz, X[tei], shift=sh); r2 = metrics(p2, y[te], kind[te], classes, thr)
         res[f'test_shift_{sh * 20}ms'] = {k: r2[k] for k in ('top1', 'top5', 'balanced_acc', 'auc_vs_all_neg', 'tpr')}
-    ck = torch.load(out / 'model.pt', weights_only=False); ck['det_threshold'] = thr; ck['det_threshold_fpr'] = a.fpr; torch.save(ck, out / 'model.pt')
-    res['train_log'] = log; res['args'] = vars(a); res['counts'] = dict(train=int(tr.sum()), val=int(va.sum()), test=int(te.sum()))
+    ck = torch.load(out / 'model.pt', weights_only=False); ck['det_threshold'] = thr; ck['det_threshold_rule'] = f'midpoint(val neg q{1 - a.fpr:.3f}, val pos q{a.fpr:.3f})'; torch.save(ck, out / 'model.pt')
+    if a.eval_only and (out / 'METRICS.json').exists(): log = json.loads((out / 'METRICS.json').read_text()).get('train_log', log); best_ep = torch.load(out / 'model.pt', weights_only=False)['epoch']
+    res['best_epoch'] = best_ep; res['train_log'] = log; res['args'] = vars(a); res['counts'] = dict(train=int(tr.sum()), val=int(va.sum()), test=int(te.sum()))
     (out / 'METRICS.json').write_text(json.dumps(res, indent=1, ensure_ascii=False))
     np.save(out / 'TEST_PROBS.npy', pt.astype(np.float16))
     t = res['test']

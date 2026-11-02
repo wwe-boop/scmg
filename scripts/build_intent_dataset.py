@@ -37,6 +37,32 @@ HUMAN_SOURCES = ('beat2_zh', 'beat2_en', 'beat2_en_additional', 'beat2_zh_additi
                  'embody_dyadic', 'bilibili')
 
 
+REGATE = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/synth-sem-r1/fix-r7p1-20261030/REGATE_SPEED_0p70.jsonl'
+
+
+def spec_assets(pairs, cache):
+    """pair -> [(key, dictionary asset id, core frames)] from each pair's MOTION.json specs (cached; ~13 min over sshfs)."""
+    f = cache / 'SPEC_ASSETS.json'
+    have = json.loads(f.read_text()) if f.exists() else {}
+    todo = [p for p in pairs if p not in have]
+    if todo:
+        from concurrent.futures import ThreadPoolExecutor
+        reg = P(REGATE); loc = cache / 'REGATE_SPEED_0p70.jsonl'
+        if loc.exists(): reg = str(loc)
+        mot = {}
+        for l in open(reg):
+            r = json.loads(l); mot[r['id']] = os.path.join(os.path.dirname(r['motion']), 'MOTION.json')
+        def rd(p):
+            try:
+                m = json.load(open(mot[p], encoding='utf-8', errors='replace'))
+                return p, [(s['key'], s['asset'].split('/')[-2], s.get('frames')) for s in m.get('specs', [])]
+            except Exception:
+                return p, []
+        with ThreadPoolExecutor(32) as ex: have.update(dict(ex.map(rd, todo)))
+        f.write_text(json.dumps(have))
+    return have
+
+
 def group_test(g, frac, seed):
     h = int(hashlib.sha1(f'{seed}:{g}'.encode()).hexdigest()[:8], 16) / 0xffffffff
     return h < frac
@@ -148,16 +174,41 @@ def main():
         clipinfo['human:' + cl] = dict(a=int(A), L=int(L), group=group, source=xs[0].get('data_source'), items=[x['id'] for x in xs])
         c = int(rng.integers(40, L - 40))
         rows.append(dict(kind='neg_human', clip='human:' + cl, group=group, c=c, key='none', source=xs[0].get('data_source'))); nh += 1
+    # ---- class = executed motion FORM: keys that execute the same dictionary asset are one class ----
+    #      (e.g. seg.011 has no asset of its own and executes seg.151__EX3F-REVISE-R2a1: identical joint trajectories)
+    specs = spec_assets(sorted({clipinfo[r['clip']]['pair'] for r in rows if r['kind'] == 'pos'}), cache)
+    asset_keys = defaultdict(Counter)
+    for r in rows:
+        if r['kind'] != 'pos': continue
+        sp_ = [x for x in specs.get(clipinfo[r['clip']]['pair'], []) if x[0] == r['key']]
+        hit = [x for x in sp_ if x[2] and abs(x[2][0] - round(r['t_on'] * 50)) <= 2]
+        r['asset'] = (hit or sp_ or [[None, None]])[0][1]
+        st['asset_match_exact' if hit else ('asset_match_key_only' if sp_ else 'asset_missing')] += 1
+        if r['asset']: asset_keys[r['asset']][r['key']] += 1
+    parent = {}
+    def find(x):
+        while parent.setdefault(x, x) != x: x = parent[x]
+        return x
+    for asset, ks in asset_keys.items():
+        ks = list(ks)
+        for k in ks[1:]: parent[find(k)] = find(ks[0])
+    kc = Counter(r['key'] for r in rows if r['kind'] == 'pos')
+    comp = defaultdict(set)
+    for k in kc: comp[find(k)].add(k)
+    name = {k: '+'.join(sorted(comp[find(k)], key=lambda x: -kc[x])) for k in kc}
+    for r in rows: r['cls'] = name[r['key']] if r['kind'] == 'pos' else 'none'
+    st['merged_classes'] = {n: sorted(c) for n, c in ((name[next(iter(c))], c) for c in comp.values()) if len(c) > 1}
+    st['assets_per_class'] = {name[k]: sorted({a_ for a_, ks in asset_keys.items() if k in ks}) for k in kc if kc[k] >= 30}
     # ---- split by group, class filter ----
     for r in rows: r['split'] = 'test' if group_test(r['group'], a.test_frac, a.seed) else 'train'
-    cnt = Counter(r['key'] for r in rows if r['kind'] == 'pos')
-    cnt_te = Counter(r['key'] for r in rows if r['kind'] == 'pos' and r['split'] == 'test')
+    cnt = Counter(r['cls'] for r in rows if r['kind'] == 'pos')
+    cnt_te = Counter(r['cls'] for r in rows if r['kind'] == 'pos' and r['split'] == 'test')
     keep = sorted([k for k in cnt if cnt[k] >= a.min_total and cnt_te[k] >= a.min_test and cnt[k] - cnt_te[k] >= 20],
                   key=lambda k: -cnt[k])
     classes = ['none'] + keep; cidx = {k: i for i, k in enumerate(classes)}
     dropped = {k: cnt[k] for k in cnt if k not in cidx}
-    rows = [r for r in rows if r['key'] in cidx]
-    for r in rows: r['y'] = cidx[r['key']]
+    rows = [r for r in rows if r['cls'] in cidx]
+    for r in rows: r['y'] = cidx[r['cls']]
     # leakage check: no group / clip in both splits
     gs = defaultdict(set)
     for r in rows: gs[r['clip']].add(r['split'])
@@ -175,14 +226,14 @@ def main():
         per = defaultdict(Counter)
         for r in rows:
             if r['kind'] == 'pos' and r['tok_id'] is not None:
-                per[r['key']][r['tok_id']] += 1
+                per[r['cls']][r['tok_id']] += 1
         anchors = {k: [(tk.decode([t]), n) for t, n in per[k].most_common(6)] for k in keep}
     except Exception as e:
         anchors = {'error': repr(e)}
-    split_cnt = {s: Counter(r['key'] if r['kind'] == 'pos' else r['kind'] for r in rows if r['split'] == s) for s in ('train', 'test')}
+    split_cnt = {s: Counter(r['cls'] if r['kind'] == 'pos' else r['kind'] for r in rows if r['split'] == s) for s in ('train', 'test')}
     meta = dict(version='semantic-recognizer-v1', window_frames=W, margin_frames=M, fps=50, neg_gap_s=NEG_GAP,
                 test_frac=a.test_frac, seed=a.seed, min_total=a.min_total, min_test=a.min_test, min_train=20,
-                classes=classes, class_vocab_id={k: vocab[k] for k in keep}, dropped_classes=dropped,
+                classes=classes, class_vocab_id={k: [vocab[x] for x in k.split('+')] for k in keep}, dropped_classes=dropped,
                 stats=st, n_rows=len(rows), split_counts=split_cnt, anchor_tokens=anchors,
                 view=str(a.view), manifest=a.manifest, intent=INTENT, tok_cache=TOK, windows_cache=str(cache / 'WINDOWS_f16.npy'))
     (out / 'INDEX.json').write_text(json.dumps(dict(meta=meta, rows=rows, clips=clipinfo), ensure_ascii=False, default=int))

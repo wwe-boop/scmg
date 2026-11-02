@@ -101,6 +101,31 @@ if [ "${VOXABL2:-0}" = 1 ]; then
   $PY -m scmg.summarize $R > $R/SUMMARY.md 2>&1 || true
   echo "$(date -Is) VOXABL2_DONE"; touch $R/VOXABL2_DONE; exit 0
 fi
+# ---------------- Text-use ablation (TEXTUSE=1, 11-03): user "让文本被利用". Code review: pretrained LM saturates the FSQ
+# input (57% at init, 38% trained) and evaluation fed misaligned LM text (fixed: --window-lm-text). Literature: SANA (RMSNorm +
+# scale on LLM features), ConvoFusion (modality dropout / per-modality guidance). Lanes isolate interface fixes, LM
+# freezing and audio dropout; every lane is evaluated with windowed LM text, plus a separate text-guidance (cfg_t 3) pass.
+if [ "${TEXTUSE:-0}" = 1 ]; then
+  VB="--stage base --steps $(steps 8000) --lr 3e-4 --warmup $(steps 1000) --eval-every $(steps 500) --snap-every 0"
+  V='"planner": "voxcpm"'; NM='"vox_prefsq_norm": true, "vox_in_match": true'
+  tlane() {  # gpu dir cfg-json extra...
+    local gpu=$1 o=$2 cf=$3; shift 3
+    train $gpu $o $VB --cfg "$cf" "$@" && SCMG_SAVE_N=43 CFGW=2.0 evaluate $gpu $o $NEVAL best.pt --horizons inf,0 --window-lm-text \
+      && SCMG_SAVE_N=43 CFGW=2.0 EVTAG=-cfgt3 evaluate $gpu $o $NEVAL best.pt --horizons inf --window-lm-text --cfg-t 3.0
+  }
+  L5=()
+  ( tlane $(g 0) t-pre-norm "{$V, \"vox_prefsq_norm\": true}" ) & L5+=($!)
+  ( tlane $(g 1) t-pre-normmatch "{$V, $NM}" ) & L5+=($!)
+  ( tlane $(g 2) t-pre-normmatch-frozen "{$V, $NM, \"lm_lr_scale\": 0.0}" ) & L5+=($!)
+  ( tlane $(g 3) t-pre-normmatch-da3 "{$V, $NM, \"drop_audio\": 0.3}" ) & L5+=($!)
+  ( tlane $(g 4) t-rand-normmatch "{$V, $NM, \"vox_lm_init\": \"random\"}" ) & L5+=($!)
+  ( tlane $(g 5) t-rand-da3 "{$V, \"vox_lm_init\": \"random\", \"drop_audio\": 0.3}" ) & L5+=($!)
+  ( tlane $(g 6) t-rand-normmatch-da3 "{$V, $NM, \"vox_lm_init\": \"random\", \"drop_audio\": 0.3}" ) & L5+=($!)
+  ( tlane $(g 7) t-pre-normmatch-seed1 "{$V, $NM}" --seed 1 ) & L5+=($!)
+  wait "${L5[@]}"
+  $PY -m scmg.summarize $R > $R/SUMMARY.md 2>&1 || true
+  echo "$(date -Is) TEXTUSE_DONE"; touch $R/TEXTUSE_DONE; exit 0
+fi
 if [ "${VOXQ:-0}" = 1 ]; then
   M=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models
   VB="--stage base --steps $(steps 8000) --lr 3e-4 --warmup $(steps 1000) --eval-every $(steps 500) --snap-every 0"
