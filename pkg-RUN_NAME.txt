@@ -1,1 +1,1 @@
-scmg-train-r7-1102
+scmg-train-r7c-1102

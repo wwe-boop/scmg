@@ -33,10 +33,17 @@ TTFT = float(os.environ.get('SCMG_TTS_TTFT', '0.0'))
 CFGW = float(sys.argv[4]) if len(sys.argv) > 4 else 1.0; CFGT = bool(int(sys.argv[5])) if len(sys.argv) > 5 else True
 NC = int(sys.argv[6]) if len(sys.argv) > 6 else 12; STEPS = int(sys.argv[7]) if len(sys.argv) > 7 else 10
 dev = 'cuda'; FS = 24000; CH_S = CHUNK_FRAMES / 50
-st = json.load(open(D + '/STATS_v36_1.json')); fm, fs_ = np.asarray(st['f_mean'], np.float32), np.asarray(st['f_std'], np.float32)
-m, vae = load(CK, '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/trained/vae-r3/final.pt', dev)
-v = View(VIEW, 'val', D + '/text-e5-v36_1', st, mmap=True, tok_cache=D + '/tok-qwen25-v36_1'); v.glitch = None
-meta = json.load(open(f'{VIEW}/META.json')); lim = limits34(meta['lower'], meta['upper'])
+PACK = os.environ.get('SCMG_DEVPACK')                  # local pack from make_devpack.py (no CPFS reads at all)
+if PACK:
+    import pickle
+    st = json.load(open(f'{PACK}/STATS.json')); meta = json.load(open(f'{PACK}/META.json'))
+    m, vae = load(CK, f'{PACK}/vae.pt', dev); PK = pickle.load(open(f'{PACK}/clips.pkl', 'rb'))[:NC]
+else:
+    st = json.load(open(D + '/STATS_v36_1.json')); meta = json.load(open(f'{VIEW}/META.json'))
+    m, vae = load(CK, '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/trained/vae-r3/final.pt', dev)
+    v = View(VIEW, 'val', D + '/text-e5-v36_1', st, mmap=True, tok_cache=D + '/tok-qwen25-v36_1'); v.glitch = None
+fm, fs_ = np.asarray(st['f_mean'], np.float32), np.asarray(st['f_std'], np.float32)
+lim = limits34(meta['lower'], meta['upper'])
 H = INF if HL < 0 else HL * U80
 taps = np.load('/home/xr-25b7/projects/gesture/edge-live/robot_client/edge_live_client/bj50/rp_taps.npy') if Path(
     '/home/xr-25b7/projects/gesture/edge-live/robot_client/edge_live_client/bj50/rp_taps.npy').exists() else np.load(
@@ -63,12 +70,19 @@ def clip_audio(c):
 
 
 torch.cuda.synchronize(); rows = []
-clips = [ci for ci in range(len(v.clips)) if v.clips[ci]['frames'] // 16 >= 3][:NC]
-for ci in clips:
-    c = v.clips[ci]; nch = c['frames'] // CHUNK_FRAMES; T = nch * CHUNK_FRAMES
-    pcm, text, anchors = clip_audio(c)
-    s = WindowDataset(v, T, max_tokens=256).sample(ci, 0, np.random.default_rng(ci))
-    cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm') if k in s}
+def clips_iter():
+    if PACK:
+        for r in PK: yield r['clip'], r['lang'], r['T'], r['pcm'], r['text'], r['anchors'], r['cond']
+        return
+    for ci in [ci for ci in range(len(v.clips)) if v.clips[ci]['frames'] // 16 >= 3][:NC]:
+        c = v.clips[ci]; T = c['frames'] // CHUNK_FRAMES * CHUNK_FRAMES
+        pcm, text, anchors = clip_audio(c)
+        s = WindowDataset(v, T, max_tokens=256).sample(ci, 0, np.random.default_rng(ci))
+        yield c['clip'], c['items'][0].get('lang'), T, pcm, text, anchors, {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm', 'titime', 'tseg', 'tiseg') if k in s}
+
+
+for cname, clang, T, pcm, text, anchors, cond in clips_iter():
+    nch = T // CHUNK_FRAMES
     S = Streamer(m, vae, np.zeros((T, fm.shape[0]), np.float32), cond, st, H=H, steps=STEPS, standby=st['q_mean'],
                  ctx_t=getattr(m, 'ctx_t', 1.0), cfg_w=CFGW, cfg_text=CFGT, elastic=ELASTIC)
     pf = PrefixFeatures(P, taps); cbf = CBFFilter(lim, np.asarray(st['q_mean'], float))
@@ -96,9 +110,9 @@ for ci in clips:
         recs.append(dict(k=k, start=t_start, arrived=a_s, H_used=S.H if S.H < INF else -1, feat_ms=1e3 * (t1 - t0),
                          model_ms=1e3 * (t2 - t1), cbf_ms=1e3 * (t3 - t2), total_ms=1e3 * comp, ready=ready, emit_start=e,
                          nframes=len(fr), D=ready - TTFT - e if len(fr) else None))
-    rows.append(dict(clip=c['clip'], lang=c['items'][0].get('lang'), seconds=T / 50, ticks=recs))
+    rows.append(dict(clip=cname, lang=clang, seconds=T / 50, ticks=recs))
     Dk = [r['D'] for r in recs if r['D'] is not None]
-    print(c['clip'], f"ticks {len(recs)} total p50 {np.median([r['total_ms'] for r in recs]):.0f} ms  D max {max(Dk):.3f} s", flush=True)
+    print(cname, f"ticks {len(recs)} total p50 {np.median([r['total_ms'] for r in recs]):.0f} ms  D max {max(Dk):.3f} s", flush=True)
 allr = [r for x in rows for r in x['ticks'][1:]]                         # tick 0 includes CUDA warm-up effects per clip
 q = lambda key, p: float(np.percentile([r[key] for r in allr], p))
 Dall = [r['D'] for x in rows for r in x['ticks'] if r['D'] is not None]

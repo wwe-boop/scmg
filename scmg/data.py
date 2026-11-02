@@ -65,11 +65,15 @@ class View:
         if tok_cache:                                   # LM token ids for the VoxCPM-style planner (prep_tokens.py)
             tc = Path(P(tok_cache))
             self.tok = dict(ids=np.load(tc / 'TOK_IDS.npy'), index=json.loads((tc / 'TOK_INDEX.json').read_text()))
-        self.text = None
+        self.text = None; self.text_c = None
         if text_cache:
             tc = Path(P(text_cache))
             self.text = dict(feat=np.load(tc / 'TEXT_FEAT.npy', mmap_mode=mode), time=np.load(tc / 'TEXT_TIME.npy'),
                              index=json.loads((tc / 'TEXT_INDEX.json').read_text()))
+            # prefix-causal features of the same rows (prep_text --causal): ADSC token streaming must not see later words
+            import os as _os
+            cc = _os.environ.get('SCMG_TEXT_CAUSAL')
+            self.text_c = np.load(Path(P(cc)) / 'TEXT_FEAT.npy', mmap_mode='r') if cc else None
 
     def weights(self, semsynth_share=0.4):
         """Clip sampling weights: human / semsynth category shares, frame-proportional inside a category."""
@@ -116,7 +120,7 @@ class WindowDataset(torch.utils.data.IterableDataset):
         f = np.zeros((T, FEAT), np.float32)
         f[:n] = (np.asarray(v.f[a:a + n], np.float32) - v.fm) / v.fs
         # text tokens of every utterance overlapping [s, s+n)
-        toks, times, segs = [], [], []                 # segs: start time of the TTS segment (utterance) of each token
+        toks, times, segs, toks_c = [], [], [], []      # segs: start time of the TTS segment (utterance) of each token
         if v.text is not None:
             off = c['start']
             for it in c['items']:
@@ -126,17 +130,22 @@ class WindowDataset(torch.utils.data.IterableDataset):
                 if not e: continue
                 k0, kn = e
                 toks.append(np.asarray(v.text['feat'][k0:k0 + kn], np.float32))
+                if v.text_c is not None: toks_c.append(np.asarray(v.text_c[k0:k0 + kn], np.float32))
                 times.append(v.text['time'][k0:k0 + kn] + (i0 - s) / 50.)
                 segs.append(np.full(kn, (i0 - s) / 50., np.float32))
         K = self.K
         text = np.zeros((K, TEXT_DIM), np.float32); ttime = np.full(K, np.nan, np.float32); tmask = np.zeros(K, bool)
         tseg = np.full(K, np.nan, np.float32)
+        text_c = np.zeros((K, TEXT_DIM), np.float32) if v.text_c is not None else None
         if toks:
             tk, tt, ts_ = np.concatenate(toks), np.concatenate(times), np.concatenate(segs)
+            tkc = np.concatenate(toks_c) if toks_c else None
             if len(tk) > K:                                            # keep tokens closest to the window
                 order = np.argsort(np.nan_to_num(np.abs(tt - T / 100.), nan=1e9))[:K]; order.sort()
                 tk, tt, ts_ = tk[order], tt[order], ts_[order]
+                if tkc is not None: tkc = tkc[order]
             text[:len(tk)] = tk; ttime[:len(tk)] = tt; tmask[:len(tk)] = True; tseg[:len(tk)] = ts_
+            if tkc is not None: text_c[:len(tk)] = tkc
         # LM token ids of the utterances overlapping the window, in order (VoxCPM-style planner)
         tids = np.zeros(self.KI, np.int64); tidm = np.zeros(self.KI, bool); titime = np.full(self.KI, np.nan, np.float32); tiseg = np.full(self.KI, np.nan, np.float32)
         if v.tok is not None:
@@ -171,7 +180,8 @@ class WindowDataset(torch.utils.data.IterableDataset):
             if Lr >= self.R // 2:
                 rs = int(rng.integers(0, max(1, Lr - self.R + 1)))
                 ref, rm, _, _ = self._window(cj, rs, self.R); ref_valid = 1.
-        return dict(q=q, mask=m, feat=f, text=text, ttime=ttime, tmask=tmask, spk=spk, spk_valid=np.float32(spk_valid),
+        extra = dict(text_c=text_c) if text_c is not None else {}
+        return dict(**extra, q=q, mask=m, feat=f, text=text, ttime=ttime, tmask=tmask, spk=spk, spk_valid=np.float32(spk_valid),
                     source=np.int64(source), tids=tids, tidm=tidm, titime=titime, tseg=tseg, tiseg=tiseg, ref=ref, ref_valid=np.float32(ref_valid), clip=np.int64(ci), start=np.int64(s))
 
 

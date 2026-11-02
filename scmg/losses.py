@@ -104,7 +104,12 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         heard = now[None] + Hc[:, None].float() * STRIDE / 50.                        # [B, K]
         voiced = torch.isfinite(batch['ttime'])[:, None] & (torch.nan_to_num(batch['ttime'], 1e9)[:, None] <= heard[:, :, None])
         voiced = voiced | ~stream[:, None, None]
-        tu, _ = model.text_tokens(batch['text'], batch['ttime'], tmask, drop=torch.ones(B, dtype=torch.bool, device=dev))
+        raw = batch['text']
+        if 'text_c' in batch:             # token streaming: prefix-causal features (a bidirectional encoder sees later words)
+            raw = torch.where((asy & ~seg)[:, None, None], batch['text_c'], raw)
+            tt_, _ = model.text_tokens(raw, batch['ttime'], tmask, drop=r(cfg.drop_time))
+            text = torch.where((asy & ~seg)[:, None, None], tt_, text)
+        tu, _ = model.text_tokens(raw, batch['ttime'], tmask, drop=torch.ones(B, dtype=torch.bool, device=dev))
         text = torch.cat([text, tu], 1); tmask = torch.cat([tmask, tmask], 1)
         tvis = torch.cat([tvis & voiced, tvis & ~voiced], -1)
     src = torch.where(r(0.1), torch.zeros_like(batch['source']), batch['source'])
@@ -123,12 +128,14 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         boundary = 3 * CHUNK_FRAMES
         sel = torch.rand(M, device=dev) < sc.p_state
         probs = (0., .3, .25, .25, .2)
-        act, _, _, target, kind = simulate(plan_rad, boundary, probs=probs)
-        target = torch.where(sel[:, None, None], target, plan_rad)
         # inference timing: the streamer emits a frame one latent late, so when chunk k is generated the robot has executed
         # up to frame 16k - STRIDE; the last STRIDE frames before the boundary are committed-but-not-yet-sent PLAN frames.
-        # State token and measured history are built exactly like that here (they were aligned to 16k before: mismatch).
+        # 11-02 review fix: the deviation is simulated ONLY up to the last observed frame (e_ - 1) and the recovery target
+        # starts from that observed state; frames e_..boundary-1 are the pending plan (no unobserved disturbance there).
         e_ = boundary - STRIDE                                                        # first not-yet-executed frame
+        act, _, _, target, kind = simulate(plan_rad, e_, probs=probs)
+        target = torch.where(sel[:, None, None], target, plan_rad)
+        act = torch.cat([act, plan_rad[:, e_:boundary]], 1)                           # executed + pending plan frames
         hist_rad = torch.where(sel[:, None, None], act, plan_rad[:, :boundary])
         sq = hist_rad[:, e_ - 1]; sdq = (hist_rad[:, e_ - 1] - hist_rad[:, e_ - 2]) * 50.
         q_plan_s = plan_rad[:, e_ - 1]

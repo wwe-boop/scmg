@@ -129,7 +129,7 @@ def main():
             if nch < 3: continue
             ds = WindowDataset(view, nch * CHUNK_FRAMES, max_tokens=256)
             s = ds.sample(ci, 0, np.random.default_rng(ci))
-            cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm', 'titime', 'tseg', 'tiseg') if k in s}
+            cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm', 'titime', 'tseg', 'tiseg', 'text_c') if k in s}
             gt = s['q'] * qs + qm
             beat = np.clip(s['feat'][:, PROSODY_COLS['onset']] + s['feat'][:, PROSODY_COLS['beat']], 0, None)
             gens = []
@@ -161,7 +161,7 @@ def main():
                 if nch < 6: continue
                 ds = WindowDataset(view, nch * CHUNK_FRAMES, max_tokens=256)
                 s = ds.sample(ci, 0, np.random.default_rng(ci))
-                cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm', 'titime', 'tseg', 'tiseg') if k in s}
+                cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm', 'titime', 'tseg', 'tiseg', 'text_c') if k in s}
                 rg = np.random.default_rng(ci)
                 hl = int(rg.integers(20, 51)); h0 = int(rg.integers(2 * CHUNK_FRAMES, max(2 * CHUNK_FRAMES + 1, (nch - 2) * CHUNK_FRAMES - hl)))
                 robot = Robot(standby, hold_start=h0, hold_len=hl, seed=ci)

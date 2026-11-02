@@ -67,6 +67,30 @@ for i in range(torch.cuda.device_count()):
 print('CUDA_COMPUTE_OK', flush=True)
 EOF
 
+# ---------------- VoxCPM module ablation (VOXABL=1): base stage only, one GPU per lane, identical budget; which parts of
+# the VoxCPM-style planner make it work (pretrained text LM / FSQ skeleton / residual LM / LocEnc / text in the sequence),
+# against the chunk planner at the same budget and a second seed of the full design (noise floor).
+if [ "${VOXABL:-0}" = 1 ]; then
+  VB="--stage base --steps $(steps 8000) --lr 3e-4 --warmup $(steps 1000) --eval-every $(steps 500) --snap-every 0"
+  V='"planner": "voxcpm"'
+  vlane() {  # gpu dir cfg-json extra...
+    local gpu=$1 o=$2 cf=$3; shift 3
+    train $gpu $o $VB --cfg "$cf" "$@" && CFGW=2.0 evaluate $gpu $o $NEVAL best.pt --horizons inf,0
+  }
+  L2=()
+  ( vlane $(g 0) vox-full "{$V}" ) & L2+=($!)
+  ( vlane $(g 1) vox-randlm "{$V, \"vox_lm_init\": \"random\"}" ) & L2+=($!)
+  ( vlane $(g 2) vox-nofsq "{$V, \"vox_fsq\": false}" ) & L2+=($!)
+  ( vlane $(g 3) vox-noralm "{$V, \"vox_ralm\": false}" ) & L2+=($!)
+  ( vlane $(g 4) vox-nolocenc "{$V, \"vox_locenc\": false}" ) & L2+=($!)
+  ( vlane $(g 5) vox-notext "{$V, \"vox_text\": false}" ) & L2+=($!)
+  ( vlane $(g 6) chunk-planner "{}" ) & L2+=($!)
+  ( vlane $(g 7) vox-full-seed1 "{$V}" --seed 1 ) & L2+=($!)
+  wait "${L2[@]}"
+  $PY -m scmg.summarize $R > $R/SUMMARY.md 2>&1 || true
+  echo "$(date -Is) VOXABL_DONE"; touch $R/VOXABL_DONE; exit 0
+fi
+
 # ---------------- stage 0: motion VAE (only when the given VAE does not exist yet, e.g. the 25 Hz ablation)
 if [ ! -f $VAE ]; then
   vd=$(basename $(dirname $VAE))

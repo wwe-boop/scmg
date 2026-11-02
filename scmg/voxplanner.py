@@ -49,7 +49,20 @@ class VoxPlanner(nn.Module):
         super().__init__()
         from transformers import AutoModel
         d = cfg.d
-        self.lm = AutoModel.from_pretrained(P(lm_path), torch_dtype=torch.float32, attn_implementation='sdpa')
+        import os
+        lp = P(lm_path)
+        if os.environ.get('SCMG_LM_CONFIG'):              # weights come from the SCMG checkpoint anyway (no LM read)
+            from transformers import AutoConfig
+            self.lm = AutoModel.from_config(AutoConfig.from_pretrained(os.environ['SCMG_LM_CONFIG']), torch_dtype=torch.float32,
+                                            attn_implementation='sdpa')
+        elif getattr(cfg, 'vox_lm_init', 'pretrained') == 'random':
+            from transformers import AutoConfig
+            self.lm = AutoModel.from_config(AutoConfig.from_pretrained(lp), torch_dtype=torch.float32, attn_implementation='sdpa')
+        else:
+            self.lm = AutoModel.from_pretrained(lp, torch_dtype=torch.float32, attn_implementation='sdpa')
+        self.ab = dict(fsq=getattr(cfg, 'vox_fsq', True), ralm=getattr(cfg, 'vox_ralm', True),
+                       locenc=getattr(cfg, 'vox_locenc', True), text=getattr(cfg, 'vox_text', True))
+        if not self.ab['locenc']: self.p_lin = nn.Linear(CHUNK * cfg.z, d)
         H = self.lm.config.hidden_size; self.H = H
         self.locenc = LocEnc(cfg.z, d, cfg.heads)
         self.start = nn.Parameter(torch.zeros(d))
@@ -65,13 +78,17 @@ class VoxPlanner(nn.Module):
         of each chunk; tids/tidm [B, Kt] LM token ids + mask; g [B, d] global speaker/source cond; sref [B, d] or None.
         Returns h [B, K, d] and the quantised skeleton codes [B, K, fsq_dim]."""
         B, K = lat.shape[:2]
-        prev = torch.cat([self.start.expand(B, 1, -1), self.locenc(lat[:, :-1])], 1)          # [B, K, d]
+        enc = self.locenc(lat[:, :-1]) if self.ab['locenc'] else self.p_lin(lat[:, :-1].flatten(-2))
+        prev = torch.cat([self.start.expand(B, 1, -1), enc], 1)                                # [B, K, d]
+        if not self.ab['text']: tidm = torch.zeros_like(tidm)
         au = self.audio_in(pooled_audio)
         if semb is not None: au = au + semb                                                  # ADSC stream state
         emb = self.lm.get_input_embeddings()
         text = emb(tids.clamp(min=0))                                                         # [B, Kt, H]
         pre = [self.spk_in(g)[:, None]]
-        if sref is not None: pre.append(self.ref_in(sref)[:, None])
+        if sref is not None:
+            if hasattr(self, 'ref_gate'): pre[0] = pre[0] + torch.tanh(self.ref_gate) * self.ref_in(sref)[:, None]
+            else: pre.append(self.ref_in(sref)[:, None])                                   # legacy (r4-r6 checkpoints)
         chunks = self.chunk_in(prev + au)                                                     # [B, K, H]
         x = torch.cat(pre + [text.to(chunks.dtype), chunks], 1)
         m = torch.cat([torch.ones(B, len(pre), dtype=torch.bool, device=x.device), tidm,
@@ -87,8 +104,9 @@ class VoxPlanner(nn.Module):
             allow |= torch.eye(S, dtype=torch.bool, device=x.device)[None]             # no empty rows (padding queries)
             am = torch.zeros(allow.shape, dtype=x.dtype, device=x.device).masked_fill(~allow, torch.finfo(x.dtype).min)[:, None]
         hs = self.lm(inputs_embeds=x, attention_mask=am, position_ids=pos).last_hidden_state[:, -K:]
-        q = self.fsq(self.fsq_in(hs))
+        q = self.fsq(self.fsq_in(hs)) if self.ab['fsq'] else self.fsq_in(hs)
         base = self.fsq_out(q)
+        if not self.ab['ralm']: return base, q
         r_in = self.ralm_in(torch.cat([base, prev, au], -1)) + sincos(torch.arange(K, device=x.device), self.d)[None]
         causal = torch.ones(K, K, dtype=torch.bool, device=x.device).tril()[None]
         r = self.ralm(r_in, causal)

@@ -23,14 +23,28 @@ base_ck, vae_p, cdir, out = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
 STEPS = int(sys.argv[5]) if len(sys.argv) > 5 else 2000; TAU = float(sys.argv[6]) if len(sys.argv) > 6 else 0.5
 W_REF = float(sys.argv[7]) if len(sys.argv) > 7 else 0.5; W_GT = float(sys.argv[8]) if len(sys.argv) > 8 else 1.0
 BW, BG = 8, 32                                                # collected windows / ground-truth windows per step
+import os
+MODE = os.environ.get('P3_MODE', 'awr'); MARGIN = float(os.environ.get('P3_MARGIN', '0.5'))
+P3_TARGET = json.loads(os.environ['P3_TARGET']) if os.environ.get('P3_TARGET') else None
+
+
+def tscore(w):
+    """Target score of every candidate: re-weighted from the saved terms (v2 collections) when P3_TARGET is given."""
+    if P3_TARGET is None or 'terms' not in w: return w['total']
+    names = [str(x) for x in w['term_names']]; t = w['terms']
+    gap = np.abs(np.log(np.maximum(w['speed'], 1e-4) / np.maximum(w['gt_speed'][:, None], 1e-4)))
+    return sum(v_ * (gap if k == 'speed_gap' else t[..., names.index(k)]) for k, v_ in P3_TARGET.items()).astype(np.float32)
 dev = 'cuda'; torch.manual_seed(0)
 st = json.load(open(D + '/STATS_v36_1.json'))
 v = View(split='train', stats=st, mmap=True, text_cache=D + '/text-e5-v36_1', tok_cache=D + '/tok-qwen25-v36_1')
 ds = WindowDataset(v, 256, max_tokens=128)
 m, vae = load(base_ck, vae_p, dev); ref = copy.deepcopy(m).eval().requires_grad_(False)
 for p in m.parameters(): p.requires_grad_(False)
-n_lora = apply_lora(m.flow, r=16); m.to(dev)
-params = [p for n, p in m.named_parameters() if n.endswith('.A') or n.endswith('.B')]
+# 11-02 review fix: PEFT checkpoints already carry LoRA (planner/flow/audio). Only the FLOW LoRA is trained: reuse it when
+# present (and save without merging, so the checkpoint keeps its structure), add + merge only for bare base models.
+HAD_LORA = any(isinstance(x, LoRALinear) for x in m.flow.modules())
+n_lora = 0 if HAD_LORA else apply_lora(m.flow, r=16); m.to(dev)
+params = [p for n, p in m.named_parameters() if n.startswith('flow.') and (n.endswith('.A') or n.endswith('.B'))]
 for p in params: p.requires_grad_(True)
 opt = torch.optim.AdamW(params, lr=1e-4, weight_decay=0.0)
 files = sorted(glob.glob(f'{cdir}/w*.npz')); W = [dict(np.load(f)) for f in files]
@@ -47,7 +61,7 @@ def physics_batch(sel):
     B = len(sel); K = 16; Nl = K * CHUNK
     hist = torch.as_tensor(np.stack([W[i]['committed'][:Nl] for i in sel]), device=dev).view(B, K, CHUNK, -1)
     cand = torch.as_tensor(np.stack([W[i]['cand_lat'] for i in sel]), device=dev)            # [B, K, N, CHUNK, z]
-    tot = torch.as_tensor(np.stack([W[i]['total'] for i in sel]), device=dev)                # [B, K, N]
+    tot = torch.as_tensor(np.stack([tscore(W[i]) for i in sel]), device=dev)                 # [B, K, N]
     el = torch.as_tensor(np.stack([W[i]['eligible'] for i in sel]), device=dev)
     N = cand.shape[2]
     with torch.no_grad():                                                                    # frozen conditioning path
@@ -61,6 +75,10 @@ def physics_batch(sel):
     mu = (tot * el).sum(-1, keepdim=True) / el.sum(-1, keepdim=True).clamp(min=1)
     sd = (((tot - mu) ** 2) * el).sum(-1, keepdim=True).div(el.sum(-1, keepdim=True).clamp(min=1)).sqrt().clamp(min=1e-3)
     wts = torch.softmax(torch.where(el, -(tot - mu) / (sd * TAU), torch.full_like(tot, -1e9)), -1)   # [B, K, N]
+    if MODE == 'rft':      # rejection-sampling fine-tuning: only the best eligible candidate, only where it clearly beats the group
+        best = torch.where(el, tot, torch.full_like(tot, float('inf'))).argmin(-1, keepdim=True)
+        gain = (mu - tot.gather(-1, best)) / sd
+        wts = torch.zeros_like(tot).scatter(-1, best, 1.) * (gain > MARGIN).float()
     ks = torch.arange(1, K, device=dev)                                                      # chunks with history
     ctx = hist[:, ks - 1][:, :, -cfg.ctx:]                                                    # [B, K-1, ctx, z]
     x1 = torch.cat([ctx[:, :, None].expand(-1, -1, N, -1, -1), cand[:, ks]], 3)              # [B, K-1, N, L, z]
@@ -94,11 +112,12 @@ for step in range(1, STEPS + 1):
         log.append(rec); print(json.dumps(rec), flush=True)
 # merge LoRA into the base Linear weights -> same structure as the base checkpoint
 with torch.no_grad():
-    for parent in list(m.flow.modules()):
+    for parent in (list(m.flow.modules()) if not HAD_LORA else []):
         for name, child in list(parent.named_children()):
             if isinstance(child, LoRALinear):
                 child.base.weight += (child.B @ child.A) * child.scale; setattr(parent, name, child.base)
 ck = torch.load(base_ck, map_location='cpu', weights_only=False)
 ck['ema'] = {k: x.detach().cpu() for k, x in m.state_dict().items()}; ck['model'] = ck['ema']
-ck['phase2'] = dict(base=base_ck, collect=cdir, windows=len(W), steps=STEPS, tau=TAU, w_ref=W_REF, w_gt=W_GT, log=log[-5:])
+ck['phase2'] = dict(base=base_ck, collect=cdir, windows=len(W), steps=STEPS, tau=TAU, w_ref=W_REF, w_gt=W_GT, mode=MODE,
+                   margin=MARGIN, target=P3_TARGET, log=log[-5:])
 torch.save(ck, out); print('saved', out)

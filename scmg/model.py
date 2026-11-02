@@ -50,6 +50,14 @@ class Config:
     planner: str = 'chunk'         # 'chunk' (from-scratch chunk transformer) | 'voxcpm' (TSLM + FSQ + RALM + LocEnc)
     lm_lr_scale: float = 0.1       # learning-rate scale of the pretrained LM (voxcpm planner)
     lora_r: int = 0                # >0: LoRA on planner/flow linear layers (base frozen by the trainer)
+    # VoxCPM planner ablations (11-02, user: which VoxCPM modules make it work); defaults = the full design
+    vox_lm_init: str = 'pretrained'   # 'random': same Qwen2.5-0.5B architecture, no pretrained weights
+    vox_fsq: bool = True           # False: continuous bottleneck (no tanh/rounding) instead of the FSQ skeleton
+    vox_ralm: bool = True          # False: plan = FSQ skeleton only (no residual LM)
+    vox_locenc: bool = True        # False: previous chunk enters through a linear layer (as in the chunk planner)
+    vox_text: bool = True          # False: no text tokens in the LM sequence (audio / motion only)
+    vox_ref_gate: bool = False     # VoxCPM style reference: zero-gated add onto the speaker token (11-02 review fix) instead of
+                                   # an extra LM token (which changed the base output at initialisation)
     adsc: bool = False             # Asynchronous Dual-Stream Conditioning: per-chunk text/audio visibility + stream-state token
     # condition dropout (classifier-free guidance)
     drop_text: float = 0.1
@@ -240,6 +248,8 @@ class SCMG(nn.Module):
             self.style_head = StyleHead(cfg)
         if cfg.state and not hasattr(self, 'state_ad'):
             self.state_ad = StateAdapter(cfg)
+        if cfg.planner == 'voxcpm' and cfg.vox_ref_gate and not hasattr(self.vox, 'ref_gate'):
+            self.vox.ref_gate = nn.Parameter(torch.zeros(1))
         if cfg.adsc and not hasattr(self, 'stream_emb'):
             self._init_adsc()
         if cfg.lora_r > 0 and not getattr(self, '_lora', False):

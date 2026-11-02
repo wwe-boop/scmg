@@ -23,7 +23,7 @@ from .vae import MotionVAE
 
 STAGES = {
     'base':   dict(cfg={}, sc=dict()),
-    'peft':   dict(cfg=dict(mtc=True, style=True, lora_r=16), sc=dict()),
+    'peft':   dict(cfg=dict(mtc=True, style=True, lora_r=16, vox_ref_gate=True), sc=dict()),
     'causal': dict(cfg=dict(mtc=True, style=True, lora_r=16), sc=dict(p_stream=0.67, outpaint=True, w_cont=1.0, w_rhy=0.1)),
     'state':  dict(cfg=dict(mtc=True, style=True, lora_r=16, state=True),
                    sc=dict(p_stream=0.67, outpaint=True, w_cont=1.0, w_rhy=0.1, p_state=0.5)),

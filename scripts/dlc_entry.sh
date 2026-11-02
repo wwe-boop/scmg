@@ -9,13 +9,19 @@ VAE=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/trained/vae-r3/final.pt
 cd $P && sha256sum -c --quiet FILES.sha256
 [ "$PHASE" = full25 ] || { echo "$(cat $P/VAE_SHA256)  $VAE" | sha256sum -c -; }
 export USE_TF=0 USE_FLAX=0 OMP_NUM_THREADS=4 PYTHONUNBUFFERED=1
+# prefix-causal e5 features for ADSC token streaming (prep_text --causal; 11-02 review fix)
+TC=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models/text-e5-causal-v36_1
+[ -f $TC/TEXT_FEAT.npy ] && export SCMG_TEXT_CAUSAL=$TC
 case $PHASE in
-  full|full25|fullvox|adsc|adscvox)
+  full|full25|fullvox|adsc|adscvox|voxabl)
     : "${DLC_JOB_ID:?real DLC job required}"
     case $(hostname) in dsw*) echo "refusing to run the full phase on DSW"; exit 78;; esac
     SUF=""
     [ "$PHASE" = adsc ] && export ONLY_ADSC=1        # add-on: ADSC lanes on an already running main pipeline (same OUT)
     [ "$PHASE" = adscvox ] && export ONLY_ADSC=1
+    if [ "$PHASE" = voxabl ]; then                     # VoxCPM module ablation, own output root
+      export VOXABL=1 TOKC=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/tok-qwen25-v36_1; SUF=-voxabl
+    fi
     if [ "$PHASE" = fullvox ] || [ "$PHASE" = adscvox ]; then                    # VoxCPM-style planner (TSLM Qwen2.5-0.5B + FSQ + RALM + LocEnc)
       SUF=-vox; export TOKC=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/tok-qwen25-v36_1 BASECFG='{"planner": "voxcpm"}'
     fi

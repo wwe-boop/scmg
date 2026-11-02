@@ -38,6 +38,7 @@ class Streamer:
         self.lat = []                     # committed latents (normalised), one [z] per latent step
         self.frames = []                  # emitted joint frames (rad)
         self.k = 0; self.n_emitted = 0
+        self.st_hist = {}                 # chunk index -> robot-state token used when that chunk was generated
         self.timing = []
         self.cfg_w = cfg_w                   # classifier-free guidance (1 = off)
         # online text arrival (ADSC): 'final' = whole text known; 'x2' = X2Streaming-TTS token streaming (committed text
@@ -133,7 +134,8 @@ class Streamer:
         # chunks before the clip start do not exist: hide their audio (zeros) is enough; text times relative to window
         c = self.cond
         tt = c['ttime'] - f0 / 50.
-        text, tmask = m.text_tokens(c['text'][None].float(), tt[None].float(), c['tmask'][None].bool())
+        raw = c['text_c'] if (self.text_mode == 'x2' and 'text_c' in c) else c['text']   # token streaming: causal features
+        text, tmask = m.text_tokens(raw[None].float(), tt[None].float(), c['tmask'][None].bool())
         tvis = lvis = sstate = None
         adsc_m = hasattr(m, 'stream_emb')
         if self.text_mode != 'final' or self.deploy_timing or adsc_m:
@@ -154,7 +156,7 @@ class Streamer:
                 heard = now + self.H * STRIDE / 50.
                 ttw = tt.float()
                 voiced = (torch.isfinite(ttw)[None] & (torch.nan_to_num(ttw, 1e9)[None] <= heard[:, None]))[None]
-                tu, _ = m.text_tokens(c['text'][None].float(), ttw[None], tm0, drop=torch.ones(1, dtype=torch.bool, device=self.dev))
+                tu, _ = m.text_tokens(raw[None].float(), ttw[None], tm0, drop=torch.ones(1, dtype=torch.bool, device=self.dev))
                 text = torch.cat([text, tu], 1); tmask = torch.cat([tmask, tmask], 1)
                 tvis = torch.cat([tvis & voiced, tvis & ~voiced], -1)
         g = m.global_cond(c['spk'][None].float(), c['spk_valid'][None].float(), c['source'][None].long())
@@ -199,7 +201,11 @@ class Streamer:
             if kw >= WIN: break
             mt = mtm = None
             stw = None
-            if st_tok is not None: stw = st_tok[:, None].expand(1, WIN, -1)
+            if st_tok is not None:
+                # 11-02 review fix: every window position gets the state token of ITS OWN chunk (as in training), not a
+                # copy of the current one; chunks without a recorded state (before the start) use the current token
+                self.st_hist[self.k] = st_tok.detach()
+                stw = torch.stack([self.st_hist.get(c0 + jj, st_tok)[0] for jj in range(WIN)])[None]
             if cfg.mtc:
                 mt, mtm = m.mt_memory(text, tmask, a, amask, g, sref, lat[None], stw, WIN, tvis=tvis)
                 mflat, pm = m.planner_memory(mt, mtm)
