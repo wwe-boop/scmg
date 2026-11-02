@@ -92,7 +92,8 @@ for wid in range(SH, NW, NSH):
     committed = torch.stack(S.lat).cpu().numpy().astype(np.float32)
     elig = spd >= 0.8 * np.median(spd, 1, keepdims=True)
     np.savez(f, ci=ci, start=s0, committed=committed, cand_lat=cand_lat, total=tot, speed=spd, eligible=elig,
-             terms=terms, term_names=np.array(TERMS), gt_speed=gspd, target=json.dumps(TARGET))
+             terms=terms, term_names=np.array(TERMS), gt_speed=gspd, target=json.dumps(TARGET),
+             ref=s['ref'], ref_valid=s['ref_valid'])
     done += 1
     print(f'shard {SH} window {wid} done ({done}) {time.time() - t0:.0f}s best-mean {np.mean(np.min(np.where(elig, tot, np.inf), 1)):.3f} '
           f'cand-mean {tot.mean():.3f}', flush=True)

@@ -50,7 +50,7 @@ class VoxPlanner(nn.Module):
         from transformers import AutoModel
         d = cfg.d
         import os
-        lp = P(lm_path)
+        lp = P(getattr(cfg, 'vox_lm', '') or lm_path)
         if os.environ.get('SCMG_LM_CONFIG'):              # weights come from the SCMG checkpoint anyway (no LM read)
             from transformers import AutoConfig
             self.lm = AutoModel.from_config(AutoConfig.from_pretrained(os.environ['SCMG_LM_CONFIG']), torch_dtype=torch.float32,
@@ -62,6 +62,8 @@ class VoxPlanner(nn.Module):
             self.lm = AutoModel.from_pretrained(lp, torch_dtype=torch.float32, attn_implementation='sdpa')
         self.ab = dict(fsq=getattr(cfg, 'vox_fsq', True), ralm=getattr(cfg, 'vox_ralm', True),
                        locenc=getattr(cfg, 'vox_locenc', True), text=getattr(cfg, 'vox_text', True))
+        if not (self.ab['fsq'] is True or self.ab['fsq'] is False or self.ab['fsq'] == 'tanh'):
+            raise ValueError("vox_fsq must be True, False, or 'tanh'")
         if not self.ab['locenc']: self.p_lin = nn.Linear(CHUNK * cfg.z, d)
         H = self.lm.config.hidden_size; self.H = H
         self.locenc = LocEnc(cfg.z, d, cfg.heads)
@@ -104,7 +106,10 @@ class VoxPlanner(nn.Module):
             allow |= torch.eye(S, dtype=torch.bool, device=x.device)[None]             # no empty rows (padding queries)
             am = torch.zeros(allow.shape, dtype=x.dtype, device=x.device).masked_fill(~allow, torch.finfo(x.dtype).min)[:, None]
         hs = self.lm(inputs_embeds=x, attention_mask=am, position_ids=pos).last_hidden_state[:, -K:]
-        q = self.fsq(self.fsq_in(hs)) if self.ab['fsq'] else self.fsq_in(hs)
+        if self.ab['fsq'] == 'tanh':
+            q = torch.tanh(self.fsq_in(hs))
+        else:
+            q = self.fsq(self.fsq_in(hs)) if self.ab['fsq'] else self.fsq_in(hs)
         base = self.fsq_out(q)
         if not self.ab['ralm']: return base, q
         r_in = self.ralm_in(torch.cat([base, prev, au], -1)) + sincos(torch.arange(K, device=x.device), self.d)[None]

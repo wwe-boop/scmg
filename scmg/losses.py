@@ -8,6 +8,7 @@ Total = flow matching (unknown latents)                                       [a
       + state-conditioned recovery: the flow/continuity targets become the simulated recovery trajectory  [state]
 """
 from dataclasses import dataclass
+import numpy as np
 import torch
 import torch.nn.functional as F
 
@@ -15,6 +16,7 @@ from .common import CHUNK, CHUNK_FRAMES, STRIDE, PROSODY_COLS, U80
 from .model import INF, arrival_mask, stream_state, x2_arrival
 from .sim import simulate, state_vector, ARMS
 from .vae import recon_losses
+from .data import require_causal_text
 
 
 @dataclass
@@ -34,6 +36,11 @@ class StageCfg:
     ctx_noise_p: float = 0.9       # r5: probability that the KNOWN context latents are noised (exposure bias: with clean
     ctx_t: tuple = (0.75, 1.0)     # GT context in training, free-running speed fell to 0.28 of GT vs 0.99 with GT history)
     ctx_infer_t: float = 0.9       # context noise level used at inference by models trained with ctx noise
+    w_phys: float = 0.0            # stage-1 physical regularisation on the decoded chunk (11-02 user proposal): hardware joint
+                                   # limits, velocity/acceleration/jerk beyond the robot's limits, self-collision (FK + calibrated
+                                   # sphere proxy, scmg/kinematics.py); boundary continuity is the existing w_cont term
+    phys_frames: int = 256         # frames per step that go through FK / collision (random subset of the decoded targets)
+    phys_pairs: int = 40000        # sphere pairs per step (random subset; unbiased up to a constant)
     p_async: float = 0.0           # ADSC: among STREAMING samples, probability that the text also streams (else text final);
                                    # streaming samples never see timing of not-yet-voiced tokens (offline samples do)
     p_async_seg: float = 0.3       # text arrival unit: TTS segment (robot TTS / sentence-level engines) vs X2Streaming-TTS
@@ -58,6 +65,7 @@ def segments(x, K, before, after):
 
 
 def step_losses(model, vae, batch, sc: StageCfg, stats):
+    require_causal_text(batch.get('text_c'), sc.p_async > 0 and sc.p_async_seg < 1, 'ADSC training')
     cfg = model.cfg; dev = batch['q'].device
     q, mask, feat = batch['q'], batch['mask'], batch['feat']
     B, T, Jn = q.shape; N = T // STRIDE; K = N // CHUNK
@@ -244,7 +252,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     loss = out['flow'] + sc.w_aux * out['aux']
 
     # ---- decoded continuity / rhythm
-    if sc.w_cont > 0 or sc.w_rhy > 0:
+    if sc.w_cont > 0 or sc.w_rhy > 0 or sc.w_phys > 0:
         x1hat = torch.where(known[..., None], x1i, xt + (1 - t[..., None]) * v)
         # decode with the context the streamer has: 3 more history chunks before the known context (the decoder looks
         # ~7 latents back) and the next chunk's first latent as look-ahead (inference emits a frame only once the latent
@@ -269,6 +277,9 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         rl = recon_losses(y[:, CHUNK_FRAMES - 4:], gt_frames[:, CHUNK_FRAMES - 4:], fv[:, CHUNK_FRAMES - 4:] * w_inst[:, None])
         out.update({f'cont_{k}': v_ for k, v_ in rl.items()})
         loss = loss + sc.w_cont * (rl['rec'] + 0.3 * rl['vel'] + 0.1 * rl['acc'])
+        if sc.w_phys > 0:
+            out.update(phys_reg(y, fv * w_inst[:, None], qm, qs, sc))
+            loss = loss + sc.w_phys * (out['phys_joint'] + out['phys_dyn'] + out['phys_coll'])
         if sc.w_rhy > 0:
             yt = y[:, CHUNK_FRAMES:].reshape(B, K * CHUNK_FRAMES, Jn)
             gt = gt_frames[:, CHUNK_FRAMES:].reshape(B, K * CHUNK_FRAMES, Jn)
@@ -286,4 +297,44 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         out['kl_raw'] = (kl.sum(-1) * cm).sum() / cm.sum().clamp(min=1)
         loss = loss + sc.w_kl * out['kl']
     out['loss'] = loss
+    return out
+
+
+_PHYS = {}
+
+
+def phys_reg(y, fw, qm, qs, sc):
+    """y [M, F, J] decoded [ctx | target] frames (normalised), fw [M, F] frame weights (validity x low-noise trust).
+    Returns phys_joint (hardware-limit hinge^2), phys_dyn (|v|,|a|,|j| beyond the robot's limits, relative, hinge^2),
+    phys_coll (self-penetration^2 in cm^2 over a random frame / pair subset)."""
+    import json, os
+    from .common import CPFS
+    from .data import VIEW
+    from .kinematics import Kinematics
+    from .safety import limits34
+    dev = y.device
+    if dev not in _PHYS:
+        meta = json.load(open(f'{VIEW}/META.json'))
+        L = limits34(meta['lower'], meta['upper'], margin=0.0)
+        npz = os.environ.get('SCMG_PROXY', CPFS + '/CKPT/zehan/gesture-scmg/models/sphere_proxy_vox4e.npz')
+        t = lambda x: torch.as_tensor(np.asarray(x, np.float32), device=dev)
+        _PHYS[dev] = dict(lo=t(L['lo']), hi=t(L['hi']), v=t(L['v']), a=t(L['a']), j=t(L['j']), kin=Kinematics(npz, dev))
+    P = _PHYS[dev]
+    q = y.float() * qs + qm                                                          # rad
+    w = fw.float()
+    wn = w.sum().clamp(min=1)
+    jl = (torch.relu(q - P['hi']) ** 2 + torch.relu(P['lo'] - q) ** 2).sum(-1)
+    v = torch.diff(q, dim=1) * 50.; a = torch.diff(v, dim=1) * 50.; jk = torch.diff(a, dim=1) * 50.
+    hv = lambda x, lim: (torch.relu(x.abs() / lim - 1.) ** 2).sum(-1)
+    dyn = (hv(v, P['v']) * w[:, 1:]).sum() / wn + (hv(a, P['a']) * w[:, 2:]).sum() / wn + 0.1 * (hv(jk, P['j']) * w[:, 3:]).sum() / wn
+    out = dict(phys_joint=(jl * w).sum() / wn, phys_dyn=dyn)
+    tg = q[:, q.shape[1] // 2:].reshape(-1, q.shape[-1]); tw = w[:, w.shape[1] // 2:].reshape(-1)
+    idx = torch.nonzero(tw > 0.5).flatten()
+    if len(idx) == 0:
+        out['phys_coll'] = y.sum() * 0.; return out
+    idx = idx[torch.randperm(len(idx), device=dev)[:sc.phys_frames]]
+    kin = P['kin']; npair = kin.pairs.shape[0]
+    pi = torch.randint(0, npair, (min(sc.phys_pairs, npair),), device=dev)
+    pen = kin.penetration(tg[idx], pi, d_safe=0.005) * 100.                          # cm
+    out['phys_coll'] = (pen ** 2).sum(-1).mean() * (npair / len(pi))
     return out

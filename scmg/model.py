@@ -51,8 +51,9 @@ class Config:
     lm_lr_scale: float = 0.1       # learning-rate scale of the pretrained LM (voxcpm planner)
     lora_r: int = 0                # >0: LoRA on planner/flow linear layers (base frozen by the trainer)
     # VoxCPM planner ablations (11-02, user: which VoxCPM modules make it work); defaults = the full design
+    vox_lm: str = ''               # VoxCPM text-LM directory ('' = the default Qwen2.5-0.5B); Qwen ablation (11-02)
     vox_lm_init: str = 'pretrained'   # 'random': same Qwen2.5-0.5B architecture, no pretrained weights
-    vox_fsq: bool = True           # False: continuous bottleneck (no tanh/rounding) instead of the FSQ skeleton
+    vox_fsq: bool | str = True     # True: FSQ; 'tanh': bounded continuous; False: unbounded continuous
     vox_ralm: bool = True          # False: plan = FSQ skeleton only (no residual LM)
     vox_locenc: bool = True        # False: previous chunk enters through a linear layer (as in the chunk planner)
     vox_text: bool = True          # False: no text tokens in the LM sequence (audio / motion only)

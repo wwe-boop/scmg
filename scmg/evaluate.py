@@ -14,13 +14,13 @@ time a person HOLDS four arm joints displaced by 0.3 rad for 0.4-1.0 s, then rel
   recover_s       time after release until |command - executed| < 0.05 rad on every arm joint
   track_rms_after RMS(command - executed) after release
 """
-import argparse, json
+import argparse, json, os
 from pathlib import Path
 import numpy as np
 import torch
 
 from .common import CHUNK_FRAMES, PROSODY_COLS, J, U80, P
-from .data import View, WindowDataset, VIEW
+from .data import View, WindowDataset, VIEW, require_causal_text
 from .infer import generate
 from .model import INF
 from .sim import ARMS
@@ -116,6 +116,7 @@ def main():
     dev = 'cuda'; out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     stats = json.loads(Path(a.stats).read_text())
     view = View(a.view, 'val', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache)
+    require_causal_text(view.text_c, a.text_mode == 'x2', 'evaluate --text-mode x2')
     m, vae = load(a.ckpt, a.vae, dev)
     qm, qs = np.asarray(stats['q_mean'], np.float32), np.asarray(stats['q_std'], np.float32)
     standby = qm
@@ -144,7 +145,7 @@ def main():
             sp.append(np.abs(np.diff(g0[:n, ARMS], axis=0)).mean() / max(np.abs(np.diff(gt[:n, ARMS], axis=0)).mean(), 1e-6))
             if len(gens) > 1: dv.append(float(np.abs(gens[0][:n, ARMS] - gens[1][:n, ARMS]).mean()))
             per.append(dict(H=hname, clip=view.clips[ci]['clip'], ba=ba_g[-1], br=br_g[-1], sp=sp[-1], dv=dv[-1] if len(gens) > 1 else None))
-            if ci < 8: np.save(out / f'gen_H{hname}_{ci}.npy', g0); np.save(out / f'gt_{ci}.npy', gt)
+            if ci < int(os.environ.get('SCMG_SAVE_N', '8')): np.save(out / f'gen_H{hname}_{ci}.npy', g0); np.save(out / f'gt_{ci}.npy', gt)
         tk = np.array(ticks) * 1000
         res[hname] = dict(clips=len(ba_g), FKD=frechet(F_gen, F_gt) if len(F_gen) > 110 else None,
                           beat_align=float(np.mean(ba_g)), beat_align_gt=float(np.mean(ba_t)),

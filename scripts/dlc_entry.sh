@@ -13,12 +13,13 @@ export USE_TF=0 USE_FLAX=0 OMP_NUM_THREADS=4 PYTHONUNBUFFERED=1
 TC=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models/text-e5-causal-v36_1
 [ -f $TC/TEXT_FEAT.npy ] && export SCMG_TEXT_CAUSAL=$TC
 case $PHASE in
-  full|full25|fullvox|adsc|adscvox|voxabl)
+  full|full25|fullvox|adsc|adscvox|voxabl|voxq)
     : "${DLC_JOB_ID:?real DLC job required}"
     case $(hostname) in dsw*) echo "refusing to run the full phase on DSW"; exit 78;; esac
     SUF=""
     [ "$PHASE" = adsc ] && export ONLY_ADSC=1        # add-on: ADSC lanes on an already running main pipeline (same OUT)
     [ "$PHASE" = adscvox ] && export ONLY_ADSC=1
+    if [ "$PHASE" = voxq ]; then export VOXQ=1 TOKC=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/tok-qwen25-v36_1; SUF=-voxq; fi
     if [ "$PHASE" = voxabl ]; then                     # VoxCPM module ablation, own output root
       export VOXABL=1 TOKC=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/tok-qwen25-v36_1; SUF=-voxabl
     fi

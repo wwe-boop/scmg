@@ -18,6 +18,7 @@ import torch
 from .common import CHUNK, CHUNK_FRAMES, STRIDE, U80
 from .model import INF, arrival_mask, stream_state, x2_arrival
 from .sim import state_vector
+from .data import require_causal_text
 
 WIN, LOOK = 16, 2
 
@@ -29,6 +30,7 @@ class Streamer:
                  elastic=None):
         """feat [T, 89] normalised (whole utterance; access is restricted to what has arrived);
         cond: dict(text [K,768], ttime [K] absolute s, tmask [K], spk [192], spk_valid, source, ref [R,J], ref_valid)."""
+        require_causal_text(cond.get('text_c'), text_mode == 'x2', 'Streamer text_mode=x2')
         self.m, self.vae, self.dev = model.eval(), vae.eval(), device
         self.feat = torch.as_tensor(feat, device=device).float()
         self.cond = {k: torch.as_tensor(v, device=device) for k, v in cond.items()}
@@ -38,6 +40,7 @@ class Streamer:
         self.lat = []                     # committed latents (normalised), one [z] per latent step
         self.frames = []                  # emitted joint frames (rad)
         self.k = 0; self.n_emitted = 0
+        self.noise_override = None        # callable(streamer, chunk index, default noise [1, CHUNK, z]) -> noise or None
         self.st_hist = {}                 # chunk index -> robot-state token used when that chunk was generated
         self.timing = []
         self.cfg_w = cfg_w                   # classifier-free guidance (1 = off)
@@ -134,7 +137,7 @@ class Streamer:
         # chunks before the clip start do not exist: hide their audio (zeros) is enough; text times relative to window
         c = self.cond
         tt = c['ttime'] - f0 / 50.
-        raw = c['text_c'] if (self.text_mode == 'x2' and 'text_c' in c) else c['text']   # token streaming: causal features
+        raw = c['text_c'] if self.text_mode == 'x2' else c['text']   # token streaming: causal features
         text, tmask = m.text_tokens(raw[None].float(), tt[None].float(), c['tmask'][None].bool())
         tvis = lvis = sstate = None
         adsc_m = hasattr(m, 'stream_emb')
@@ -231,6 +234,9 @@ class Streamer:
             L = cfg.ctx + CHUNK
             known = torch.zeros(1, L, dtype=torch.bool, device=self.dev); known[:, :cfg.ctx] = has_ctx
             x = torch.randn(1, L, z, device=self.dev, generator=self.g)
+            if self.noise_override is not None:      # stage-2 latent steering (DSRL): a policy chooses the initial noise
+                eps = self.noise_override(self, self.k + j, x[:, cfg.ctx:].clone())
+                if eps is not None: x[:, cfg.ctx:] = eps.to(x)
             c_ = prev[-cfg.ctx:][None]
             if self.ctx_t < 1: c_ = self.ctx_t * c_ + (1 - self.ctx_t) * torch.randn(c_.shape, device=self.dev, generator=self.g)
             x[:, :cfg.ctx] = torch.where(known[:, :cfg.ctx, None], c_, x[:, :cfg.ctx])

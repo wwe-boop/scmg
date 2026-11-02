@@ -24,7 +24,11 @@ cd $CODE && export PYTHONPATH=$CODE
 mkdir -p $R
 rm -f $R/*/FAILED                          # a resubmission retries lanes that failed in an earlier job
 steps() { python3 -c "print(max(4, int($1 * $SCALE)))"; }
-g() { echo $(( $1 % NGPU )); }            # lane -> GPU (selftest: everything on GPU 0)
+# lane -> GPU: index into the devices the job was GIVEN (CUDA_VISIBLE_DEVICES), never a bare 0..N-1 -- on a shared DSW a
+# selftest launched with CUDA_VISIBLE_DEVICES=1 was remapped to physical GPU 0 (forbidden there) by the old version (11-02)
+VISIBLE_DEVS=${CUDA_VISIBLE_DEVICES-}
+DEVS=(${VISIBLE_DEVS//,/ }); [ ${#DEVS[@]} -eq 0 ] && DEVS=($(seq 0 $((NGPU - 1))))
+g() { echo ${DEVS[$(( $1 % ${#DEVS[@]} ))]}; }
 
 train() {  # gpu out args...
   local gpu=$1 o=$2; shift 2
@@ -70,6 +74,27 @@ EOF
 # ---------------- VoxCPM module ablation (VOXABL=1): base stage only, one GPU per lane, identical budget; which parts of
 # the VoxCPM-style planner make it work (pretrained text LM / FSQ skeleton / residual LM / LocEnc / text in the sequence),
 # against the chunk planner at the same budget and a second seed of the full design (noise floor).
+# ---------------- Qwen text-LM ablation (VOXQ=1): same budget as VOXABL; each lane with its own LM and token cache.
+# 11-02 VOXABL finding: Qwen2.5 RANDOM init (FKD 1.25 / speed 0.93) and NO text (1.75 / 0.68) beat the pretrained LM
+# (4.62 / 0.42) -> lanes test whether a newer pretrained LM changes that, and whether the cause is pretraining or text.
+if [ "${VOXQ:-0}" = 1 ]; then
+  M=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models
+  VB="--stage base --steps $(steps 8000) --lr 3e-4 --warmup $(steps 1000) --eval-every $(steps 500) --snap-every 0"
+  qlane() {  # gpu dir tokcache cfg-json extra...
+    local gpu=$1 o=$2 tc=$3 cf=$4; shift 4
+    train $gpu $o $VB --tok-cache $tc --cfg "$cf" "$@" && TOKC=$tc CFGW=2.0 evaluate $gpu $o $NEVAL best.pt --horizons inf,0
+  }
+  Q2=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/tok-qwen25-v36_1; Q3=$M/tok-qwen3-0.6b-v36_1
+  L3=()
+  ( qlane $(g 0) qwen3-pretrained $Q3 "{\"planner\": \"voxcpm\", \"vox_lm\": \"$M/Qwen3-0.6B-Base\"}" ) & L3+=($!)
+  ( qlane $(g 1) qwen3-random $Q3 "{\"planner\": \"voxcpm\", \"vox_lm\": \"$M/Qwen3-0.6B-Base\", \"vox_lm_init\": \"random\"}" ) & L3+=($!)
+  ( qlane $(g 2) qwen25-pretrained-lmlr1 $Q2 "{\"planner\": \"voxcpm\", \"lm_lr_scale\": 1.0}" ) & L3+=($!)
+  ( qlane $(g 3) qwen25-random-seed1 $Q2 "{\"planner\": \"voxcpm\", \"vox_lm_init\": \"random\"}" --seed 1 ) & L3+=($!)
+  wait "${L3[@]}"
+  $PY -m scmg.summarize $R > $R/SUMMARY.md 2>&1 || true
+  echo "$(date -Is) VOXQ_DONE"; touch $R/VOXQ_DONE; exit 0
+fi
+
 if [ "${VOXABL:-0}" = 1 ]; then
   VB="--stage base --steps $(steps 8000) --lr 3e-4 --warmup $(steps 1000) --eval-every $(steps 500) --snap-every 0"
   V='"planner": "voxcpm"'
@@ -85,7 +110,8 @@ if [ "${VOXABL:-0}" = 1 ]; then
   ( vlane $(g 4) vox-nolocenc "{$V, \"vox_locenc\": false}" ) & L2+=($!)
   ( vlane $(g 5) vox-notext "{$V, \"vox_text\": false}" ) & L2+=($!)
   ( vlane $(g 6) chunk-planner "{}" ) & L2+=($!)
-  ( vlane $(g 7) vox-full-seed1 "{$V}" --seed 1 ) & L2+=($!)
+  ( vlane $(g 7) vox-full-seed1 "{$V}" --seed 1
+    vlane $(g 7) vox-fsqtanh "{$V, \"vox_fsq\": \"tanh\"}" ) & L2+=($!)
   wait "${L2[@]}"
   $PY -m scmg.summarize $R > $R/SUMMARY.md 2>&1 || true
   echo "$(date -Is) VOXABL_DONE"; touch $R/VOXABL_DONE; exit 0
@@ -94,9 +120,9 @@ fi
 # ---------------- stage 0: motion VAE (only when the given VAE does not exist yet, e.g. the 25 Hz ablation)
 if [ ! -f $VAE ]; then
   vd=$(basename $(dirname $VAE))
-  train 0 $vd --stage vae --steps $(steps 30000) --batch 128 --lr 1e-3 --warmup $(steps 500) \
+  train $(g 0) $vd --stage vae --steps $(steps 30000) --batch 128 --lr 1e-3 --warmup $(steps 500) \
     --deriv-ramp $(steps 3000) --snap-every 0 || exit 1
-  CUDA_VISIBLE_DEVICES=0 $PY scripts/check_vae.py $VAE > $R/$vd/CHECK_VAE.json 2>> $R/$vd/log.txt || exit 1
+  CUDA_VISIBLE_DEVICES=$(g 0) $PY scripts/check_vae.py $VAE > $R/$vd/CHECK_VAE.json 2>> $R/$vd/log.txt || exit 1
   cat $R/$vd/CHECK_VAE.json
 fi
 
@@ -110,7 +136,7 @@ elif [ ! -f $R/base/DONE.json ]; then
     $PY -m torch.distributed.run --standalone --nproc_per_node=$NGPU -m scmg.train --stage base --out $R/base $C --cfg "$BASECFG" \
       --batch $BATCH --steps $(steps 8000) --lr 3e-4 --warmup $(steps 1000) --eval-every $(steps 500) --snap-every $(steps ${SNAP:-2000}) >> $R/base/log.txt 2>&1
   else
-    CUDA_VISIBLE_DEVICES=0 $PY -m scmg.train --stage base --out $R/base $C --cfg "$BASECFG" \
+    CUDA_VISIBLE_DEVICES=$(g 0) $PY -m scmg.train --stage base --out $R/base $C --cfg "$BASECFG" \
       --batch $BATCH --steps $(steps 8000) --lr 3e-4 --warmup $(steps 1000) --eval-every $(steps 500) --snap-every $(steps ${SNAP:-2000}) >> $R/base/log.txt 2>&1
   fi
   [ -f $R/base/DONE.json ] || { echo "base FAILED"; touch $R/base/FAILED; kill $BASEWATCH 2>/dev/null; exit 1; }

@@ -166,24 +166,39 @@ for _ in range(1500):
     near |= proxy_dd(q) < 0.03
 keep = near
 pairs = pairs[keep]
-# calibration: body pairs that the proxy flags much more often than MuJoCo reports a contact for them are structural
-# neighbours whose shells are inflated (e.g. shoulder link vs torso) -> dropped
+# calibration (per BODY pair): the voxel shells are inflated, so a pair of bodies that MuJoCo reports as NOT touching can
+# still overlap in the proxy. offset_bp = 98th percentile of the proxy's (negative) min distance over poses where MuJoCo has
+# no contact for that body pair; penetration = relu(-(dd + offset)). Pairs that really touch keep their signal beyond it.
 import collections
 pb = lambda i: (int(sb[pairs[i, 0]]), int(sb[pairs[i, 1]]))
-body_of_pair = np.array([pb(i) for i in range(len(pairs))])
-cnt_px, cnt_mj, NCAL = collections.Counter(), collections.Counter(), 800
-for _ in range(NCAL):
-    q = rest_q.copy()
-    for i in armhand: q[i] = rng.uniform(lo[i], hi[i])
+bpl = sorted(set(pb(i) for i in range(len(pairs)))); bpi = {bp: k for k, bp in enumerate(bpl)}
+pair_bp = np.array([bpi[pb(i)] for i in range(len(pairs))])
+neg = [[] for _ in bpl]
+# calibration poses: random arm poses AND real training frames (people hold arms close to the torso far more often than
+# random poses do; without them the proxy flagged 16 % of ground-truth frames)
+tq = np.load('/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/train-v1-20261101/views/data-v36_1/train_q.npy', mmap_mode='r')
+data_q = np.asarray(tq[np.sort(rng.choice(len(tq), 3000, replace=False))], float)
+cal = [None] * 1200 + list(data_q)
+for qd in cal:
+    if qd is None:
+        q = rest_q.copy()
+        for i in armhand: q[i] = rng.uniform(lo[i], hi[i])
+    else:
+        q = np.clip(qd, lo, hi)
     set_q(q)
+    touch = set()
     for c_ in d.contact[:d.ncon]:
         if c_.dist < -1e-4:
-            a_, b_ = int(m.geom_bodyid[c_.geom1]), int(m.geom_bodyid[c_.geom2]); cnt_mj[(a_, b_)] += 1; cnt_mj[(b_, a_)] += 1
-    hit = proxy_dd(q) < 0
-    for bp in set(map(tuple, body_of_pair[hit])): cnt_px[bp] += 1
-drop = {bp for bp, c in cnt_px.items() if c / NCAL > 0.2 and cnt_mj[bp] / NCAL < 0.02}
-print('calibration dropped body pairs:', sorted((mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, a), mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b)) for a, b in drop), flush=True)
-keep = np.array([tuple(bp) not in drop for bp in body_of_pair])
+            a_, b_ = int(m.geom_bodyid[c_.geom1]), int(m.geom_bodyid[c_.geom2]); touch.add((a_, b_)); touch.add((b_, a_))
+    mn = np.full(len(bpl), np.inf); np.minimum.at(mn, pair_bp, proxy_dd(q))
+    for k, bp in enumerate(bpl):
+        if bp not in touch: neg[k].append(mn[k])
+bp_off = np.array([max(0., -np.percentile(x, 2)) if len(x) else 0. for x in neg])
+offset = bp_off[pair_bp]
+print('body-pair offsets: n>0', int((bp_off > 0).sum()), 'of', len(bpl), 'max %.3f m' % bp_off.max(), flush=True)
+_proxy_dd_raw = proxy_dd
+proxy_dd = lambda q: _proxy_dd_raw(q) + offset
+keep = np.ones(len(pairs), bool)
 print('pairs before filter', len(pairs), 'kept', int(keep.sum()), flush=True)
 pairs = pairs[keep]
 print('bodies with geoms', len(pts), 'spheres', len(sb), 'pairs', len(pairs), 'mimic/held joints approximated', mimic, flush=True)
@@ -210,7 +225,7 @@ bn = lambda b: mujoco.mj_id2name(m, mujoco.mjtObj.mjOBJ_BODY, b)
 fb = collections.Counter()
 for (a, b), c in FAP.items(): fb[tuple(sorted((bn(a), bn(b))))] += c
 print('false-alarm body pairs (sphere-pair hits):', fb.most_common(15), flush=True)
-np.savez(out, joints=np.array(J34), parent=parent, body_pos=bpos, body_quat=bquat, body_joint=bj, joint_type=jtype,
+np.savez(out, pair_offset=offset, joints=np.array(J34), parent=parent, body_pos=bpos, body_quat=bquat, body_joint=bj, joint_type=jtype,
          joint_axis=jaxis, joint_anchor=janchor, joint_const=jconst, sphere_body=sb, sphere_center=sc, sphere_radius=sr,
          pairs=pairs, fk_err=max(err), recall=rec / max(tot_c, 1), false_alarm=fa / max(tot_n, 1))
 print('saved', out)

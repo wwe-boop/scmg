@@ -9,7 +9,7 @@ contiguous in the arrays, verified 0 gaps), so a window may span several utteran
   spk    [192], spk_valid, source        (cond/COND.json + SPK_EMB.npy)
   ref    [R, J]   reference motion: a window of ANOTHER clip of the same speaker (ref_valid = 0 if none)
 """
-import json
+import json, os
 from collections import defaultdict
 from pathlib import Path
 import numpy as np
@@ -31,6 +31,13 @@ def compute_stats(view, n=400000, seed=0):
                 f_mean=fmean.tolist(), f_std=np.maximum(fstd, 1e-3).tolist())
 
 
+def require_causal_text(text_c, required, context):
+    """Reject token streaming without prefix-causal E5, before sampling modes or running the model."""
+    if required and text_c is None:
+        raise ValueError(f"{context} requires text_c (prefix-causal E5); set SCMG_TEXT_CAUSAL "
+                         "to the prep_text --causal cache. Bidirectional E5 cannot be used for token streaming.")
+
+
 class View:
     """Everything loaded once (RAM, ~8 GB) before DataLoader workers fork (shared copy-on-write)."""
 
@@ -44,7 +51,7 @@ class View:
         self.q = np.load(v / 'train_q.npy', mmap_mode=mode)
         # frames inside retargeting jumps (BEAT2 only, scripts/glitch_audit.py; jump frame +-1) are excluded from losses
         gm = Path(P('/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/glitch-audit/GLITCH_MASK.npy'))
-        self.glitch = np.load(gm, mmap_mode='r') if gm.exists() else None
+        self.glitch = np.load(gm, mmap_mode='r') if (gm.exists() and os.environ.get('SCMG_NO_GLITCH') != '1') else None   # data ablation switch
         self.f = np.load(v / 'train_feat.npy', mmap_mode=mode)
         cond = json.loads((v / 'cond' / 'COND.json').read_text())
         self.cond = cond['items']; self.spk_emb = np.load(v / 'cond' / 'SPK_EMB.npy').astype(np.float32)
