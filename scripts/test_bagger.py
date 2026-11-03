@@ -88,7 +88,8 @@ def main(a):
     np.savez(root/'0.npz',q_reversed=q[::-1].copy(),feat_reversed=f,
              original_spk=np.ones(192,np.float32),original_spk_valid=np.float32(1),
              original_ref=np.ones((128,34),np.float32),original_ref_valid=np.float32(1))
-    (root/'MANIFEST.json').write_text(json.dumps(dict(source='bagger_reversed',split='train',rows=[
+    (root/'MANIFEST.json').write_text(json.dumps(dict(source='bagger_reversed',split='train',
+        seed_representation='VAE reconstruction of ground-truth seed latents; no raw-joint splice',rows=[
         dict(file='0.npz',frames=384,loss_from_chunk=16,cond='reverse')])))
     view=SimpleNamespace(qm=np.zeros(34),qs=np.ones(34),text_c=None,tok=None,intent=None,tts=None,bagger_dir=str(root),
                          weights=lambda share:np.ones(1),clips=[dict(frames=384)])

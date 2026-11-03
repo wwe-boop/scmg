@@ -6,7 +6,7 @@
 
 `scripts/bagger_collect.py --ckpt ... --out ... --cond null|reverse` 默认 2000 条、1 块真实前缀 + 23 块生成，10 步 Euler、CFG 从 checkpoint `cfg_w` 取值，缺省采用现有 lane 的 2.0。明确启用 trim_start、cfg_null_fix 和 VoxCPM window_lm_text。支持 --dry-run、--shard/--shards、按索引断点续采；种子由 round 和 index 决定。
 
-只从 View(split='train') 采集，使用原类别/帧长采样权重并排除 holdout，拒绝 glitch 窗口。每条保存前向与反向关节（rad）、原始与条件处理后的音频特征（已归一化）、重编码 latent（已归一化）、原始文本/时间等条件。保留真实 seed 的原始关节，不以 VAE 重建代替。反转后的文本条件置空；null 分支同时置空 speaker/reference style，reverse 分支保留原 speaker/reference style。采集时裁掉整段录音 token 容量中本窗口未使用的尾部 padding（至少留 160 位），有效重叠语句的 tokens 全部保留，再由 Streamer 按窗口取最多 160 个；避免在短窗口上计算整段录音的空 token。
+只从 View(split='train') 采集，使用原类别/帧长采样权重并排除 holdout，拒绝 glitch 窗口。每条保存前向与反向关节（rad）、原始与条件处理后的音频特征（已归一化）、重编码 latent（已归一化）、原始文本/时间等条件。seed latent 来自真值，整条 latent 轨迹统一 VAE 解码后反转；末尾因此是真值 seed 的 VAE 重建，原始 seed 另存 q_seed_truth 审计。禁止把原始关节覆盖回解码结果，以免引入人工接缝。反转后的文本条件置空；null 分支同时置空 speaker/reference style，reverse 分支保留原 speaker/reference style。采集时裁掉整段录音 token 容量中本窗口未使用的尾部 padding（至少留 160 位），有效重叠语句的 tokens 全部保留，再由 Streamer 按窗口取最多 160 个；避免在短窗口上计算整段录音的空 token。
 
 每个采集目录为 COLLECTION.json + NPZ/逐条 JSON + MANIFEST.json，逐条 SHA256 和原始 item ID 可追溯；仅全部完成且 hash 验证通过才写 MANIFEST。View 的 `bagger_dir` 和 WindowDataset 的 `bagger_share` 接入它；多个采集目录以冒号连接，累积池按条均匀采样。集合是实验用纠正池，未通过 COMMON_RULES §15 全部正式数据门禁，不写回 canonical view，不声称可直接执行或正式入库。
 
@@ -30,4 +30,6 @@ null 条件隐藏音频并进入 audio_null 分支，文本/说话人/参考风�
 
 ## 与论文的差异
 
-本任务是关节/语音条件模型，不是视频/自然语言提示词模型；论文通过改写文字描述倒放，本实验将文本置空，并比较音频置空/反转。窗口长度、初始模型、batch、学习率、每轮步数按任务而非论文设定。默认训练裁剪保留纠正尾段，不观察完整 24 块前缀。保留真值起始块原关节，最后一块仍含 VAE 重新编码误差。是否有效必须以完成的 rollout 结果判定，代码和数值测试通过不等于达到运动指标。
+本任务是关节/语音条件模型，不是视频/自然语言提示词模型；论文通过改写文字描述倒放，本实验将文本置空，并比较音频置空/反转。窗口长度、初始模型、batch、学习率、每轮步数按任务而非论文设定。默认训练裁剪保留纠正尾段，不观察完整 24 块前缀。真实起始块经过统一 VAE 解码，因此反转后的最后一块包含 VAE 重建误差，原始真值单独保留。是否有效必须以完成的 rollout 结果判定，代码和数值测试通过不等于达到运动指标。
+
+首轮采集的旧实现曾把原始 seed 关节覆盖到解码轨迹，制造不连续，已停止其未完成训练并归档。bagger_redecode_seed.py 从相同模型、原始真值和生成种子重放首个生成块，按因果 VAE 的一个 latent 前视范围重算 seed 的解码值；校验重叠生成帧，并完整回放最差样本验证等价性。后续采集直接统一解码，不再走这一恢复工具。

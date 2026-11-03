@@ -62,8 +62,9 @@ def main(a):
     del ck
     spec = dict(source='bagger_reversed', split='train', cond=a.cond, count=a.count, n_gen=a.n_gen,
                 seed_chunks=a.seed_chunks, seed=a.seed, frames=T, loss_from_chunk=(T//CHUNK_FRAMES)*2//3,
-                checkpoint=ck_meta, vae=a.vae, view=a.view, holdout=a.holdout,
+                checkpoint=ck_meta, vae=a.vae, view=a.view, holdout=a.holdout, stats=a.stats,
                 inference=dict(steps=10, trim_start=True, cfg_null_fix=True, window_lm_text=True, trim_unused_id_padding=True),
+                seed_representation='VAE reconstruction of ground-truth seed latents; no raw-joint splice',
                 eligible_clips=int((weights > 0).sum()), sampling='seed+index, original category/frame weights, holdout excluded')
     print(json.dumps(spec), flush=True)
     if a.dry_run: return
@@ -110,14 +111,16 @@ def main(a):
         for _ in range(a.n_gen): stream.tick()
         generated_lat = torch.stack(stream.lat)
         decoded = vae.decode((generated_lat*model.lat_std+model.lat_mean)[None].float())[0]
-        # The seed is real joints, not their lossy VAE reconstruction.
-        decoded[:seed_frames] = q[0, :seed_frames]
+        # Decode the WHOLE latent trajectory, including the GT-encoded seed.
+        # Splicing raw GT joints here creates an artificial seed/generated seam.
         forward = decoded.cpu().numpy()*qstd+qmean
         reversed_q = forward[::-1].copy()
         re_mu = vae.encode(torch.from_numpy((reversed_q-qmean)/qstd).cuda()[None])[0][0]
         re_lat = ((re_mu-model.lat_mean)/model.lat_std).cpu().numpy()
         rev_feat = np.zeros_like(sample['feat']) if a.cond == 'null' else sample['feat'][::-1].copy()
         payload = dict(q_forward=forward, q_reversed=reversed_q, lat_reencoded=re_lat,
+                       q_seed_truth=sample['q'][:seed_frames]*qstd+qmean,
+                       lat_forward=generated_lat.cpu().numpy(),
                        feat_forward=sample['feat'], feat_reversed=rev_feat,
                        loss_from_chunk=np.int64(spec['loss_from_chunk']))
         payload.update({'original_'+k: sample[k] for k in COND_KEYS if k in sample})

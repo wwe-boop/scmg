@@ -27,7 +27,8 @@ for row in m['rows']:
         if int(z['loss_from_chunk'])!=row['loss_from_chunk'] or row['loss_from_chunk']!=row['frames']//CHUNK_FRAMES*2//3:bad.append('loss_start')
         if not all(np.isfinite(z[k]).all() for k in ('q_forward','q_reversed','lat_reencoded','feat_forward','feat_reversed')):bad.append('finite')
         off=min(it['offset'] for it in its)+row['start'];n=m['seed_chunks']*CHUNK_FRAMES
-        err=float(np.max(np.abs(q[:n]-qraw[off:off+n])));mxseed=max(mxseed,err)
+        seed=z['q_seed_truth'] if 'q_seed_truth' in z else q[:n]
+        err=float(np.max(np.abs(seed-qraw[off:off+n])));mxseed=max(mxseed,err)
         if err>1e-6:bad.append('ground_truth_seed')
         max_jump=max(max_jump,float(np.max(np.abs(np.diff(q,axis=0)))))
     if bad:fail.append(dict(file=row['file'],errors=bad))

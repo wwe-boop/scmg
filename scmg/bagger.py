@@ -43,6 +43,8 @@ class BaggerPool:
             meta = json.loads((p / 'MANIFEST.json').read_text())
             if meta['source'] != 'bagger_reversed' or meta['split'] != 'train':
                 raise ValueError('only training BAgger collections may be aggregated')
+            if meta.get('seed_representation') != 'VAE reconstruction of ground-truth seed latents; no raw-joint splice':
+                raise ValueError('collection must use unified VAE decoding; regenerate legacy raw-spliced seed data')
             for row in meta['rows']:
                 if row['frames'] < ds.T: raise ValueError('BAgger clip shorter than training window')
                 start = row['frames'] - ds.T
