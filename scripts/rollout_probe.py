@@ -19,6 +19,9 @@ D = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg'; dev = 'cuda'
 st = json.load(open(D + '/STATS_v36_1.json')); qm, qs = np.array(st['q_mean'], np.float32), np.array(st['q_std'], np.float32)
 VAE = sys.argv[1]; NCLIP = 20
 WIN = os.environ.get('ROLLOUT_WINDOW_LM_TEXT') == '1'   # 11-03 review: windowed LM text (training protocol) for VoxCPM
+TM = os.environ.get('ROLLOUT_TEXT_MODE', 'final')      # 11-03 user: deployment text streams word by word -> x2 (+ deploy timing, windowed LM)
+X2_LAG = float(os.environ.get('ROLLOUT_X2_LAG', '0.15'))
+if TM != 'final': WIN = True
 
 
 def clips(tok):
@@ -42,9 +45,9 @@ def run(m, vae, data, w, oracle):
     for nch, s in data:
         q = torch.from_numpy(s['q']).float().to(dev)[None]
         mu, _ = vae.encode(q); gl = ((mu - m.lat_mean) / m.lat_std)[0]                 # [N, z] GT latents (normalised)
-        cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm', 'titime', 'tseg', 'tiseg', 'tiend') if k in s}
+        cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm', 'titime', 'tseg', 'tiseg', 'tiend', 'text_c') if k in s}
         S = Streamer(m, vae, s['feat'], cond, st, H=10 ** 9, steps=10, seed=0, standby=st['q_mean'], ctx_t=m.ctx_t, cfg_w=w,
-                     window_lm_text=WIN and m.cfg.planner == 'voxcpm')
+                     window_lm_text=WIN and m.cfg.planner == 'voxcpm', text_mode=TM, x2_rate=15.0, x2_lag=X2_LAG, deploy_timing=TM != 'final')
         gen = []
         for k in range(nch):
             S.tick(None, None, None)
