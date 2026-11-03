@@ -58,7 +58,7 @@ def overfit_clips(view, n):
     return view.clips
 
 
-ADDABLE = {'vox_prefsq_norm', 'vox_text_xattn', 'vox_slots', 'vox_word_aux', 'sem_head', 'sem_cond', 'intent_aux', 'tts_h'}
+ADDABLE = {'vox_prefsq_norm', 'vox_text_xattn', 'vox_slots', 'vox_word_aux', 'sem_head', 'sem_cond', 'intent_aux', 'tts_h', 'adsc'}  # adsc: zero-init stream_emb (11-04)
 
 
 def validate_additions(old, changes):

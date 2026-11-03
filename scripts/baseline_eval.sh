@@ -15,6 +15,7 @@ WL=--window-lm-text; [ "${NOVOX:-0}" = 1 ] && WL=""          # chunk/main planne
 if [ $P = offline ]; then EV=(--horizons inf $WL); GS=(--horizon inf); RO="ROLLOUT_WINDOW_LM_TEXT=1"; HT=Hinf
 else EV=(--horizons 2 $WL --text-mode x2 --x2-rate 15 --x2-lag 0.15 --deploy-timing); GS=(--horizon 2 --text-mode x2 --x2-rate 15 --x2-lag 0.15 --deploy-timing); RO="ROLLOUT_TEXT_MODE=x2 ROLLOUT_X2_LAG=0.15 ROLLOUT_H=2"; HT=H2; fi
 log(){ echo "$(date -Is) $*" >> $O/runner.log; }
+SEEDS="0 1"; SEMN=200; [ "${QUICK:-0}" = 1 ] && { SEEDS=0; SEMN=60; }   # quick tier: seed 0, 60 semantic clips
 if [ $part = fgd ]; then
   for s in 0 1; do
     od=$O/eval-s$s; [ -f $od/RESULTS.json ] && continue
@@ -23,14 +24,14 @@ if [ $part = fgd ]; then
       && log "EVAL_DONE s$s" || { log "EVAL_FAILED s$s"; exit 1; }
   done
 else
-  for s in 0 1; do
+  for s in $SEEDS; do
     f=$O/rollout-s$s.json; grep -q '^{' $f 2>/dev/null && continue
     env $RO ROLLOUT_SEED=$s ROLLOUT_FIX=1 $PY scripts/rollout_probe.py $VAE $lab=$ck@$w > $f.tmp 2>> $O/rollout.log && grep -q '^{' $f.tmp && mv $f.tmp $f \
       && log "ROLLOUT_DONE s$s" || { log "ROLLOUT_FAILED s$s"; exit 1; }
   done
-  for s in 0 1; do
+  for s in $SEEDS; do
     so=$O/semantic-s$s; [ -f $so/DONE ] && continue
-    $PY scripts/gen_semantic.py $SEMMAN $so $lab=$ck@$w --variants own,notext,swap --trim-start --cfg-null-fix --seed $s "${GS[@]}" >> $O/semantic.log 2>&1 || { log "SEMGEN_FAILED s$s"; exit 1; }
+    $PY scripts/gen_semantic.py $SEMMAN $so $lab=$ck@$w --variants own,notext,swap --n $SEMN --trim-start --cfg-null-fix --seed $s "${GS[@]}" >> $O/semantic.log 2>&1 || { log "SEMGEN_FAILED s$s"; exit 1; }
     ok=1; for v in own notext swap; do
       $PY scripts/semantic_eval.py score --gen-dir $so/$lab/$v --manifest $SEMMAN/MANIFEST.json --out $so/score-$v.json >> $O/semantic.log 2>&1 && grep -q top1 $so/score-$v.json || ok=0
     done; [ $ok = 1 ] && touch $so/DONE && log "SEMANTIC_DONE s$s" || { log "SEMSCORE_FAILED s$s"; exit 1; }
