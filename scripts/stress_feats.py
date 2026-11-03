@@ -45,6 +45,8 @@ def chars_of(xs, start):
 
 
 def feats(pcm, chars, plain, lang, frames):
+    dur = frames / 50. - 1e-3                   # frames are cut to whole chunks: clamp words to the kept audio
+    chars = [dict(c, onset_s=min(c['onset_s'], dur - 1e-3), offset_s=min(c['offset_s'], dur)) for c in chars if c['onset_s'] < dur - 0.02]
     rec = F.Recording.from_clip(pcm.astype(np.float32), 16000, chars, plain, lang, frames)
     return np.asarray(rec.segment(0, frames)['feat'], np.float32)
 
