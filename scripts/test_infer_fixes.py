@@ -5,6 +5,8 @@
 Prints ALL_OK / SOME_FAIL."""
 import json, os, subprocess, sys
 import numpy as np, torch
+TEST_TMP = os.environ.get('SCMG_TEST_TMP', '/tmp/claude-1000')
+os.makedirs(TEST_TMP, exist_ok=True)
 D = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg'; VAE, ORIG, CK = sys.argv[1:4]
 CHILD = os.environ.get('IF_CHILD')
 def run(**kw):
@@ -26,7 +28,7 @@ if CHILD:
 ok = True
 def check(n, c, msg=''):
     global ok; ok &= bool(c); print(f'{n:58s} {"ok" if c else "FAIL"} {msg}', flush=True)
-out = '/tmp/claude-1000/if_ref.npy'; os.makedirs('/tmp/claude-1000', exist_ok=True)
+out = os.path.join(TEST_TMP, 'if_ref.npy'); os.makedirs(TEST_TMP, exist_ok=True)
 r = subprocess.run([sys.executable, '-c', f'import sys; sys.argv={sys.argv[:4]!r}; exec(open({os.path.abspath(__file__)!r}).read())'],
                    env=dict(os.environ, IF_CHILD='1', IF_OUT=out, PYTHONPATH=ORIG), cwd=ORIG)
 y0, W0 = run()

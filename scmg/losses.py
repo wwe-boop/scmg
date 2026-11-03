@@ -41,6 +41,7 @@ class StageCfg:
     fsq_sat_w: float = 0.0         # 11-03 penalty on FSQ inputs beyond |z| > fsq_sat_bound (saturated FSQ cuts the text off)
     fsq_sat_bound: float = 1.2           # tanh(x)*4 reaches the outermost FSQ level from |x| >= 1.35
     text_focus_p: float = 0.0      # 11-03 P(batch is TEXT-FOCUSED): mel (and TTS rows) hidden, prosody kept, no text dropout
+    sel_audio_premask: bool = False  # remove hidden chunks from encoder input as well as direct audio routes
     p_sel_audio: float = 0.0       # P(per text-bearing sample) that the audio of every gesture chunk is hidden (planner + flow)
     w_cont: float = 0.0
     w_rhy: float = 0.0
@@ -85,6 +86,15 @@ def segments(x, K, before, after):
     return x[:, idx.clamp(0, T - 1)], valid
 
 
+def chunk_intent_labels(frames, n_classes):
+    """Dominant labelled class, >=4 frames; ties choose the lowest id. Unknown chunks stay ignored."""
+    counts = F.one_hot(frames.clamp(min=0), n_classes) * (frames >= 0)[..., None]
+    counts = counts.sum(-2)
+    count, label = counts.max(-1)
+    none = torch.where((frames >= 0).all(-1), torch.zeros_like(label), torch.full_like(label, -1))
+    return torch.where(count >= 4, label, none)
+
+
 def step_losses(model, vae, batch, sc: StageCfg, stats):
     require_causal_text(batch.get('text_c'), sc.p_async > 0 and sc.p_async_seg < 1, 'ADSC training')
     cfg = model.cfg; dev = batch['q'].device
@@ -112,8 +122,9 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         stream = r(sc.p_stream); asy = torch.zeros_like(stream)
     hz = U80 * torch.tensor(sc.horizons, device=dev)[torch.randint(len(sc.horizons), (B,), device=dev)]
     H = torch.where(stream, hz, torch.full_like(hz, INF))
-    a = model.audio_tokens(feat, stream, batch.get('tts_h'), batch.get('tts_hm'))   # == model.audio(feat, stream) without tts_h
-    a = torch.where(drop_audio[:, None, None], model.audio_null.expand_as(a), a)
+    if not sc.sel_audio_premask:  # keep the default execution / RNG order unchanged
+        a = model.audio_tokens(feat, stream, batch.get('tts_h'), batch.get('tts_hm'))
+        a = torch.where(drop_audio[:, None, None], model.audio_null.expand_as(a), a)
     amask_k = model.chunk_audio_mask(K, N, H, dev) & ~drop_audio[:, None, None]
     glab = hide = None
     if 'gest' in batch:                   # coarse g_k per chunk: majority class with >= 80 ms, 0 none, -1 unknown
@@ -124,6 +135,21 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         if sc.p_sel_audio > 0:            # selective audio dropout: gesture chunks of text-bearing samples lose their audio
             hide = (r(sc.p_sel_audio) & ~drop_text & ~drop_audio)[:, None] & (glab >= 1)   # [B, K]
             amask_k = amask_k & ~hide[:, :, None]
+    if sc.sel_audio_premask:
+        th, hm = batch.get('tts_h'), batch.get('tts_hm')
+        if hide is not None:
+            hidden_frames = hide.repeat_interleave(CHUNK_FRAMES, 1)
+            feat = feat.masked_fill(hidden_frames[..., None], 0.)
+            if th is not None:
+                hidden_rows = hidden_frames[:, ::4]
+                th = th.masked_fill(hidden_rows[..., None], 0.)
+                hm = (~hidden_rows).to(th.dtype) if hm is None else hm.masked_fill(hidden_rows, 0.)
+        a = model.audio_tokens(feat, stream, th, hm)
+        a = torch.where(drop_audio[:, None, None], model.audio_null.expand_as(a), a)
+        if hide is not None:
+            hidden_tokens = hide.repeat_interleave(CHUNK, 1)
+            a = torch.where(hidden_tokens[..., None], model.audio_null.expand_as(a), a)
+            amask_k = amask_k & ~hidden_tokens[:, None, :]  # planner AND MTC lose the hidden source tokens
     text, tmask = model.text_tokens(batch['text'], batch['ttime'], batch['tmask'] & ~drop_text[:, None],
                                     drop=r(cfg.drop_time))
     tidm_d = batch['tidm'] & ~drop_text[:, None] if 'tidm' in batch else None   # VoxCPM LM text: same text dropout
@@ -327,11 +353,10 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     ilab = None
     if 'intent' in batch and (sc.w_int > 0 or sc.sem_w > 0):
         fi = batch['intent'].long().view(B, K, CHUNK_FRAMES)
-        has = (fi >= 2).sum(-1) >= 4                                                 # >= 80 ms of a gesture in the chunk
-        ilab = torch.where(has, fi.max(-1).values, torch.where((fi >= 0).all(-1), torch.zeros_like(has, dtype=torch.long),
-                                                                torch.full_like(has, -1, dtype=torch.long)))
+        has = (fi >= 2).sum(-1) >= 4  # semantic weighting remains an existence test
+        ilab = chunk_intent_labels(fi, cfg.n_intent)
     if ilab is not None and sc.sem_w > 0:
-        wi = (1 + sc.sem_w * (ilab >= 2).float()).flatten()[:, None]                   # [M, 1]
+        wi = (1 + sc.sem_w * has.float()).flatten()[:, None]                   # [M, 1]
         flow = (err * sup * wi).sum() / (sup * wi).sum().clamp(min=1)
     else:
         flow = (err * sup).sum() / sup.sum().clamp(min=1)

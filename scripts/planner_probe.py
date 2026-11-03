@@ -5,15 +5,18 @@ On fixed dev windows (val view, 256 frames, offline, GT history = teacher forcin
   flow spread      one Local Flow sample per chunk with GT context: var(generated chunk latents) / var(GT) and their MSE
   modality use     ||h(no audio) - h|| / ||h|| and ||h(no text) - h|| / ||h|| (how much the plan depends on each input)
 Prints one JSON line per model."""
-import json, sys
+import argparse, json, sys
 import numpy as np, torch
 sys.path.insert(0, __import__('os').path.dirname(__file__) + '/..')
 from scmg.data import View, WindowDataset, collate
+from scmg.token_cache import checkpoint_config, resolve_token_cache
 from scmg.evaluate import load
 from scmg.common import CHUNK, STRIDE
 D = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg'; dev = 'cuda'
 st = json.load(open(D + '/STATS_v36_1.json'))
-VAE = sys.argv[1]; NW = 48
+ap = argparse.ArgumentParser(); ap.add_argument('vae'); ap.add_argument('models', nargs='+')
+ap.add_argument('--tok-cache'); args = ap.parse_args()
+VAE = args.vae; NW = 48
 
 
 def windows(tok):
@@ -61,15 +64,11 @@ def probe(m, vae, samples):
 
 
 samples_cache = {}
-for spec in sys.argv[2:]:
+for spec in args.models:
     lab, ck = spec.split('=', 1)
+    cfg = checkpoint_config(ck, 'planner_probe.py')
+    tok = resolve_token_cache(cfg, args.tok_cache)
     m, vae = load(ck, VAE, dev); m.eval()
-    tok = D + '/tok-qwen25-v36_1'
-    if getattr(m.cfg, 'vox_lm', ''):
-        tok = {'qwen3': '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models/tok-qwen3-0.6b-v36_1',
-               'minicpm': '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models/tok-minicpm4-v36_1',
-               'voxcpm': '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models/tok-voxcpm15-v36_1'}[
-            next(k for k in ('qwen3', 'minicpm', 'voxcpm') if k in m.cfg.vox_lm.lower())]
     if tok not in samples_cache: samples_cache[tok] = windows(tok)
     r = probe(m, vae, samples_cache[tok]); r['label'] = lab
     print(json.dumps(r), flush=True)

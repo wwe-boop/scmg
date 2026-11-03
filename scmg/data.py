@@ -139,11 +139,22 @@ class View:
             import os as _os
             cc = _os.environ.get('SCMG_TEXT_CAUSAL')
             self.text_c = np.load(Path(P(cc)) / 'TEXT_FEAT.npy', mmap_mode='r') if cc else None
+            if cc:
+                cr = Path(P(cc))
+                if not json.loads((cr / 'PREP.json').read_text()).get('causal', False):
+                    raise ValueError('SCMG_TEXT_CAUSAL must be a prefix-causal E5 cache')
+                if (self.text_c.shape != self.text['feat'].shape or
+                    json.loads((cr / 'TEXT_INDEX.json').read_text()) != self.text['index'] or
+                    not np.array_equal(np.load(cr / 'TEXT_TIME.npy'), self.text['time'], equal_nan=True)):
+                    raise ValueError('causal E5 rows / TEXT_INDEX / TEXT_TIME do not match the text cache')
         self.holdout = None                             # semantic-eval clips (+ their rhythm variants) never sampled (11-03)
         if holdout:
             pairs = {e['clip_id'].split('__')[0] for e in json.loads(Path(P(holdout)).read_text())['entries']}
             self.holdout = np.array([any(str(it.get('clip_id', '')).split('__')[0] in pairs for it in c['items'])
                                      for c in self.clips])
+        if self.holdout is not None:
+            for speaker, candidates in self.by_spk.items():
+                self.by_spk[speaker] = [i for i in candidates if not self.holdout[i]]
         self.intent = None                              # frame-level intent track (scmg/prep_intent_frames.py, opt-in 11-03)
         if intent_frames:
             self.intent = np.load(Path(P(intent_frames)) / 'INTENT_FRAMES.npy', mmap_mode='r')
@@ -267,6 +278,8 @@ class WindowDataset(torch.utils.data.IterableDataset):
         # reference motion: another clip of the same speaker
         ref = np.zeros((self.R, J), np.float32); ref_valid = 0.
         cand = v.by_spk.get(c['speaker'], [])
+        if getattr(v, 'holdout', None) is not None:
+            cand = [j for j in cand if not v.holdout[j]]
         if len(cand) > 1:
             cj = int(cand[rng.integers(len(cand))])
             if cj == ci: cj = int(cand[(cand.index(ci) + 1) % len(cand)])

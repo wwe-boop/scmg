@@ -8,16 +8,19 @@ Reported per mode (frames within 2 of a chunk boundary excluded from the motion 
   speed     mean arm speed / GT;  still  fraction of frames slower than 0.25 x GT median speed
   copy      mean ||gen chunk k - history chunk k-1|| / mean ||GT chunk k - GT chunk k-1|| in latent space
             (history = own chunk k-1 for free, GT chunk k-1 for oracle; << 1 = the model repeats what it was shown)"""
-import json, sys
+import argparse, json, sys
 import numpy as np, torch
 import os
 from scmg.data import View, WindowDataset, clip_lm_capacity
+from scmg.token_cache import checkpoint_config, resolve_token_cache
 from scmg.evaluate import load, ARMS
 from scmg.infer import Streamer
 from scmg.common import CHUNK, CHUNK_FRAMES
 D = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg'; dev = 'cuda'
 st = json.load(open(D + '/STATS_v36_1.json')); qm, qs = np.array(st['q_mean'], np.float32), np.array(st['q_std'], np.float32)
-VAE = sys.argv[1]; NCLIP = 20
+ap = argparse.ArgumentParser(); ap.add_argument('vae'); ap.add_argument('models', nargs='+')
+ap.add_argument('--tok-cache'); args = ap.parse_args()
+VAE = args.vae; NCLIP = 20
 WIN = os.environ.get('ROLLOUT_WINDOW_LM_TEXT') == '1'   # 11-03 review: windowed LM text (training protocol) for VoxCPM
 TM = os.environ.get('ROLLOUT_TEXT_MODE', 'final')      # 11-03 user: deployment text streams word by word -> x2 (+ deploy timing, windowed LM)
 X2_LAG = float(os.environ.get('ROLLOUT_X2_LAG', '0.15'))
@@ -68,13 +71,12 @@ def run(m, vae, data, w, oracle):
 
 
 cache = {}
-for spec in sys.argv[2:]:
+for spec in args.models:
     lab, ck = spec.split('=', 1); w = 2.0
     if '@' in ck: ck, w = ck.rsplit('@', 1); w = float(w)
-    m, vae = load(ck, VAE, dev)
-    tok = D + '/tok-qwen25-v36_1'
-    if 'qwen3' in (getattr(m.cfg, 'vox_lm', '') or '').lower(): tok = '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models/tok-qwen3-0.6b-v36_1'
-    if 'voxcpm' in (getattr(m.cfg, 'vox_lm', '') or '').lower(): tok = '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models/tok-voxcpm15-v36_1'
+    cfg = checkpoint_config(ck, 'rollout_probe.py')
+    tok = resolve_token_cache(cfg, args.tok_cache)
+    m, vae = load(ck, VAE, dev); m.eval()
     if tok not in cache: cache[tok] = clips(tok)
     r = dict(label=lab, free=run(m, vae, cache[tok], w, False), oracle=run(m, vae, cache[tok], w, True))
     print(json.dumps(r), flush=True)

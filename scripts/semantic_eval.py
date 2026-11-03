@@ -51,7 +51,9 @@ def build_manifest(a):
     classes = I['meta']['classes']; cidx = {k: i for i, k in enumerate(classes)}
     kept_keys = {k for c in classes[1:] for k in c.split('+')}
     st = json.load(open(P(D + '/STATS_v36_1.json')))
-    v = View(VIEW, 'train', D + '/text-e5-v36_1', st, mmap=True, tok_cache=D + '/tok-qwen25-v36_1'); v.glitch = None
+    from scmg.token_cache import cache_metadata
+    token_meta = cache_metadata(a.tok_cache)
+    v = View(VIEW, 'train', D + '/text-e5-v36_1', st, mmap=True, tok_cache=a.tok_cache); v.glitch = None
     by_id = {}
     for ci, c in enumerate(v.clips):
         for it in c['items']: by_id[it['id']] = ci
@@ -84,7 +86,7 @@ def build_manifest(a):
         entries.append(dict(file=f'gen_{ci}.npy', ci=ci, clip_id=cid, item_ids=info['items'], start_frame=0, frames=T,
                             chunks=nch, text=info['text'], rhythm_source=info.get('rhythm'), events=evs, neg_centres=negs,
                             other_events=[e for e in info['events'] if e['key'] not in kept_keys]))
-    man = dict(version='semantic-eval-manifest-v1', recognizer=a.rec, view=VIEW, view_split='train', fps=50, window_frames=W,
+    man = dict(version='semantic-eval-manifest-v1', token_cache_metadata=token_meta, recognizer=a.rec, view=VIEW, view_split='train', fps=50, window_frames=W,
                classes=classes, note=('clips are in the recogniser TEST split but in the generator TRAIN view (no semsynth '
                                       'clip exists in the val view): this measures text-sensitivity, not generalisation'),
                cond_keys_text_probe=['text', 'ttime', 'tmask', 'tids', 'tidm', 'titime', 'tseg', 'tiseg', 'tiend', 'text_c',
@@ -172,6 +174,7 @@ def score(a):
 def main():
     ap = argparse.ArgumentParser(); sub = ap.add_subparsers(dest='cmd', required=True)
     b = sub.add_parser('build-manifest'); b.add_argument('--out', required=True); b.add_argument('--n', type=int, default=200)
+    b.add_argument('--tok-cache', default=D + '/tok-qwen25-v36_1')
     b.add_argument('--seed', type=int, default=0); b.add_argument('--rec', default=REC)
     s = sub.add_parser('score'); s.add_argument('--gen-dir', required=True); s.add_argument('--manifest', required=True)
     s.add_argument('--out'); s.add_argument('--rec', default=REC); s.add_argument('--ckpt'); s.add_argument('--prefix', default='gen_')

@@ -46,6 +46,8 @@ def main():
     np.save(out / 'TOK_IDS.npy', np.concatenate(ids)); (out / 'TOK_INDEX.json').write_text(json.dumps(index))
     (out / 'PREP.json').write_text(json.dumps(dict(model=a.model, items=len(items), tokens=row, voxcpm_chars=a.voxcpm_chars,
         trust_remote_code=a.trust_remote_code, max_ids=200,
+        index_sha256=hashlib.sha256((out / 'TOK_INDEX.json').read_bytes()).hexdigest(),
+        ids_sha256=hashlib.sha256(np.ascontiguousarray(np.concatenate(ids)).tobytes()).hexdigest(),
         input_sha256=hashlib.sha256((Path(a.view) / 'train.json').read_bytes()).hexdigest()), indent=1))
     print('tokens', row, 'items', len(items))
 

@@ -170,7 +170,8 @@ class VoxPlanner(nn.Module):
             if hasattr(self, 'word_head'): self._aux['word_logits'] = self.word_head(ts.float())
         if self.prefsq_norm is not None: hs = self.prefsq_norm(hs)
         if self.ab['fsq'] == 'tanh':
-            q = torch.tanh(self.fsq_in(hs))
+            zpre = self.fsq_in(hs); self._aux['fsq_pre'] = zpre
+            q = torch.tanh(zpre)
         else:
             zpre = self.fsq_in(hs); self._aux['fsq_pre'] = zpre
             q = self.fsq(zpre) if self.ab['fsq'] else zpre
