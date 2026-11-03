@@ -90,6 +90,10 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     cfg = model.cfg; dev = batch['q'].device
     q, mask, feat = batch['q'], batch['mask'], batch['feat']
     B, T, Jn = q.shape; N = T // STRIDE; K = N // CHUNK
+    from .bagger import target_chunks
+    supervise, bagger = target_chunks(batch, K)
+    if bagger is not None and cfg.state:
+        raise ValueError('BAgger corrective targets cannot be combined with state simulation')
     qm, qs = stats['qm'], stats['qs']
     with torch.no_grad():
         mu, _ = vae.encode(q)
@@ -100,6 +104,10 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     # ---- condition dropout / modes
     r = lambda p: torch.rand(B, device=dev) < p
     drop_text, drop_audio, drop_spk = r(cfg.drop_text), r(cfg.drop_audio), r(cfg.drop_spk)
+    if bagger is not None:
+        drop_text = drop_text | bagger
+        drop_spk = drop_spk | bagger
+        drop_audio = drop_audio | batch.get('bagger_null', torch.zeros_like(bagger))
     if sc.text_focus_p > 0 and float(torch.rand(())) < sc.text_focus_p:
         # text-focused batch (alternates with joint batches): the speech CONTENT channels are hidden -- mel (80 cols, 0 = the
         # normalised mean) and TTS hidden rows -- while prosody (onset/energy/f0/beat) keeps the timing; text is never dropped
@@ -211,6 +219,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     def run_planner(hist):
         nonlocal mt, mt_mask, plan_input
         lat_in = hist + sc.sigma_tf * torch.rand(B, 1, 1, 1, device=dev) * torch.randn_like(hist)
+        if bagger is not None: lat_in = torch.where(bagger[:, None, None, None], lat_k, lat_in)
         plan_input = lat_in             # CFG branches share the SAME teacher-noised planner history
         if cfg.mtc:
             mt, mt_mask = model.mt_memory(text, tmask, a, amask_k, g, sref, hist, state_tok, K, tvis=tvis)
@@ -273,6 +282,9 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
                 gen = torch.where(lmask.view(B, K, CHUNK)[..., None], gen, lat_k)
                 src = gen
         hist = gen
+        if bagger is not None:
+            gen = torch.where(bagger[:, None, None, None], lat_k, gen)
+            hist = gen
         ctx_lat = torch.cat([torch.zeros_like(gen[:, :1]), gen[:, :-1]], 1).flatten(0, 1)[:, -cfg.ctx:]
         out_sf = 1.
     else:
@@ -297,12 +309,18 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     else:
         known[:, :cfg.ctx] = True
     known[:, :cfg.ctx] &= has_ctx[:, None]
+    if bagger is not None:
+        bm = bagger[:, None].expand(B, K).reshape(M)
+        has_ctx = torch.where(bm, kk > 0, has_ctx)
+        known[bm, :cfg.ctx] = has_ctx[bm, None]
+        known[bm, cfg.ctx:] = (~supervise).reshape(M)[bm, None]
     t = logit_normal(M, dev)[:, None].expand(M, L).clone(); t[known] = 1.
     noise = torch.randn_like(x1i)
     xt = torch.where(known[..., None], x1i, t[..., None] * x1i + (1 - t[..., None]) * noise)
     if sc.ctx_noise_p > 0:                       # noisy-but-known context: its noise level is given to the model via t
         noisy = known.clone(); noisy[:, cfg.ctx:] = False
         noisy &= (torch.rand(M, device=dev) < sc.ctx_noise_p)[:, None]
+        if bagger is not None: noisy &= ~bm[:, None]
         tc = (sc.ctx_t[0] + (sc.ctx_t[1] - sc.ctx_t[0]) * torch.rand(M, device=dev))[:, None].expand(M, L)
         xt = torch.where(noisy[..., None], tc[..., None] * x1i + (1 - tc[..., None]) * noise, xt)
         t = torch.where(noisy, tc, t)
@@ -320,6 +338,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     v = model.flow_velocity(xt, t, known, h_flow.flatten(0, 1), gi, aw, awm, style_tok, state_ada,
                             mtp if cfg.mtc else None, mtpm[:, None].expand(-1, L, -1) if cfg.mtc else None)
     tgt_valid = lmask.view(B, K, CHUNK).flatten(0, 1)
+    if supervise is not None: tgt_valid = tgt_valid & supervise.reshape(M, 1)
     sup = ~known
     sup[:, cfg.ctx:] &= tgt_valid
     sup[:, :cfg.ctx] = False                                                          # past context never supervised
@@ -338,12 +357,18 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     out = dict(flow=flow, self_forced=torch.tensor(out_sf, device=dev))
     aux = (model.p_aux(h) - lat_k.flatten(-2)).square().mean(-1)
     cm = lmask.view(B, K, CHUNK).all(-1).float()
+    if supervise is not None: cm = cm * supervise
     out['aux'] = (aux * cm).sum() / cm.sum().clamp(min=1)
     loss = out['flow'] + sc.w_aux * out['aux']
     vaux = getattr(getattr(model, 'vox', None), '_aux', None) or {}
     if sc.w_word > 0 and 'word_logits' in vaux and 'tilab' in batch:
         wl = vaux['word_logits']; tl = batch['tilab'].long()[:, :wl.shape[1]]
         tl = torch.where(batch['tidm'][:, :wl.shape[1]] & ~drop_text[:, None], tl, torch.full_like(tl, -1))
+        if supervise is not None:
+            times = batch.get('titime')
+            if times is None: raise ValueError('BAgger word auxiliary requires token times')
+            after = times[:, :wl.shape[1]] * 50 >= batch['loss_from_chunk'][:, None] * CHUNK_FRAMES
+            tl = torch.where(~bagger[:, None] | after, tl, torch.full_like(tl, -1))
         cw = torch.ones(wl.shape[-1], device=dev); cw[0] = sc.word_none_w
         out['word'] = F.cross_entropy(wl.flatten(0, 1), tl.flatten(), weight=cw, ignore_index=-1) if (tl >= 0).any() else wl.sum() * 0.
         pos = tl >= 2
@@ -351,13 +376,19 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         loss = loss + sc.w_word * out['word']
     if sc.w_slot > 0 and 'slot_logits' in vaux and glab is not None:
         slot_known = (glab >= 0).all(1) & ~drop_text                                # whole window labelled, text visible
+        if supervise is not None: slot_known &= supervise.all(1)
         if slot_known.any():
             pres = torch.stack([(glab == c).any(1) for c in range(1, 7)], 1).float()      # gesture classes present in the window
             sl = vaux['slot_logits'][..., 1:].max(1).values                               # [B, 6] best slot per class
             out['slot'] = F.binary_cross_entropy_with_logits(sl[slot_known], pres[slot_known])
             loss = loss + sc.w_slot * out['slot']
     if sc.fsq_sat_w > 0 and 'fsq_pre' in vaux:
-        out['fsq_sat'] = F.relu(vaux['fsq_pre'].float().abs() - sc.fsq_sat_bound).pow(2).mean()
+        sat = F.relu(vaux['fsq_pre'].float().abs() - sc.fsq_sat_bound).pow(2)
+        if supervise is None:
+            out['fsq_sat'] = sat.mean()
+        else:
+            sm = supervise.reshape(*supervise.shape, *([1] * (sat.ndim - 2))).expand_as(sat)
+            out['fsq_sat'] = (sat * sm).sum() / sm.sum().clamp(min=1)
         loss = loss + sc.fsq_sat_w * out['fsq_sat']
     if g_logits is not None and glab is not None and sc.w_gest > 0:
         gl = torch.where(drop_text[:, None] | ~cm.bool(), torch.full_like(glab, -1), glab)
@@ -399,6 +430,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         fv = seg_valid[:, -2 * CHUNK_FRAMES:].float() * torch.cat(
             [has_ctx[:, None].float().expand(M, CHUNK_FRAMES), tgt_valid.float().repeat_interleave(STRIDE, 1)], 1)
         fv = fv * (kk.view(M) >= 4).float()[:, None]                                  # needs 4 chunks of history
+        if supervise is not None: fv = fv * supervise.reshape(M, 1)
         w_inst = t[:, -1]                                                             # trust low-noise estimates more
         rl = recon_losses(y[:, CHUNK_FRAMES - 4:], gt_frames[:, CHUNK_FRAMES - 4:], fv[:, CHUNK_FRAMES - 4:] * w_inst[:, None])
         out.update({f'cont_{k}': v_ for k, v_ in rl.items()})
@@ -411,6 +443,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             gt = gt_frames[:, CHUNK_FRAMES:].reshape(B, K * CHUNK_FRAMES, Jn)
             beat = (feat[:, :K * CHUNK_FRAMES, PROSODY_COLS['onset']] + feat[:, :K * CHUNK_FRAMES, PROSODY_COLS['beat']]).clamp(min=0)
             fm = mask[:, :K * CHUNK_FRAMES]
+            if supervise is not None: fm = fm * supervise.repeat_interleave(CHUNK_FRAMES, 1)
             def ba(m):
                 acc = (m[:, 2:, ARMS] - 2 * m[:, 1:-1, ARMS] + m[:, :-2, ARMS]).norm(dim=-1)
                 acc = acc / (acc * fm[:, 1:-1]).mean(1, keepdim=True).clamp(min=1e-4)

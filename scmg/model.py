@@ -32,6 +32,7 @@ INF = 10 ** 6
 
 @dataclass
 class Config:
+    n_source: int = 7          # preserve legacy init/RNG exactly; BAgger explicitly expands to N_SOURCE
     z: int = 16                    # VAE latent dim
     d: int = 512
     heads: int = 8
@@ -225,7 +226,7 @@ class SCMG(nn.Module):
         self.text_time = nn.Linear(d, d); self.text_time_unk = nn.Parameter(torch.zeros(d))
         # global (AdaLN) style of the base: speaker embedding + data source
         self.spk_in = nn.Sequential(nn.LayerNorm(SPK), nn.Linear(SPK, d)); self.spk_null = nn.Parameter(torch.zeros(d))
-        self.source = nn.Embedding(N_SOURCE, d); nn.init.zeros_(self.source.weight)
+        self.source = nn.Embedding(cfg.n_source, d); nn.init.zeros_(self.source.weight)
         # planner
         if cfg.planner == 'voxcpm':
             from .voxplanner import VoxPlanner

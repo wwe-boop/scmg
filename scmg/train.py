@@ -128,18 +128,24 @@ def main():
     ap.add_argument('--tok-intent', default=None, help='word-level intent labels row-aligned with --tok-cache (models/intent-qwen25-v36_1)')
     ap.add_argument('--intent-frames', default=None, help='frame-level intent track (scmg.prep_intent_frames); used by sc w_int / sem_w')
     add_self_force_args(ap)
+    ap.add_argument('--bagger-dir', default=None, help='colon-separated cumulative BAgger collection directories')
+    ap.add_argument('--bagger-share', type=float, default=0.)
     a = ap.parse_args()
     resolve_self_force_args(a)
+    if a.bagger_share > 0 and a.stage != 'base':
+        raise ValueError('BAgger currently supports the base fine-tuning stage only')
     rank, world = ddp(); dev = torch.device('cuda')
+    if a.bagger_share > 0 and os.environ.get('BAGGER_MEMORY_FRACTION'):
+        torch.cuda.set_per_process_memory_fraction(float(os.environ['BAGGER_MEMORY_FRACTION']))
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(a.seed + rank); np.random.seed(a.seed + rank)
     stats = json.loads(Path(a.stats).read_text())
     view = View(a.view, 'train', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache, tts_hidden=a.tts_hidden,
-                intent_frames=a.intent_frames, holdout=a.holdout, tok_intent=a.tok_intent)
+                intent_frames=a.intent_frames, holdout=a.holdout, tok_intent=a.tok_intent, bagger_dir=a.bagger_dir)
     dview = View(a.view, 'val', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache, tts_hidden=a.tts_hidden)
     if a.overfit:
         overfit_clips(view, a.overfit); dview = view
-    ds = WindowDataset(view, a.frames, seed=a.seed * 1000 + rank, semsynth_share=a.semsynth_share)
+    ds = WindowDataset(view, a.frames, seed=a.seed * 1000 + rank, semsynth_share=a.semsynth_share, bagger_share=a.bagger_share)
     dl = iter(torch.utils.data.DataLoader(ds, a.batch, num_workers=a.workers, collate_fn=collate, pin_memory=True,
                                           persistent_workers=a.workers > 0, prefetch_factor=4 if a.workers else None))
     dev_ds = WindowDataset(dview, a.frames, seed=12345, fixed=fixed_windows(dview, a.frames))
@@ -178,6 +184,10 @@ def main():
             model.lat_mean.copy_(torch.tensor(vck['lat_mean'])); model.lat_std.copy_(torch.tensor(vck['lat_std']))
         elif rank == 0:
             print(f'init from {a.init} (stage {prev.get("stage")}); added modules: {sorted(set(extra) - set(prev_extra))}')
+        if a.bagger_share > 0:
+            from .bagger import expand_source
+            expand_source(model)
+            base_cfg['n_source'] = model.cfg.n_source
         model.to(dev)
         if getattr(model.cfg, 'tts_h', False) and not a.tts_hidden:
             raise SystemExit('cfg tts_h needs --tts-hidden <dir>')

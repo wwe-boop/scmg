@@ -26,6 +26,6 @@ J = 34                     # EX002 joints in the training view (waist 2, head 2,
 FEAT = 89                  # 80 mel + 8 prosody (onset, prominence, energy, logf0, voiced, beat, beat_left, beat_right) + valid
 SPK = 192                  # CAM++ speaker embedding
 TEXT_DIM = 768             # multilingual-e5-base token features (frozen semantic encoder)
-N_SOURCE = 7               # null + 6 data sources (cond/COND.json)
+N_SOURCE = 8               # null + 6 original sources + bagger_reversed (id 7)
 PROSODY_COLS = {'onset': 80, 'prominence': 81, 'energy': 82, 'logf0': 83, 'voiced': 84, 'beat': 85, 'beat_left': 86,
                 'beat_right': 87, 'valid': 88}
