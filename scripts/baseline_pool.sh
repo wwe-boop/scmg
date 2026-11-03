@@ -1,18 +1,18 @@
 #!/bin/bash
-# 11-04 DLC pool for the baseline protocol.  Queue lines: <label> <ckpt> <cfg_w> <vox|novox>; every line expands to
+# 11-04 DLC pool for the baseline protocol.  Queue lines: <label> <ckpt> <cfg_w> <vox|novox> [refresh thr,t_low | -]; every line expands to
 # 4 jobs: {offline,engine} x {fgd,probes}, each run by scripts/baseline_eval.sh on one GPU slot (mkdir locks, K slots/GPU).
 set -u
 REL=${REL:?code release}; R=${R:?out root}; Q=${Q:?queue file}; K=${K:-3}; export PY=${PY:-/usr/local/bin/python}
 mkdir -p $R/locks
 worker() {
-  local gpu=$1 slot=$2 lab ck w vx P part j rc t0
+  local gpu=$1 slot=$2 lab ck w vx rf P part j rc t0
   for P in engine offline; do for part in probes fgd; do
-    while read -r lab ck w vx; do
+    while read -r lab ck w vx rf; do
       [ -n "$lab" ] || continue; [ -f "$ck" ] || continue; j=$lab-$P-$part
       grep -q "PART_DONE $part" $R/$lab/$P/runner.log 2>/dev/null && continue
       mkdir $R/locks/$j 2>/dev/null || continue
       t0=$(date +%s); echo "$(date +%T) gpu$gpu.$slot START $j"
-      NOVOX=$([ "$vx" = novox ] && echo 1 || echo 0) OMP_NUM_THREADS=2 bash $REL/scripts/baseline_eval.sh $gpu $R $lab $ck $P $part $w; rc=$?
+      NOVOX=$([ "$vx" = novox ] && echo 1 || echo 0) REFRESH=$([ -n "$rf" ] && [ "$rf" != - ] && echo $rf) OMP_NUM_THREADS=2 bash $REL/scripts/baseline_eval.sh $gpu $R $lab $ck $P $part $w; rc=$?
       echo "$(date +%T) gpu$gpu.$slot END $j rc=$rc $(( $(date +%s) - t0 ))s"
     done < $Q
   done; done
