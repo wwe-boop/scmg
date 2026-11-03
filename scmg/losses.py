@@ -68,6 +68,9 @@ class StageCfg:
     self_force_steps: int = 4      # by the current model from GT history, no grad, then used as the next chunk's history)
     self_force_rounds: int = 1     # 11-03: >1 = MULTI-STEP self-forcing: round r regenerates every chunk from round r-1's generated
                                    # history, so after R rounds each chunk's history is an R-step own rollout (hold-attractor fix)
+    self_force_cfg: float = 0.0   # >0: joint audio/text CFG; local null-audio visibility matches Streamer(cfg_null_fix=True)
+    self_force_mix: float = 0.0   # per round, independently replace each generated chunk with GT with this probability
+    self_force_noise: float = 0.0 # Gaussian std in normalised latent space; applied before GT mixing / padding restore
 
 
 def logit_normal(n, device, generator=None):
@@ -203,11 +206,12 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     if cfg.style:
         ok = (batch['ref_valid'] > .5) & ~r(cfg.drop_ref)
         sref = torch.where(ok[:, None], model.style_enc(batch['ref']), model.style_null)
-    mt = mt_mask = None
+    mt = mt_mask = plan_input = None
 
     def run_planner(hist):
-        nonlocal mt, mt_mask
+        nonlocal mt, mt_mask, plan_input
         lat_in = hist + sc.sigma_tf * torch.rand(B, 1, 1, 1, device=dev) * torch.randn_like(hist)
+        plan_input = lat_in             # CFG branches share the SAME teacher-noised planner history
         if cfg.mtc:
             mt, mt_mask = model.mt_memory(text, tmask, a, amask_k, g, sref, hist, state_tok, K, tvis=tvis)
             mflat, pm = model.planner_memory(mt, mt_mask)
@@ -235,11 +239,37 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
                 kn0 = torch.zeros(M, Lf, dtype=torch.bool, device=dev); kn0[:, :cfg.ctx] = (torch.arange(K, device=dev).repeat(B) > 0)[:, None]
                 x = torch.cat([ctx0, torch.randn(M, CHUNK, cfg.z, device=dev)], 1)
                 mt0 = (mt.flatten(0, 1), mt_mask.flatten(0, 1)[:, None].expand(-1, Lf, -1)) if cfg.mtc else (None, None)
+                if sc.self_force_cfg > 0:
+                    # Mirror Streamer: planner hides audio/text (including VoxCPM ids), but retains speaker/style,
+                    # history and arrival state. Local Flow keeps the null-audio visibility mask (cfg_null_fix=True).
+                    a_u = model.audio_null.expand_as(a); am_u = torch.zeros_like(amask_k)
+                    tm_u = torch.zeros_like(tmask)
+                    tidm_u = torch.zeros_like(tidm_d) if tidm_d is not None else None
+                    if cfg.mtc:
+                        mt_u, mtm_u = model.mt_memory(text, tm_u, a_u, am_u, g, sref, src, state_tok, K, tvis=tvis)
+                        mf_u, pm_u = model.planner_memory(mt_u, mtm_u)
+                        h_u = model.plan(plan_input, a_u, am_u, text, tm_u, g, mf_u, pm_u, batch.get('tids'), tidm_u,
+                                         sref, tvis=tvis, lvis=lvis, sstate=sstate)
+                        mt0_u = (mt_u.flatten(0, 1), mtm_u.flatten(0, 1)[:, None].expand(-1, Lf, -1))
+                    else:
+                        h_u = model.plan(plan_input, a_u, am_u, text, tm_u, g, tids=batch.get('tids'), tidm=tidm_u,
+                                         sref=sref, tvis=tvis, lvis=lvis, sstate=sstate)
+                        mt0_u = (None, None)
+                    h0_u = model.sem_h(h_u).flatten(0, 1)
+                    aw_u = model.audio_null.expand_as(aw); awm_u = awm.clone()
                 for i in range(sc.self_force_steps):
                     tt = torch.full((M, Lf), i / sc.self_force_steps, device=dev); tt[kn0] = 1.
                     v0 = model.flow_velocity(x, tt, kn0, model.sem_h(h0).flatten(0, 1), gi, aw, awm, st0, None, *mt0)
+                    if sc.self_force_cfg > 0:
+                        v_u = model.flow_velocity(x, tt, kn0, h0_u, gi, aw_u, awm_u, st0, None, *mt0_u)
+                        v0 = v_u + sc.self_force_cfg * (v0 - v_u)
                     x = torch.where(kn0[..., None], x, x + v0 / sc.self_force_steps)
                 gen = x[:, cfg.ctx:].view(B, K, CHUNK, -1)
+                if sc.self_force_noise > 0:
+                    gen = gen + sc.self_force_noise * torch.randn_like(gen)
+                if sc.self_force_mix > 0:
+                    use_gt = torch.rand(B, K, 1, 1, device=dev) < sc.self_force_mix
+                    gen = torch.where(use_gt, lat_k, gen)
                 gen = torch.where(lmask.view(B, K, CHUNK)[..., None], gen, lat_k)
                 src = gen
         hist = gen

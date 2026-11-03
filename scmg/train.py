@@ -72,6 +72,34 @@ def build_model(base_cfg, prev_extra, new_extra, prev_state=None):
     return m, base_ids
 
 
+SELF_FORCE_ARGS = {'p': float, 'steps': int, 'rounds': int, 'cfg': float, 'mix': float, 'noise': float}
+
+
+def add_self_force_args(ap):
+    for name, typ in SELF_FORCE_ARGS.items():
+        ap.add_argument('--self-force-' + name, type=typ, default=None,
+                        help='override self_force_' + name + ' in --sc (otherwise StageCfg / --sc wins)')
+
+
+def resolve_self_force_args(a):
+    overrides = json.loads(a.sc)
+    for name in SELF_FORCE_ARGS:
+        key = 'self_force_' + name
+        value = getattr(a, key)
+        if value is not None: overrides[key] = value
+    for name in ('cfg', 'mix', 'noise'):
+        key = 'self_force_' + name
+        overrides.setdefault(key, getattr(StageCfg(), key))
+    resolved = StageCfg(**overrides)
+    for name in SELF_FORCE_ARGS:
+        key = 'self_force_' + name
+        value = getattr(resolved, key)
+        if not math.isfinite(value) or value < 0 or (name in ('p', 'mix') and value > 1) or (name in ('steps', 'rounds') and value < 1):
+            raise ValueError(f'invalid {key}={value}')
+        setattr(a, key, value)             # ARGS.json records the effective values, including --sc overrides
+    a.sc = json.dumps(overrides)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--stage', required=True, choices=['vae'] + list(STAGES))
@@ -99,7 +127,9 @@ def main():
     ap.add_argument('--holdout', default=None, help='semantic-eval MANIFEST.json: its clips and rhythm variants are never sampled')
     ap.add_argument('--tok-intent', default=None, help='word-level intent labels row-aligned with --tok-cache (models/intent-qwen25-v36_1)')
     ap.add_argument('--intent-frames', default=None, help='frame-level intent track (scmg.prep_intent_frames); used by sc w_int / sem_w')
+    add_self_force_args(ap)
     a = ap.parse_args()
+    resolve_self_force_args(a)
     rank, world = ddp(); dev = torch.device('cuda')
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(a.seed + rank); np.random.seed(a.seed + rank)

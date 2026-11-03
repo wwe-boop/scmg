@@ -13,7 +13,11 @@ if [ ! -f $R/$o/DONE.json ]; then
     --tok-cache $TOKC --tok-intent $B/models/intent-qwen25-v36_1 --intent-frames $B/models/intent-frames-v36_1 \
     --holdout $SEMMAN/MANIFEST.json --batch ${BATCH:-32} --stage base --steps $ST --lr ${LR:-1e-4} --warmup $((ST / 20)) \
     --eval-every $((ST / 8)) --snap-every 0 --cfg "$cf" --sc "$scj" >> $R/$o/log.txt 2>&1 || { echo "$(date -Is) TRAIN FAILED $o"; exit 1; }
-  rm -f $R/$o/resume.pt
+  if [ -f "$R/$o/resume.pt" ]; then
+    mkdir -p "$R/$o/scratch"
+    archive=$(mktemp -d "$R/$o/scratch/resume-XXXXXX")
+    mv "$R/$o/resume.pt" "$archive/resume.pt"
+  fi
 fi
 [ -f $R/$o/planner_probe.json ] || $PY scripts/planner_probe.py $VAE $o=$R/$o/best.pt > $R/$o/planner_probe.json 2>> $R/$o/probe.log
 so=$R/$o/semantic
