@@ -13,7 +13,7 @@ mkdir -p $R/$o
 if ! valid_json "$R/$o/DONE.json" train; then
   $PY -m scmg.train --out $R/$o --init $init --stats $D/STATS_v36_1.json --text-cache $D/text-e5-v36_1 --vae $VAE --workers ${WORKERS:-6} \
     --tok-cache $TOKC --tok-intent $B/models/intent-qwen25-v36_1 --intent-frames $B/models/intent-frames-v36_1 \
-    --holdout $SEMMAN/MANIFEST.json --batch ${BATCH:-32} --stage base --steps $ST --lr ${LR:-1e-4} --warmup $((ST / 20)) \
+    --holdout $SEMMAN/MANIFEST.json --semsynth-share ${SEMSHARE:-0.4} --batch ${BATCH:-32} --stage base --steps $ST --lr ${LR:-1e-4} --warmup $((ST / 20)) \
     --eval-every $((ST / 8)) --snap-every 0 --cfg "$cf" --sc "$scj" >> $R/$o/log.txt 2>&1 || { echo "$(date -Is) TRAIN FAILED $o"; exit 1; }
   valid_json "$R/$o/DONE.json" train || exit 1
   rm -f $R/$o/resume.pt
