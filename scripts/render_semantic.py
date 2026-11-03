@@ -27,6 +27,7 @@ def main():
     for it in items:
         if it['id'] in keep: clips[it['clip']].append(it)
     start = {c: min(x['offset'] for x in xs) for c, xs in clips.items()}
+    clip_of = {it['id']: it['clip'] for it in items}
     q_all = np.load(V / 'train_q.npy', mmap_mode='r')
     audio = np.load(Path(str(V) + '-audio16') / 'AUDIO16.npy', mmap_mode='r')
     joints = json.load(open(V / 'META.json'))['joints']
@@ -42,7 +43,7 @@ def main():
         mujoco.mj_kinematics(m, d); mujoco.mj_comPos(m, d); ren.update_scene(d, cam, opt); return ren.render()
     index = []
     for k in ks:
-        e = man['entries'][k]; ci = e['ci']; s0 = start[e['clip_id']] + e['start_frame']
+        e = man['entries'][k]; ci = e['ci']; s0 = start[clip_of[e['item_ids'][0]]] + e['start_frame']
         gt = np.asarray(q_all[s0:s0 + e['frames']], np.float32)
         qs = [gt] + [np.load(Path(p) / f'gen_{ci}.npy') for _, p in cols]
         n = min(len(x) for x in qs); labels = ['真值（合成数据）'] + [l for l, _ in cols]
