@@ -6,7 +6,7 @@
 
 `scripts/bagger_collect.py --ckpt ... --out ... --cond null|reverse` 默认 2000 条、1 块真实前缀 + 23 块生成，10 步 Euler、CFG 从 checkpoint `cfg_w` 取值，缺省采用现有 lane 的 2.0。明确启用 trim_start、cfg_null_fix 和 VoxCPM window_lm_text。支持 --dry-run、--shard/--shards、按索引断点续采；种子由 round 和 index 决定。
 
-只从 View(split='train') 采集，使用原类别/帧长采样权重并排除 holdout，拒绝 glitch 窗口。每条保存前向与反向关节（rad）、原始与条件处理后的音频特征（已归一化）、重编码 latent（已归一化）、原始文本/时间等条件。保留真实 seed 的原始关节，不以 VAE 重建代替。反转后的监督标签不包含原文本、speaker、reference style。采集时裁掉整段录音 token 容量中本窗口未使用的尾部 padding（至少留 160 位），有效重叠语句的 tokens 全部保留，再由 Streamer 按窗口取最多 160 个；避免在短窗口上计算整段录音的空 token。
+只从 View(split='train') 采集，使用原类别/帧长采样权重并排除 holdout，拒绝 glitch 窗口。每条保存前向与反向关节（rad）、原始与条件处理后的音频特征（已归一化）、重编码 latent（已归一化）、原始文本/时间等条件。保留真实 seed 的原始关节，不以 VAE 重建代替。反转后的文本条件置空；null 分支同时置空 speaker/reference style，reverse 分支保留原 speaker/reference style。采集时裁掉整段录音 token 容量中本窗口未使用的尾部 padding（至少留 160 位），有效重叠语句的 tokens 全部保留，再由 Streamer 按窗口取最多 160 个；避免在短窗口上计算整段录音的空 token。
 
 每个采集目录为 COLLECTION.json + NPZ/逐条 JSON + MANIFEST.json，逐条 SHA256 和原始 item ID 可追溯；仅全部完成且 hash 验证通过才写 MANIFEST。View 的 `bagger_dir` 和 WindowDataset 的 `bagger_share` 接入它；多个采集目录以冒号连接，累积池按条均匀采样。集合是实验用纠正池，未通过 COMMON_RULES §15 全部正式数据门禁，不写回 canonical view，不声称可直接执行或正式入库。
 
@@ -18,7 +18,7 @@
 
 BAgger 样本的 planner 历史不加 sigma_tf，local flow 上下文不加 ctx_noise，也不做 self-forcing 或随机丢上下文；prefix target tokens 标为 known。普通样本沿用 ft_lane 原始配置（StageCfg 默认 self_force_p=0.5，其他默认不变）。监督掩码覆盖 flow、planner aux、KL、连续性、节奏、帧语义/intent、FSQ；空文本样本不做 word/slot 监督。state simulation 和 TTS hidden conditioning 不支持，与任务的 base-stage/audio-feature 实验无关。
 
-null 条件隐藏音频并进入 audio_null 分支，文本/说话人/参考风格为空；reverse 条件逐帧反转归一化音频特征，文本/说话人/参考风格同样为空。后者仅是任务规定的条件消融，不把倒放音频解释为正常语音。
+null 条件隐藏音频并进入 audio_null 分支，文本/说话人/参考风格为空；reverse 条件逐帧反转归一化音频特征、文本置空，保留原说话人/参考风格（仍有原训练 dropout）。后者仅是任务规定的条件消融，不把倒放音频解释为正常语音。
 
 ## 运行与评测
 

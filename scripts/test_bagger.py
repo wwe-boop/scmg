@@ -85,7 +85,9 @@ def main(a):
     root=a.out/'fixture'; root.mkdir(exist_ok=True)
     q=np.arange(384*34,dtype=np.float32).reshape(384,34)/10000
     f=np.ones((384,89),np.float32)
-    np.savez(root/'0.npz',q_reversed=q[::-1].copy(),feat_reversed=f)
+    np.savez(root/'0.npz',q_reversed=q[::-1].copy(),feat_reversed=f,
+             original_spk=np.ones(192,np.float32),original_spk_valid=np.float32(1),
+             original_ref=np.ones((128,34),np.float32),original_ref_valid=np.float32(1))
     (root/'MANIFEST.json').write_text(json.dumps(dict(source='bagger_reversed',split='train',rows=[
         dict(file='0.npz',frames=384,loss_from_chunk=16,cond='reverse')])))
     view=SimpleNamespace(qm=np.zeros(34),qs=np.ones(34),text_c=None,tok=None,intent=None,tts=None,bagger_dir=str(root),
@@ -93,7 +95,12 @@ def main(a):
     ds=WindowDataset(view,bagger_share=.33)
     sample=ds.bagger.sample(np.random.default_rng(0))
     check('tail/window mask offset', sample['loss_from_chunk']==8 and np.array_equal(sample['q'],q[::-1][128:]))
-    check('source and blank text/style',sample['source']==7 and not sample['tmask'].any() and sample['spk_valid']==0 and sample['ref_valid']==0)
+    check('reverse retains speaker/style, blanks text',sample['source']==7 and not sample['tmask'].any() and
+          sample['spk_valid']==1 and sample['ref_valid']==1 and bool((sample['spk']==1).all()))
+    ds.bagger.rows[0][1]['cond']='null'
+    null=ds.bagger.sample(np.random.default_rng(0))
+    check('null blanks speaker/style',null['spk_valid']==0 and null['ref_valid']==0 and bool((null['spk']==0).all()))
+    ds.bagger.rows[0][1]['cond']='reverse'
     ds.sample=lambda ci,s,rng:{**sample,'source':np.int64(0)}
     it=iter(ds); rows=[next(it) for _ in range(1000)]
     share=np.mean([x['source']==7 for x in rows]); batch=collate(rows[:32])

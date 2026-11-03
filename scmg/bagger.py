@@ -58,6 +58,7 @@ class BaggerPool:
         with np.load(p, allow_pickle=False) as z:
             q = (z['q_reversed'][start:start+T].astype(np.float32) - v.qm) / v.qs
             f = z['feat_reversed'][start:start+T].astype(np.float32)
+            style = {key: z['original_'+key].copy() for key in ('spk','spk_valid','ref','ref_valid')} if row['cond']=='reverse' else {}
         s = dict(q=q, mask=np.ones(T, np.float32), feat=f,
                  text=np.zeros((K, TEXT_DIM), np.float32), ttime=np.full(K, np.nan, np.float32),
                  tmask=np.zeros(K, bool), tseg=np.full(K, np.nan, np.float32),
@@ -67,6 +68,9 @@ class BaggerPool:
                  source=np.int64(SOURCE_ID), ref=np.zeros((d.R, J), np.float32), ref_valid=np.float32(0),
                  clip=np.int64(-1), start=np.int64(start), loss_from_chunk=np.int64(local),
                  bagger_null=np.bool_(row['cond'] == 'null'))
+        if style:
+            if style['ref'].shape != s['ref'].shape: raise ValueError('reference length differs from collection')
+            s.update(style)
         if v.text_c is not None: s['text_c'] = np.zeros_like(s['text'])
         if v.tok is not None and 'ilab' in v.tok: s['tilab'] = np.full(I, -1, np.int64)
         if v.intent is not None:

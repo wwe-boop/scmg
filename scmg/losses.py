@@ -106,7 +106,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     drop_text, drop_audio, drop_spk = r(cfg.drop_text), r(cfg.drop_audio), r(cfg.drop_spk)
     if bagger is not None:
         drop_text = drop_text | bagger
-        drop_spk = drop_spk | bagger
+        drop_spk = drop_spk | batch.get('bagger_null', torch.zeros_like(bagger))
         drop_audio = drop_audio | batch.get('bagger_null', torch.zeros_like(bagger))
     if sc.text_focus_p > 0 and float(torch.rand(())) < sc.text_focus_p:
         # text-focused batch (alternates with joint batches): the speech CONTENT channels are hidden -- mel (80 cols, 0 = the
