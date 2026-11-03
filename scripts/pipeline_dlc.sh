@@ -134,7 +134,9 @@ fi
 # (-win: only utterances overlapping the planner window, as in training; the old protocol shows the whole clip's text, future included).
 if [ "${TTSH:-0}" = 1 ]; then
   VB="--stage base --steps $(steps 8000) --lr 3e-4 --warmup $(steps 1000) --eval-every $(steps 500) --snap-every 0"
-  V='"planner": "voxcpm", "vox_lm_init": "random"'; TH='"tts_h": true'
+  V='"planner": "voxcpm", "vox_lm_init": "random", "vox_prefsq_norm": true'; TH='"tts_h": true'   # 11-03 user: RMSNorm before
+  # the FSQ in every VoxCPM lane (saturated FSQ cut the text off: MiniCPM4 1.00 / Qwen2.5-pre 0.71 / randlm 0.19 saturated;
+  # pre-FSQ norm 0.003 -> text changes 28 % of the skeleton codes); chunk lanes unchanged
   hlane() {  # gpu dir cfg-w cfg-json extra...
     local gpu=$1 o=$2 w=$3 cf=$4; shift 4
     local th=(); [[ "$cf" == *tts_h* ]] && th=(--tts-hidden ${TTSD:?TTSD})
@@ -167,7 +169,8 @@ fi
 #      training -> recall on unseen clips; gnull = own text with the null g_k (how much the flow uses g).
 if [ "${SEMAUX:-0}" = 1 ]; then
   VB="--stage base --steps $(steps 8000) --lr 3e-4 --warmup $(steps 1000) --eval-every $(steps 500) --snap-every 0"
-  V='"planner": "voxcpm", "vox_lm_init": "random"'; SG='"sem_head": true, "sem_cond": true'; SH='"sem_head": true'
+  V='"planner": "voxcpm", "vox_lm_init": "random", "vox_prefsq_norm": true'; SG='"sem_head": true, "sem_cond": true'; SH='"sem_head": true'
+  # 11-03 user: pre-FSQ RMSNorm in every VoxCPM lane (the r7h run had saturated FSQ inputs that cut the text off)
   FULL='{"w_gest": 0.5, "p_sel_audio": 0.5, "sem_w": 2.0}'
   SEMMAN=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/semantic-recognizer-v1/manifest-n200
   slane() {  # gpu dir cfg-w cfg-json sc-json extra...

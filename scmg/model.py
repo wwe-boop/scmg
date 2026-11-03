@@ -273,6 +273,10 @@ class SCMG(nn.Module):
             self._init_adsc()
         if hasattr(self, 'vox') and (cfg.vox_text_xattn or cfg.vox_slots or cfg.vox_word_aux):
             self.vox.add_text_path(cfg)
+        if hasattr(self, 'vox') and cfg.vox_prefsq_norm and self.vox.prefsq_norm is None:
+            # fine-tuning a checkpoint trained without it (11-03): add the pre-FSQ RMSNorm (unit gain)
+            from .voxplanner import RMSNorm
+            self.vox.prefsq_norm = RMSNorm(self.vox.lm.config.hidden_size)
         if cfg.sem_head and not hasattr(self, 'sem_head'):
             self.sem_head = nn.Sequential(nn.LayerNorm(d), nn.Linear(d, d), nn.GELU(), nn.Linear(d, cfg.n_sem))
         if cfg.sem_head and cfg.sem_cond and not hasattr(self, 'sem_emb'):
