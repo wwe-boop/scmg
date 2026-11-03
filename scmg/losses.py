@@ -34,6 +34,12 @@ class StageCfg:
     gest_none_w: float = 0.3       # CE class weight of g = none
     sem_tf: float = 0.5            # P(Local Flow gets the TRUE g_k one-hot) on labelled chunks; else the head's prediction
     sem_drop: float = 0.1          # P(g_k -> null (zeros)) per sample, so g can be guided like a condition
+    w_word: float = 0.0            # 11-03 word-level intent CE on the LM text-token states (cfg.vox_word_aux, batch tilab)
+    word_none_w: float = 0.2       # CE class weight of 'none' (0)
+    w_slot: float = 0.0            # 11-03 soft-intent-slot presence BCE (cfg.vox_slots, needs the gest frame labels)
+    fsq_sat_w: float = 0.0         # 11-03 penalty on FSQ inputs beyond |z| > fsq_sat_bound (saturated FSQ cuts the text off)
+    fsq_sat_bound: float = 2.0
+    text_focus_p: float = 0.0      # 11-03 P(batch is TEXT-FOCUSED): mel (and TTS rows) hidden, prosody kept, no text dropout
     p_sel_audio: float = 0.0       # P(per text-bearing sample) that the audio of every gesture chunk is hidden (planner + flow)
     w_cont: float = 0.0
     w_rhy: float = 0.0
@@ -90,6 +96,12 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     # ---- condition dropout / modes
     r = lambda p: torch.rand(B, device=dev) < p
     drop_text, drop_audio, drop_spk = r(cfg.drop_text), r(cfg.drop_audio), r(cfg.drop_spk)
+    if sc.text_focus_p > 0 and float(torch.rand(())) < sc.text_focus_p:
+        # text-focused batch (alternates with joint batches): the speech CONTENT channels are hidden -- mel (80 cols, 0 = the
+        # normalised mean) and TTS hidden rows -- while prosody (onset/energy/f0/beat) keeps the timing; text is never dropped
+        feat = feat.clone(); feat[..., :80] = 0.
+        if 'tts_hm' in batch: batch = dict(batch, tts_hm=torch.zeros_like(batch['tts_hm']))
+        drop_text = torch.zeros_like(drop_text)
     if sc.p_async > 0:                    # ADSC lanes: offline / online text-final / online text-streaming
         stream = r(sc.p_adsc_stream); asy = stream & r(sc.p_async)
     else:
@@ -296,6 +308,25 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     cm = lmask.view(B, K, CHUNK).all(-1).float()
     out['aux'] = (aux * cm).sum() / cm.sum().clamp(min=1)
     loss = out['flow'] + sc.w_aux * out['aux']
+    vaux = getattr(getattr(model, 'vox', None), '_aux', None) or {}
+    if sc.w_word > 0 and 'word_logits' in vaux and 'tilab' in batch:
+        wl = vaux['word_logits']; tl = batch['tilab'].long()[:, :wl.shape[1]]
+        tl = torch.where(batch['tidm'][:, :wl.shape[1]] & ~drop_text[:, None], tl, torch.full_like(tl, -1))
+        cw = torch.ones(wl.shape[-1], device=dev); cw[0] = sc.word_none_w
+        out['word'] = F.cross_entropy(wl.flatten(0, 1), tl.flatten(), weight=cw, ignore_index=-1) if (tl >= 0).any() else wl.sum() * 0.
+        pos = tl >= 2
+        out['word_acc'] = ((wl.argmax(-1) == tl) & pos).float().sum() / pos.float().sum().clamp(min=1)
+        loss = loss + sc.w_word * out['word']
+    if sc.w_slot > 0 and 'slot_logits' in vaux and glab is not None:
+        known = (glab >= 0).all(1) & ~drop_text                                     # whole window labelled, text visible
+        if known.any():
+            pres = torch.stack([(glab == c).any(1) for c in range(1, 7)], 1).float()      # gesture classes present in the window
+            sl = vaux['slot_logits'][..., 1:].max(1).values                               # [B, 6] best slot per class
+            out['slot'] = F.binary_cross_entropy_with_logits(sl[known], pres[known])
+            loss = loss + sc.w_slot * out['slot']
+    if sc.fsq_sat_w > 0 and 'fsq_pre' in vaux:
+        out['fsq_sat'] = F.relu(vaux['fsq_pre'].float().abs() - sc.fsq_sat_bound).pow(2).mean()
+        loss = loss + sc.fsq_sat_w * out['fsq_sat']
     if g_logits is not None and glab is not None and sc.w_gest > 0:
         gl = torch.where(drop_text[:, None] | ~cm.bool(), torch.full_like(glab, -1), glab)
         cw = torch.ones(cfg.n_sem, device=dev); cw[0] = sc.gest_none_w

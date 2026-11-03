@@ -106,6 +106,25 @@ class VoxPlanner(nn.Module):
         self.ralm = Encoder(d, cfg.heads, ralm_layers)
         self.d = d
 
+    def add_text_path(self, cfg):
+        """11-03 opt-in text routes that BYPASS the FSQ skeleton (saturated FSQ cut the text off completely):
+        vox_text_xattn  each chunk's residual-LM input cross-attends to the LM text-token states (word level)
+        vox_slots = S   S learned soft-intent slots pool the text states; chunks read the slots (+ slot presence head)
+        vox_word_aux    word-level intent head on the LM text-token states (losses w_word)
+        Outputs are zero-initialised: switching a route on starts from exactly the previous function."""
+        H = self.lm.config.hidden_size; d = self.d
+        xa, S = getattr(cfg, 'vox_text_xattn', False), int(getattr(cfg, 'vox_slots', 0))
+        if (xa or S) and not hasattr(self, 'x_attn'):
+            self.t_proj = nn.Linear(H, d); self.t_norm = nn.LayerNorm(d)
+            self.x_attn = nn.MultiheadAttention(d, cfg.heads, batch_first=True)
+            self.x_out = nn.Linear(d, d); nn.init.zeros_(self.x_out.weight); nn.init.zeros_(self.x_out.bias)
+        if S and not hasattr(self, 'slot_q'):
+            self.slot_q = nn.Parameter(torch.randn(S, d) * 0.02)
+            self.slot_attn = nn.MultiheadAttention(d, cfg.heads, batch_first=True)
+            self.slot_cls = nn.Linear(d, 7)                       # coarse gesture classes (scmg/semclass.py) present in the window
+        if getattr(cfg, 'vox_word_aux', False) and not hasattr(self, 'word_head'):
+            self.word_head = nn.Linear(H, getattr(cfg, 'n_intent', 214))
+
     def forward(self, lat, pooled_audio, tids, tidm, g, sref=None, lvis=None, semb=None):
         """lat [B, K, CHUNK, z] (teacher forcing: chunk k's input is chunk k-1); pooled_audio [B, K, d] visible audio
         of each chunk; tids/tidm [B, Kt] LM token ids + mask; g [B, d] global speaker/source cond; sref [B, d] or None.
@@ -142,15 +161,33 @@ class VoxPlanner(nn.Module):
             allow[:, P + Kt:, P:P + Kt] &= lvis
             allow |= torch.eye(S, dtype=torch.bool, device=x.device)[None]             # no empty rows (padding queries)
             am = torch.zeros(allow.shape, dtype=x.dtype, device=x.device).masked_fill(~allow, torch.finfo(x.dtype).min)[:, None]
-        hs = self.lm(inputs_embeds=x, attention_mask=am, position_ids=pos).last_hidden_state[:, -K:]
+        lh = self.lm(inputs_embeds=x, attention_mask=am, position_ids=pos).last_hidden_state
+        hs = lh[:, -K:]
+        self._aux = {}
+        if hasattr(self, 'word_head') or hasattr(self, 'x_attn'):
+            Pn = len(pre); ts = lh[:, Pn:Pn + tids.shape[1]]                                  # LM states at the text tokens
+            if hasattr(self, 'word_head'): self._aux['word_logits'] = self.word_head(ts.float())
         if self.prefsq_norm is not None: hs = self.prefsq_norm(hs)
         if self.ab['fsq'] == 'tanh':
             q = torch.tanh(self.fsq_in(hs))
         else:
-            q = self.fsq(self.fsq_in(hs)) if self.ab['fsq'] else self.fsq_in(hs)
+            zpre = self.fsq_in(hs); self._aux['fsq_pre'] = zpre
+            q = self.fsq(zpre) if self.ab['fsq'] else zpre
         base = self.fsq_out(q)
         if not self.ab['ralm']: return base, q
         r_in = self.ralm_in(torch.cat([base, prev, au], -1)) + sincos(torch.arange(K, device=x.device), self.d)[None]
+        if hasattr(self, 'x_attn'):
+            Kt = tids.shape[1]; has = tidm.any(1)
+            kv = self.t_norm(self.t_proj(ts.to(r_in.dtype))) + sincos(torch.arange(Kt, device=x.device), self.d)[None].to(r_in.dtype)
+            kpm = ~tidm.bool(); kpm[~has, 0] = False                                            # no all-masked rows (zeroed below)
+            if hasattr(self, 'slot_q'):
+                slots, _ = self.slot_attn(self.slot_q[None].expand(B, -1, -1).to(kv.dtype), kv, kv, key_padding_mask=kpm)
+                slots = slots * has[:, None, None].to(slots.dtype)
+                self._aux['slot_logits'] = self.slot_cls(slots.float())
+                xo, _ = self.x_attn(r_in, slots, slots)
+            else:
+                xo, _ = self.x_attn(r_in, kv, kv, key_padding_mask=kpm)
+            r_in = r_in + self.x_out(xo * has[:, None, None].to(xo.dtype))
         causal = torch.ones(K, K, dtype=torch.bool, device=x.device).tril()[None]
         r = self.ralm(r_in, causal)
         return base + r, q

@@ -84,7 +84,7 @@ class View:
     """Everything loaded once (RAM, ~8 GB) before DataLoader workers fork (shared copy-on-write)."""
 
     def __init__(self, view=VIEW, split='train', text_cache=None, stats=None, mmap=False, tok_cache=None, tts_hidden=None,
-                 intent_frames=None, holdout=None):
+                 intent_frames=None, holdout=None, tok_intent=None):
         v = Path(P(view)); self.root = v
         items = json.loads((v / 'train.json').read_text())
         sp = json.loads((v / 'SPLIT.json').read_text())
@@ -115,6 +115,10 @@ class View:
         if tok_cache:                                   # LM token ids for the VoxCPM-style planner (prep_tokens.py)
             tc = Path(P(tok_cache))
             self.tok = dict(ids=np.load(tc / 'TOK_IDS.npy'), index=json.loads((tc / 'TOK_INDEX.json').read_text()))
+            if tok_intent:                              # 11-03 word-level intent labels, row-aligned with TOK_IDS (prep_intent.py)
+                il = np.load(Path(P(tok_intent)) / 'INTENT_LABEL.npy')
+                if len(il) != len(self.tok['ids']): raise ValueError('INTENT_LABEL rows != TOK_IDS rows')
+                self.tok['ilab'] = il
         self.text = None; self.text_c = None
         if text_cache:
             tc = Path(P(text_cache))
@@ -222,14 +226,16 @@ class WindowDataset(torch.utils.data.IterableDataset):
         # LM token ids of the utterances overlapping the window, in order (VoxCPM-style planner)
         tids = np.zeros(self.KI, np.int64); tidm = np.zeros(self.KI, bool); titime = np.full(self.KI, np.nan, np.float32); tiseg = np.full(self.KI, np.nan, np.float32)
         tiend = np.full(self.KI, np.nan, np.float32)
+        tilab = np.full(self.KI, -1, np.int64) if (v.tok is not None and 'ilab' in v.tok) else None
         if v.tok is not None:
-            seq = []; tsq = []; ssq = []; endsq = []
+            seq = []; tsq = []; ssq = []; endsq = []; lsq = []
             for it in c['items']:
                 i0 = it['offset'] - c['start']
                 if i0 + it['frames'] <= s or i0 >= s + n or it.get('text_null'): continue
                 e = v.tok['index'].get(it['id'])
                 if e:
                     seq.append(v.tok['ids'][e[0]:e[0] + e[1]])
+                    if tilab is not None: lsq.append(v.tok['ilab'][e[0]:e[0] + e[1]])
                     # LM tokens carry no timing: spread them evenly over the utterance (window-relative s) -- used only
                     # for ADSC arrival simulation (text streams ahead of / alongside the speech)
                     tsq.append((i0 - s + (np.arange(e[1]) + 0.5) / max(e[1], 1) * it['frames']) / 50.)
@@ -239,6 +245,7 @@ class WindowDataset(torch.utils.data.IterableDataset):
                 seq = np.concatenate(seq)[:self.KI]; tids[:len(seq)] = seq; tidm[:len(seq)] = True
                 titime[:len(seq)] = np.concatenate(tsq)[:self.KI]; tiseg[:len(seq)] = np.concatenate(ssq)[:self.KI]
                 tiend[:len(seq)] = np.concatenate(endsq)[:self.KI]
+                if tilab is not None: tilab[:len(seq)] = np.concatenate(lsq)[:self.KI]
         # speaker / source conditions of the first utterance in the window
         it0 = next((it for it in c['items'] if it['offset'] - c['start'] + it['frames'] > s), c['items'][0])
         row = v.cond.get(str(it0['id']))
@@ -257,6 +264,7 @@ class WindowDataset(torch.utils.data.IterableDataset):
                 rs = int(rng.integers(0, max(1, Lr - self.R + 1)))
                 ref, rm, _, _ = self._window(cj, rs, self.R); ref_valid = 1.
         extra = dict(text_c=text_c) if text_c is not None else {}
+        if tilab is not None: extra['tilab'] = tilab
         if v.intent is not None:                        # [T] int16: -1 unknown / 0 none / >=2 class (frames past the clip end -1)
             il = np.full(T, -1, np.int16); il[:n] = v.intent[a:a + n]; extra['intent'] = il
             extra['gest'] = np.where(il >= 0, v.gest_lut[np.clip(il, 0, None)], -1).astype(np.int16)   # coarse g_k frame labels

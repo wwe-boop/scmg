@@ -65,6 +65,9 @@ class Config:
     adsc: bool = False             # Asynchronous Dual-Stream Conditioning: per-chunk text/audio visibility + stream-state token
     # 11-03 opt-in: Qwen3-TTS Talker hidden states (data.View(tts_hidden=...), one 2048-d row per 80 ms) projected
     # (LayerNorm -> Linear, zero-init) and ADDED to the audio-encoder input tokens; dropped / masked exactly like audio
+    vox_text_xattn: bool = False   # 11-03 text route around the FSQ: chunks cross-attend to LM text-token states (voxplanner)
+    vox_slots: int = 0             # 11-03 soft intent slots (S learned queries over the text states; chunks read the slots)
+    vox_word_aux: bool = False     # 11-03 word-level intent head on the LM text-token states (losses w_word)
     sem_head: bool = False         # 11-03 user (CoordSpeaker-style): Semantic Gesture Head p(g_k | T, A, M<k) on the planner output
     sem_cond: bool = False         # ... and its g_k representation conditions the Local Flow (zero-init embedding added to h)
     n_sem: int = 7                 # scmg/semclass.py: none / point L / point R / expand / contract / emphasis / other
@@ -268,6 +271,8 @@ class SCMG(nn.Module):
             self.vox.ref_gate = nn.Parameter(torch.zeros(1))
         if cfg.adsc and not hasattr(self, 'stream_emb'):
             self._init_adsc()
+        if hasattr(self, 'vox') and (cfg.vox_text_xattn or cfg.vox_slots or cfg.vox_word_aux):
+            self.vox.add_text_path(cfg)
         if cfg.sem_head and not hasattr(self, 'sem_head'):
             self.sem_head = nn.Sequential(nn.LayerNorm(d), nn.Linear(d, d), nn.GELU(), nn.Linear(d, cfg.n_sem))
         if cfg.sem_head and cfg.sem_cond and not hasattr(self, 'sem_emb'):

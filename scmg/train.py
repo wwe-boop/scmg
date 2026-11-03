@@ -97,6 +97,7 @@ def main():
     ap.add_argument('--tts-hidden', default=None, help='Qwen3-TTS hidden-state export (scmg/tts-hidden-v36_1); needed by cfg tts_h')
     ap.add_argument('--vae-cfg', default='{}', help='stage vae: MotionVAE kwargs (z, c, beta, w_vel, w_acc, w_accmag)')
     ap.add_argument('--holdout', default=None, help='semantic-eval MANIFEST.json: its clips and rhythm variants are never sampled')
+    ap.add_argument('--tok-intent', default=None, help='word-level intent labels row-aligned with --tok-cache (models/intent-qwen25-v36_1)')
     ap.add_argument('--intent-frames', default=None, help='frame-level intent track (scmg.prep_intent_frames); used by sc w_int / sem_w')
     a = ap.parse_args()
     rank, world = ddp(); dev = torch.device('cuda')
@@ -104,7 +105,7 @@ def main():
     torch.manual_seed(a.seed + rank); np.random.seed(a.seed + rank)
     stats = json.loads(Path(a.stats).read_text())
     view = View(a.view, 'train', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache, tts_hidden=a.tts_hidden,
-                intent_frames=a.intent_frames, holdout=a.holdout)
+                intent_frames=a.intent_frames, holdout=a.holdout, tok_intent=a.tok_intent)
     dview = View(a.view, 'val', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache, tts_hidden=a.tts_hidden)
     if a.overfit:
         overfit_clips(view, a.overfit); dview = view
@@ -129,7 +130,14 @@ def main():
         extra = dict(prev['extra_cfg']) if prev is not None else {}
         extra.update(spec['cfg']); extra.update(json.loads(a.cfg) if a.stage != 'base' else {})
         prev_extra = dict(prev['extra_cfg']) if prev is not None else {}
-        model, base_ids = build_model(base_cfg, prev_extra, extra, prev['ema'] if prev is not None else None)
+        if a.stage == 'base' and prev is not None and json.loads(a.cfg):
+            # base-stage fine-tune from a checkpoint that switches NEW optional modules on (11-03): build + load with the
+            # checkpoint's own config, then turn the new switches on and add their (zero-initialised) modules
+            model, base_ids = build_model(prev['base_cfg'], prev_extra, extra, prev['ema'])
+            for k, v in json.loads(a.cfg).items(): setattr(model.cfg, k, v)
+            model.add_modules(); base_ids = set()
+        else:
+            model, base_ids = build_model(base_cfg, prev_extra, extra, prev['ema'] if prev is not None else None)
         if prev is None:
             model.lat_mean.copy_(torch.tensor(vck['lat_mean'])); model.lat_std.copy_(torch.tensor(vck['lat_std']))
         elif rank == 0:
