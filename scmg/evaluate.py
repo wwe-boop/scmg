@@ -134,7 +134,8 @@ def main():
             gt = s['q'] * qs + qm
             beat = np.clip(s['feat'][:, PROSODY_COLS['onset']] + s['feat'][:, PROSODY_COLS['beat']], 0, None)
             gens = []
-            for seed in ((0, 1) if len(dv) < a.ndiv else (0,)):
+            S0 = int(os.environ.get('SCMG_SEED0', '0'))          # 11-03 Claude: seed offset (same patch as the main repo)
+            for seed in ((S0, S0 + 1) if len(dv) < a.ndiv else (S0,)):
                 cmd, _, tm = generate(m, vae, s['feat'], cond, stats, nch, H=H, steps=a.steps, seed=seed,
                                       n_future=a.n_future, standby=standby, ctx_t=m.ctx_t, cfg_w=a.cfg_w, cfg_text=not a.cfg_audio_only, text_mode=a.text_mode, x2_rate=a.x2_rate, x2_lag=a.x2_lag, seg_lead=a.seg_lead, deploy_timing=a.deploy_timing)
                 gens.append(cmd); ticks += list(tm[1:])
