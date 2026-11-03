@@ -20,6 +20,12 @@ if [ ! -f $R/$o/DONE.json ]; then
   TP=$!; log "TRAIN_START pid $TP"
 else TP=; fi
 evalq() {  # <ckpt> <label>
+  if [ "${ROLLOUT_ONLY:-0}" = 1 ]; then         # stillness curve only: rollout 20 clips, seeds 0/1, offline + engine
+    mkdir -p $R/$o/curve
+    for s in 0 1; do ROLLOUT_SEED=$s ROLLOUT_WINDOW_LM_TEXT=1 $PY scripts/rollout_probe.py $VAE $2=$1@${CFGW:-2.5} >> $R/$o/curve/offline.jsonl 2>> $R/$o/curve/probe.log
+      ROLLOUT_SEED=$s ROLLOUT_TEXT_MODE=x2 ROLLOUT_X2_LAG=0.15 ROLLOUT_H=2 $PY scripts/rollout_probe.py $VAE $2=$1@${CFGW:-2.5} >> $R/$o/curve/engine.jsonl 2>> $R/$o/curve/probe.log; done
+    log "CURVE_DONE $2"; return
+  fi
   for P in offline engine; do QUICK=1 NOVOX=1 bash $CODE/scripts/baseline_eval.sh $gpu $R/$o/eval $2 $1 $P probes ${CFGW:-2.5} || log "QUICK_FAILED $2 $P"; done
   log "QUICK_DONE $2"
 }
@@ -37,5 +43,6 @@ done
 [ -n "$TP" ] && { wait $TP; rc=$?; log "TRAIN_EXIT $rc"; }
 [ -f $R/$o/final.pt ] || { log "NO_FINAL"; exit 1; }
 rm -f $R/$o/resume.pt
+[ "${ROLLOUT_ONLY:-0}" = 1 ] && { evalq $R/$o/final.pt final; log "LANE_DONE"; exit 0; }
 for P in offline engine; do for part in fgd probes; do NOVOX=1 bash $CODE/scripts/baseline_eval.sh $gpu $R/$o/eval final $R/$o/final.pt $P $part ${CFGW:-2.5} || log "FULL_FAILED $P $part"; done; done
 log "LANE_DONE"
