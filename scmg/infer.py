@@ -27,7 +27,7 @@ class Streamer:
     def __init__(self, model, vae, feat, cond, stats, H=INF, steps=10, temperature=1.0, n_future=0, seed=0,
                  standby=None, device='cuda', hist_measured=False, ctx_t=1.0, cfg_w=1.0, cfg_text=True, cfg_t=None,
                  text_mode='final', x2_rate=15.0, x2_lag=0.15, seg_lead=0.3, deploy_timing=False,
-                 elastic=None, window_lm_text=False, g_override=None, trim_start=True, cfg_null_fix=True):
+                 elastic=None, window_lm_text=False, g_override=None, trim_start=True, cfg_null_fix=True, still_refresh=None):
         """feat [T, 89] normalised (whole utterance; access is restricted to what has arrived);
         cond: dict(text [K,768], ttime [K] absolute s, tmask [K], spk [192], spk_valid, source, ref [R,J], ref_valid)
         (+ tts_h [T/4, 2048], tts_hm [T/4] for models with cfg.tts_h: TTS hidden rows aligned to feat frame 0, row r = frames
@@ -72,6 +72,13 @@ class Streamer:
         self.g_override = g_override         # fixed g_k [n_sem] for every chunk (zeros = null g; None = the head's prediction)
         self.cfg_text = cfg_text             # False: guide on audio only (models never trained with text dropped, e.g. r4 VoxCPM)
         self.ctx_t = ctx_t                   # <1: noise the committed context like in training (exposure-bias fix)
+        # 11-04 static-history refresh (off = None, bit-identical): (thr, t_low). When the current chunk contains speech and the
+        # committed context latents barely change (mean step norm < thr, normalised latent units), noise that context with
+        # t_low instead of ctx_t so the model is not anchored to a held pose (hold attractor; recovery after pauses).
+        self.still_refresh = still_refresh; self.n_refresh = 0
+        if still_refresh is not None:
+            fm, fsd = float(stats['f_mean'][88]), float(stats['f_std'][88])
+            self._speech = (self.feat[:, 88] * fsd + fm) > 0.5          # per-frame speech flag (feat89 column 88)
         self.hist_measured = hist_measured   # ablation: context latents = encoded EXECUTED motion, no state adapter
         z = model.cfg.z
         if standby is not None:           # rest pose as initial context (encoded like any history)
@@ -282,7 +289,12 @@ class Streamer:
                 eps = self.noise_override(self, self.k + j, x[:, cfg.ctx:].clone())
                 if eps is not None: x[:, cfg.ctx:] = eps.to(x)
             c_ = prev[-cfg.ctx:][None]
-            if self.ctx_t < 1: c_ = self.ctx_t * c_ + (1 - self.ctx_t) * torch.randn(c_.shape, device=self.dev, generator=self.g)
+            ct = self.ctx_t
+            if self.still_refresh is not None and has_ctx and cfg.ctx > 1:
+                f0 = (self.k + j) * CHUNK_FRAMES; sp = self._speech[f0:f0 + CHUNK_FRAMES]
+                if len(sp) and bool(sp.any()) and float((c_[0, 1:] - c_[0, :-1]).norm(dim=-1).mean()) < self.still_refresh[0]:
+                    ct = min(ct, self.still_refresh[1]); self.n_refresh += 1
+            if ct < 1: c_ = ct * c_ + (1 - ct) * torch.randn(c_.shape, device=self.dev, generator=self.g)
             x[:, :cfg.ctx] = torch.where(known[:, :cfg.ctx, None], c_, x[:, :cfg.ctx])
             aw, awm = m.local_audio(a, Hrel, W)
             aw, awm = aw[:, kw], awm[:, kw]
@@ -304,7 +316,7 @@ class Streamer:
             for s in range(self.steps):
                 tval = s / self.steps
                 t = torch.full((1, L), tval, device=self.dev); t[known] = 1.
-                if self.ctx_t < 1: t[:, :cfg.ctx] = torch.where(known[:, :cfg.ctx], torch.full_like(t[:, :cfg.ctx], self.ctx_t), t[:, :cfg.ctx])
+                if ct < 1: t[:, :cfg.ctx] = torch.where(known[:, :cfg.ctx], torch.full_like(t[:, :cfg.ctx], ct), t[:, :cfg.ctx])
                 v = m.flow_velocity(x, t, known, hk, g, aw, awm, style_tok, ada, mtk, mtmk)
                 if self.cfg_w != 1:
                     v_u = m.flow_velocity(x, t, known, hk_u, g, aw_u, awm_u, style_tok, ada, mtk_u, mtmk_u)

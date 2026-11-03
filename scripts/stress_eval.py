@@ -28,6 +28,8 @@ CONDS = os.environ.get('STRESS_CONDS', ''); CONDS = set(CONDS.split(',')) if CON
 TXT = os.environ.get('STRESS_TEXT', 'own'); TM = os.environ.get('STRESS_TM', 'final'); HS = os.environ.get('STRESS_H', 'inf')
 SEED = int(os.environ.get('STRESS_SEED', '0')); LAG = float(os.environ.get('STRESS_LAG', '0.15'))
 H = 10 ** 9 if HS == 'inf' else int(HS) * U80
+CTXT = os.environ.get('STRESS_CTXT'); RF = os.environ.get('STRESS_REFRESH')      # ctx_t override; 'thr,t_low' still-refresh
+RF = tuple(float(x) for x in RF.split(',')) if RF else None
 meta = json.load(open('/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/train-v1-20261101/views/data-v36_1/META.json'))
 LIM = limits34(meta['lower'], meta['upper']) if 'lower' in meta else None
 TIMES = ('ttime', 'titime', 'tseg', 'tiseg', 'tiend')
@@ -78,11 +80,11 @@ def main():
                 if not fp.exists(): continue
                 cmd, tm = np.load(fp), [0.]
             else:
-                cmd, _, tm = generate(m, vae, feat, cond, st, nch, H=H, steps=10, seed=SEED, standby=st['q_mean'], ctx_t=m.ctx_t, cfg_w=w,
+                cmd, _, tm = generate(m, vae, feat, cond, st, nch, H=H, steps=10, seed=SEED, standby=st['q_mean'], ctx_t=float(CTXT) if CTXT else m.ctx_t, cfg_w=w, still_refresh=RF,
                                       text_mode=TM, x2_rate=15.0, x2_lag=LAG, deploy_timing=TM != 'final', window_lm_text=vox)
             y = cmd[:T]; sp = arm_speed(y); still = sp < thr
             bins = [float(still[i:i + 500].mean()) for i in range(0, len(still), 500)]
-            row = dict(model=lab, ci=ci, clip=r['clip'], lang=r['lang'], cond=r['cond'], text=TXT, tm=TM, H=HS, seed=SEED, cfg_w=w,
+            row = dict(model=lab, ci=ci, clip=r['clip'], lang=r['lang'], cond=r['cond'], text=TXT, tm=TM, H=HS, seed=SEED, cfg_w=w, ctx_t=CTXT, refresh=RF,
                        seconds=T / FPS, speed=float(sp.mean() / gsp.mean()), still=float(still.mean()), still_bins=bins)
             if r['cond'] == 'silence3':
                 k0 = np.flatnonzero(np.diff(z['knots_new']) > 0)
