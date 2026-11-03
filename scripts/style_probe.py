@@ -9,7 +9,7 @@ Per arm, then averaged:
   v50 / v95    wrist speed percentiles (m/s), 4 Hz low-passed (gesture scale)
   rate         strokes / s: wrist-speed peaks with prominence >= 0.15 m/s, >= 0.25 s apart
   stroke_amp   mean wrist displacement between consecutive speed minima around each stroke (m)"""
-import json, sys
+import json, os, sys
 from pathlib import Path
 import numpy as np
 from scipy.signal import butter, filtfilt, find_peaks
@@ -75,7 +75,7 @@ for spec in sys.argv[2:]:
     else:
         lab, d = spec.split('=', 1); rows = []
         for ci in range(43):
-            f = Path(d) / (f'gt_{ci}.npy' if lab.startswith('gt') else f'gen_Hinf_{ci}.npy')
+            f = Path(d) / (f'gt_{ci}.npy' if lab.startswith('gt') else f'gen_{os.environ.get("GEN_TAG", "Hinf")}_{ci}.npy')
             if f.exists(): rows.append(stats(np.load(f)))
     if rows: res[lab] = agg(rows); print(lab, json.dumps({k: round(v, 3) for k, v in res[lab].items()}), flush=True)
     else: print(lab, 'no data', flush=True)

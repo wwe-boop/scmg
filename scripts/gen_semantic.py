@@ -8,7 +8,7 @@ Same seed (0) for all variants; LM text windowed as in training (VoxCPM planner)
 import argparse, json, os
 from pathlib import Path
 import numpy as np, torch
-from scmg.common import CHUNK_FRAMES
+from scmg.common import CHUNK_FRAMES, U80
 from scmg.evaluate import load
 from scmg.infer import generate
 from scmg.model import INF
@@ -26,6 +26,8 @@ ap.add_argument('--x2-lag', type=float, default=0.15); ap.add_argument('--x2-rat
 ap.add_argument('--deploy-timing', action='store_true')
 ap.add_argument('--window-lm-text', action=argparse.BooleanOptionalAction, default=None)
 ap.add_argument('--trim-start', action='store_true'); ap.add_argument('--cfg-null-fix', action='store_true')
+ap.add_argument('--horizon', default='inf', help="audio look-ahead: 'inf' (offline) or N x 80 ms (deployment uses 2 = 160 ms)")
+ap.add_argument('--seed', type=int, default=0, help='generation seed (default 0 = unchanged)')
 a = ap.parse_args()
 if a.text_mode == 'x2':
     causal = os.environ.get('SCMG_TEXT_CAUSAL')
@@ -93,7 +95,7 @@ for spec in a.models:
                     old = np.load(f, allow_pickle=False)
                     if old.shape == (nch * CHUNK_FRAMES, 34) and np.isfinite(old).all(): continue
                 except (OSError, ValueError): pass
-            y = generate(m, vae, s['feat'], variant(ci, v), st, nch, H=INF, steps=10, seed=0, ctx_t=m.ctx_t, cfg_w=w,
+            y = generate(m, vae, s['feat'], variant(ci, v), st, nch, H=INF if a.horizon == 'inf' else int(a.horizon) * U80, steps=10, seed=a.seed, ctx_t=m.ctx_t, cfg_w=w,
                          cfg_text=cfg_text, cfg_t=a.cfg_t, window_lm_text=(m.cfg.planner == 'voxcpm' if a.window_lm_text is None else a.window_lm_text),
                          text_mode=a.text_mode, x2_lag=a.x2_lag, x2_rate=a.x2_rate, deploy_timing=a.deploy_timing,
                          trim_start=a.trim_start, cfg_null_fix=a.cfg_null_fix, **gk)[0]

@@ -76,7 +76,7 @@ EV = {}
 for spec in sys.argv[2:]:
     lab, d = spec.split('=', 1); rows = []
     for ci in range(43):
-        try: x = np.load(f'{d}/gen_Hinf_{ci}.npy') if lab != 'gt' else np.load(f'{d}/gt_{ci}.npy')
+        try: x = np.load(f'{d}/gen_{os.environ.get("GEN_TAG", "Hinf")}_{ci}.npy') if lab != 'gt' else np.load(f'{d}/gt_{ci}.npy')
         except FileNotFoundError: continue
         if ci not in EV: EV[ci] = events(ci)
         oc = (ci + 7) % 43
