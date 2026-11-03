@@ -15,6 +15,7 @@ MODEL = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/ex002-rm003-v4-20261020/mo
 FONT = ImageFont.truetype('/usr/share/fonts/truetype/wqy/wqy-microhei.ttc', 16)
 SUB = ImageFont.truetype('/usr/share/fonts/truetype/wqy/wqy-microhei.ttc', 22)
 W, H, TOP, BOT = 300, 340, 28, 70
+NC = int(os.environ.get('GRID_COLS', '0'))          # >0: wrap the columns into a grid of NC per row
 
 
 def main():
@@ -27,6 +28,7 @@ def main():
     for it in items:
         if it['id'] in keep: clips[it['clip']].append(it)
     start = {c: min(x['offset'] for x in xs) for c, xs in clips.items()}
+    clip_of = {it['id']: it['clip'] for it in items}
     clip_of = {it['id']: it['clip'] for it in items}
     q_all = np.load(V / 'train_q.npy', mmap_mode='r')
     audio = np.load(Path(str(V) + '-audio16') / 'AUDIO16.npy', mmap_mode='r')
@@ -49,7 +51,8 @@ def main():
         n = min(len(x) for x in qs); labels = ['真值（合成数据）'] + [l for l, _ in cols]
         a = np.asarray(audio[s0 * 320:(s0 + n) * 320], np.int16); wav = out / f'sem{k}.wav'
         with wave.open(str(wav), 'wb') as w: w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(a.tobytes())
-        vid = out / f'sem{k}.mp4'; TW = W * len(qs); TH = TOP + H + BOT
+        nc = NC or len(qs); nr = -(-len(qs) // nc)
+        vid = out / f'sem{k}.mp4'; TW = W * nc; TH = (TOP + H) * nr + BOT
         enc = subprocess.Popen(['/usr/bin/ffmpeg', '-v', 'error', '-y', '-nostdin', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', f'{TW}x{TH}',
                                 '-r', '25', '-i', 'pipe:0', '-i', str(wav), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '23',
                                 '-c:a', 'aac', '-shortest', str(vid)], stdin=subprocess.PIPE)
@@ -57,10 +60,11 @@ def main():
         for t in range(0, n, 2):
             canvas = Image.new('RGB', (TW, TH), 'white'); dr = ImageDraw.Draw(canvas)
             for j, q in enumerate(qs):
-                canvas.paste(Image.fromarray(frame(q[t])), (j * W, TOP)); dr.text((j * W + 8, 5), labels[j], fill='black', font=FONT)
-            dr.text((12, TOP + H + 6), text, fill='black', font=SUB)
+                x0, y0 = (j % nc) * W, (j // nc) * (TOP + H)
+                canvas.paste(Image.fromarray(frame(q[t])), (x0, y0 + TOP)); dr.text((x0 + 8, y0 + 5), labels[j], fill='black', font=FONT)
+            dr.text((12, (TOP + H) * nr + 6), text, fill='black', font=SUB)
             now = t / 50; act = [x['cls_name'] for x in ev if x['t_on'] <= now <= x['t_off']]
-            if act: dr.text((12, TOP + H + 38), '语义手势（词典）：' + ' / '.join(act), fill=(200, 0, 0), font=FONT)
+            if act: dr.text((12, (TOP + H) * nr + 38), '语义手势（词典）：' + ' / '.join(act), fill=(200, 0, 0), font=FONT)
             if t == 0: canvas.save(out / f'sem{k}.jpg')
             enc.stdin.write(canvas.tobytes())
         enc.stdin.close(); enc.wait(); wav.unlink()
