@@ -34,11 +34,12 @@ class StageCfg:
     gest_none_w: float = 0.3       # CE class weight of g = none
     sem_tf: float = 0.5            # P(Local Flow gets the TRUE g_k one-hot) on labelled chunks; else the head's prediction
     sem_drop: float = 0.1          # P(g_k -> null (zeros)) per sample, so g can be guided like a condition
+    gest_grad_scale: float = 1.0   # 11-03 review: scale of the gesture-CE gradient that reaches the plan h (head itself trains fully)
     w_word: float = 0.0            # 11-03 word-level intent CE on the LM text-token states (cfg.vox_word_aux, batch tilab)
     word_none_w: float = 0.2       # CE class weight of 'none' (0)
     w_slot: float = 0.0            # 11-03 soft-intent-slot presence BCE (cfg.vox_slots, needs the gest frame labels)
     fsq_sat_w: float = 0.0         # 11-03 penalty on FSQ inputs beyond |z| > fsq_sat_bound (saturated FSQ cuts the text off)
-    fsq_sat_bound: float = 2.0
+    fsq_sat_bound: float = 1.2           # tanh(x)*4 reaches the outermost FSQ level from |x| >= 1.35
     text_focus_p: float = 0.0      # 11-03 P(batch is TEXT-FOCUSED): mel (and TTS rows) hidden, prosody kept, no text dropout
     p_sel_audio: float = 0.0       # P(per text-bearing sample) that the audio of every gesture chunk is hidden (planner + flow)
     w_cont: float = 0.0
@@ -277,7 +278,8 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         t = torch.where(noisy, tc, t)
     h_flow = h; g_logits = None
     if cfg.sem_head:
-        g_logits = model.sem_head(h.float())                                         # [B, K, n_sem]
+        hg = h if sc.gest_grad_scale >= 1 else h * sc.gest_grad_scale + h.detach() * (1 - sc.gest_grad_scale)
+        g_logits = model.sem_head(hg.float())                                        # [B, K, n_sem]
         if cfg.sem_cond:
             gp = torch.softmax(g_logits, -1).detach()                                # flow loss does not train the head
             if glab is not None:
@@ -318,11 +320,11 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         out['word_acc'] = ((wl.argmax(-1) == tl) & pos).float().sum() / pos.float().sum().clamp(min=1)
         loss = loss + sc.w_word * out['word']
     if sc.w_slot > 0 and 'slot_logits' in vaux and glab is not None:
-        known = (glab >= 0).all(1) & ~drop_text                                     # whole window labelled, text visible
-        if known.any():
+        slot_known = (glab >= 0).all(1) & ~drop_text                                # whole window labelled, text visible
+        if slot_known.any():
             pres = torch.stack([(glab == c).any(1) for c in range(1, 7)], 1).float()      # gesture classes present in the window
             sl = vaux['slot_logits'][..., 1:].max(1).values                               # [B, 6] best slot per class
-            out['slot'] = F.binary_cross_entropy_with_logits(sl[known], pres[known])
+            out['slot'] = F.binary_cross_entropy_with_logits(sl[slot_known], pres[slot_known])
             loss = loss + sc.w_slot * out['slot']
     if sc.fsq_sat_w > 0 and 'fsq_pre' in vaux:
         out['fsq_sat'] = F.relu(vaux['fsq_pre'].float().abs() - sc.fsq_sat_bound).pow(2).mean()

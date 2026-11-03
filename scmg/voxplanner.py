@@ -118,6 +118,7 @@ class VoxPlanner(nn.Module):
             self.t_proj = nn.Linear(H, d); self.t_norm = nn.LayerNorm(d)
             self.x_attn = nn.MultiheadAttention(d, cfg.heads, batch_first=True)
             self.x_out = nn.Linear(d, d); nn.init.zeros_(self.x_out.weight); nn.init.zeros_(self.x_out.bias)
+        self.xattn_tokens = bool(xa)                              # slots only (xa False): chunks read the slots alone
         if S and not hasattr(self, 'slot_q'):
             self.slot_q = nn.Parameter(torch.randn(S, d) * 0.02)
             self.slot_attn = nn.MultiheadAttention(d, cfg.heads, batch_first=True)
@@ -177,17 +178,30 @@ class VoxPlanner(nn.Module):
         if not self.ab['ralm']: return base, q
         r_in = self.ralm_in(torch.cat([base, prev, au], -1)) + sincos(torch.arange(K, device=x.device), self.d)[None]
         if hasattr(self, 'x_attn'):
-            Kt = tids.shape[1]; has = tidm.any(1)
-            kv = self.t_norm(self.t_proj(ts.to(r_in.dtype))) + sincos(torch.arange(Kt, device=x.device), self.d)[None].to(r_in.dtype)
-            kpm = ~tidm.bool(); kpm[~has, 0] = False                                            # no all-masked rows (zeroed below)
+            Kt = tids.shape[1]; tm = tidm.bool(); has = tm.any(1)
+            tpos = (tm.long().cumsum(1) - 1).clamp(min=0)                     # position among the VISIBLE tokens (window protocol safe)
+            kv = self.t_norm(self.t_proj(ts.to(r_in.dtype))) + sincos(tpos.flatten(), self.d).view(B, Kt, self.d).to(r_in.dtype)
+            kpm = ~tm; kpm[~has, 0] = False                                                     # no all-masked rows (zeroed below)
+            row_ok = has[:, None].expand(B, K)
             if hasattr(self, 'slot_q'):
+                if lvis is not None: raise NotImplementedError('soft intent slots pool the whole window text: no ADSC streaming')
                 slots, _ = self.slot_attn(self.slot_q[None].expand(B, -1, -1).to(kv.dtype), kv, kv, key_padding_mask=kpm)
                 slots = slots * has[:, None, None].to(slots.dtype)
                 self._aux['slot_logits'] = self.slot_cls(slots.float())
+            if getattr(self, 'xattn_tokens', True) and hasattr(self, 'slot_q'):     # both routes on: chunks read slots AND tokens
+                mem = torch.cat([slots, kv], 1)
+                mkpm = torch.cat([torch.zeros(B, slots.shape[1], dtype=torch.bool, device=x.device), kpm], 1)
+                xo, _ = self.x_attn(r_in, mem, mem, key_padding_mask=mkpm)
+            elif hasattr(self, 'slot_q'):
                 xo, _ = self.x_attn(r_in, slots, slots)
             else:
-                xo, _ = self.x_attn(r_in, kv, kv, key_padding_mask=kpm)
-            r_in = r_in + self.x_out(xo * has[:, None, None].to(xo.dtype))
+                amx = None
+                if lvis is not None:                                      # ADSC: chunk k sees only the tokens arrived by its start
+                    dis = ~(lvis.bool() & tm[:, None, :]); row_ok = (~dis).any(-1)
+                    dis[..., 0] &= row_ok                                    # keep one key on empty rows (zeroed below)
+                    amx = dis.repeat_interleave(self.x_attn.num_heads, 0)
+                xo, _ = self.x_attn(r_in, kv, kv, key_padding_mask=None if amx is not None else kpm, attn_mask=amx)
+            r_in = r_in + self.x_out(xo * row_ok[..., None].to(xo.dtype))
         causal = torch.ones(K, K, dtype=torch.bool, device=x.device).tril()[None]
         r = self.ralm(r_in, causal)
         return base + r, q

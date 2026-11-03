@@ -116,6 +116,11 @@ class View:
             tc = Path(P(tok_cache))
             self.tok = dict(ids=np.load(tc / 'TOK_IDS.npy'), index=json.loads((tc / 'TOK_INDEX.json').read_text()))
             if tok_intent:                              # 11-03 word-level intent labels, row-aligned with TOK_IDS (prep_intent.py)
+                pj = Path(P(tok_intent)) / 'PREP.json'
+                if pj.exists():
+                    src = json.loads(pj.read_text()).get('tok_cache')
+                    if src and Path(src).name != Path(str(tok_cache)).name:
+                        raise ValueError(f'word intent labels were built on {src}, not on the token cache {tok_cache}')
                 il = np.load(Path(P(tok_intent)) / 'INTENT_LABEL.npy')
                 if len(il) != len(self.tok['ids']): raise ValueError('INTENT_LABEL rows != TOK_IDS rows')
                 self.tok['ilab'] = il

@@ -171,7 +171,7 @@ if [ "${SEMAUX:-0}" = 1 ]; then
   VB="--stage base --steps $(steps 8000) --lr 3e-4 --warmup $(steps 1000) --eval-every $(steps 500) --snap-every 0"
   V='"planner": "voxcpm", "vox_lm_init": "random", "vox_prefsq_norm": true'; SG='"sem_head": true, "sem_cond": true'; SH='"sem_head": true'
   # 11-03 user: pre-FSQ RMSNorm in every VoxCPM lane (the r7h run had saturated FSQ inputs that cut the text off)
-  FULL='{"w_gest": 0.5, "p_sel_audio": 0.5, "sem_w": 2.0}'
+  FULL='{"w_gest": 0.5, "gest_grad_scale": 0.3, "p_sel_audio": 0.5, "sem_w": 2.0}'   # gest_grad_scale: 11-03 review (head CE fought the flow loss)
   SEMMAN=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/semantic-recognizer-v1/manifest-n200
   slane() {  # gpu dir cfg-w cfg-json sc-json extra...
     local gpu=$1 o=$2 w=$3 cf=$4 scj=$5; shift 5
@@ -192,9 +192,9 @@ if [ "${SEMAUX:-0}" = 1 ]; then
   }
   L7=()                                  # SERIAL=1 (selftest on one small GPU): lanes one after another
   ( slane $(g 0) s-vox-selaudio 2.0 "{$V}" '{"p_sel_audio": 0.5}' ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
-  ( slane $(g 1) s-vox-sgh 2.0 "{$V, $SG}" '{"w_gest": 0.5}' ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
-  ( slane $(g 2) s-vox-headonly 2.0 "{$V, $SH}" '{"w_gest": 0.5}' ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
-  ( slane $(g 3) s-vox-sgh-selaudio 2.0 "{$V, $SG}" '{"w_gest": 0.5, "p_sel_audio": 0.5}' ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
+  ( slane $(g 1) s-vox-sgh 2.0 "{$V, $SG}" '{"w_gest": 0.5, "gest_grad_scale": 0.3}' ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
+  ( slane $(g 2) s-vox-headonly 2.0 "{$V, $SH}" '{"w_gest": 0.5, "gest_grad_scale": 0.3}' ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
+  ( slane $(g 3) s-vox-sgh-selaudio 2.0 "{$V, $SG}" '{"w_gest": 0.5, "gest_grad_scale": 0.3, "p_sel_audio": 0.5}' ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
   ( slane $(g 4) s-vox-full 2.0 "{$V, $SG}" "$FULL" ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
   ( slane $(g 5) s-chunk-full 2.5 "{$SG}" "$FULL" ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
   ( slane $(g 6) s-vox-full-seed1 2.0 "{$V, $SG}" "$FULL" --seed 1 ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!

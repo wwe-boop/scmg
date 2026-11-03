@@ -125,12 +125,18 @@ def main():
         spec = STAGES[a.stage]
         base_cfg = dict(z=vae.z)
         prev = torch.load(a.init, map_location='cpu') if a.init else None
-        if prev is not None: base_cfg = prev['base_cfg']
+        if prev is not None: base_cfg = dict(prev['base_cfg'])            # copy: never mutate the checkpoint's own config
         base_cfg.update(json.loads(a.cfg) if a.stage == 'base' else {})
         extra = dict(prev['extra_cfg']) if prev is not None else {}
         extra.update(spec['cfg']); extra.update(json.loads(a.cfg) if a.stage != 'base' else {})
         prev_extra = dict(prev['extra_cfg']) if prev is not None else {}
         if a.stage == 'base' and prev is not None and json.loads(a.cfg):
+            # only switches whose modules add_modules() can create (zero-init / unit-gain) may be changed on a fine-tune;
+            # anything else is a build-time switch (vox_fsq, vox_lm_init, d, ...) that would be silently ignored -> refuse
+            ADDABLE = {'vox_prefsq_norm', 'vox_text_xattn', 'vox_slots', 'vox_word_aux', 'sem_head', 'sem_cond', 'intent_aux', 'tts_h'}
+            dflt = {f.name: f.default for f in __import__('dataclasses').fields(Config)}
+            bad = {k for k, v in json.loads(a.cfg).items() if k not in ADDABLE and prev['base_cfg'].get(k, dflt.get(k)) != v}
+            if bad: raise SystemExit(f'--cfg changes build-time switches {sorted(bad)} on a fine-tune; only {sorted(ADDABLE)} can be added')
             # base-stage fine-tune from a checkpoint that switches NEW optional modules on (11-03): build + load with the
             # checkpoint's own config, then turn the new switches on and add their (zero-initialised) modules
             model, base_ids = build_model(prev['base_cfg'], prev_extra, extra, prev['ema'])

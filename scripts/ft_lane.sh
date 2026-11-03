@@ -24,6 +24,10 @@ if [ ! -f $so/DONE ]; then
   done && touch $so/DONE
 fi
 [ -f $R/$o/rollout_probe.json ] || $PY scripts/rollout_probe.py $VAE $o=$R/$o/best.pt@$w > $R/$o/rollout_probe.json 2>> $R/$o/probe.log
+[ -f $R/$o/rollout_probe_win.json ] || ROLLOUT_WINDOW_LM_TEXT=1 $PY scripts/rollout_probe.py $VAE $o=$R/$o/best.pt@$w > $R/$o/rollout_probe_win.json 2>> $R/$o/probe.log
 [ -f $R/$o/eval-best/RESULTS.json ] || SCMG_SAVE_N=43 $PY -m scmg.evaluate --ckpt $R/$o/best.pt --vae $VAE --stats $D/STATS_v36_1.json \
   --text-cache $D/text-e5-v36_1 --tok-cache $TOKC --cfg-w $w --out $R/$o/eval-best --n 43 --horizons inf,0 --ndiv 20 --mmap >> $R/$o/eval.log 2>&1
+# 11-03 review: the windowed-LM-text protocol (training-consistent, no future text) next to the old one (comparable to the tables)
+[ -f $R/$o/eval-best-win/RESULTS.json ] || SCMG_SAVE_N=43 $PY -m scmg.evaluate --ckpt $R/$o/best.pt --vae $VAE --stats $D/STATS_v36_1.json \
+  --text-cache $D/text-e5-v36_1 --tok-cache $TOKC --cfg-w $w --out $R/$o/eval-best-win --n 43 --horizons inf,0 --ndiv 20 --mmap --window-lm-text >> $R/$o/eval.log 2>&1
 echo "$(date -Is) LANE_DONE $o"

@@ -10,13 +10,15 @@ Reported per mode (frames within 2 of a chunk boundary excluded from the motion 
             (history = own chunk k-1 for free, GT chunk k-1 for oracle; << 1 = the model repeats what it was shown)"""
 import json, sys
 import numpy as np, torch
-from scmg.data import View, WindowDataset
+import os
+from scmg.data import View, WindowDataset, clip_lm_capacity
 from scmg.evaluate import load, ARMS
 from scmg.infer import Streamer
 from scmg.common import CHUNK, CHUNK_FRAMES
 D = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg'; dev = 'cuda'
 st = json.load(open(D + '/STATS_v36_1.json')); qm, qs = np.array(st['q_mean'], np.float32), np.array(st['q_std'], np.float32)
 VAE = sys.argv[1]; NCLIP = 20
+WIN = os.environ.get('ROLLOUT_WINDOW_LM_TEXT') == '1'   # 11-03 review: windowed LM text (training protocol) for VoxCPM
 
 
 def clips(tok):
@@ -24,7 +26,7 @@ def clips(tok):
     for ci in range(43):
         nch = min(v.clips[ci]['frames'] // CHUNK_FRAMES, 40)
         if nch < 8: continue
-        s = WindowDataset(v, nch * CHUNK_FRAMES, max_tokens=256).sample(ci, 0, np.random.default_rng(ci))
+        s = WindowDataset(v, nch * CHUNK_FRAMES, max_tokens=256, max_ids=clip_lm_capacity(v, ci) if WIN else 160).sample(ci, 0, np.random.default_rng(ci))
         if s['mask'].min() < 1: continue
         out.append((nch, s))
         if len(out) == NCLIP: break
@@ -40,8 +42,9 @@ def run(m, vae, data, w, oracle):
     for nch, s in data:
         q = torch.from_numpy(s['q']).float().to(dev)[None]
         mu, _ = vae.encode(q); gl = ((mu - m.lat_mean) / m.lat_std)[0]                 # [N, z] GT latents (normalised)
-        cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm') if k in s}
-        S = Streamer(m, vae, s['feat'], cond, st, H=10 ** 9, steps=10, seed=0, standby=st['q_mean'], ctx_t=m.ctx_t, cfg_w=w)
+        cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm', 'titime', 'tseg', 'tiseg', 'tiend') if k in s}
+        S = Streamer(m, vae, s['feat'], cond, st, H=10 ** 9, steps=10, seed=0, standby=st['q_mean'], ctx_t=m.ctx_t, cfg_w=w,
+                     window_lm_text=WIN and m.cfg.planner == 'voxcpm')
         gen = []
         for k in range(nch):
             S.tick(None, None, None)
