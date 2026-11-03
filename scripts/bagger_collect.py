@@ -55,7 +55,7 @@ def main(a):
     weights = weights * eligible
     if not weights.sum(): raise ValueError('no eligible train clips')
     weights /= weights.sum()
-    ck = torch.load(a.ckpt, map_location='cpu', weights_only=False)
+    ck = torch.load(a.ckpt, map_location='cpu', weights_only=False, mmap=True)
     w = a.cfg_w if a.cfg_w is not None else float(ck.get('cfg_w', 2.0))
     ck_meta = dict(path=str(Path(a.ckpt).resolve()), bytes=Path(a.ckpt).stat().st_size,
                    mtime_ns=Path(a.ckpt).stat().st_mtime_ns, step=ck.get('step'), cfg_w=w)
@@ -63,7 +63,7 @@ def main(a):
     spec = dict(source='bagger_reversed', split='train', cond=a.cond, count=a.count, n_gen=a.n_gen,
                 seed_chunks=a.seed_chunks, seed=a.seed, frames=T, loss_from_chunk=(T//CHUNK_FRAMES)*2//3,
                 checkpoint=ck_meta, vae=a.vae, view=a.view, holdout=a.holdout,
-                inference=dict(steps=10, trim_start=True, cfg_null_fix=True, window_lm_text=True),
+                inference=dict(steps=10, trim_start=True, cfg_null_fix=True, window_lm_text=True, trim_unused_id_padding=True),
                 eligible_clips=int((weights > 0).sum()), sampling='seed+index, original category/frame weights, holdout excluded')
     print(json.dumps(spec), flush=True)
     if a.dry_run: return
@@ -92,6 +92,11 @@ def main(a):
             ds = WindowDataset(v, T, max_tokens=256, max_ids=clip_lm_capacity(v, ci))
             sample = ds.sample(ci, start, rng)
         else: raise RuntimeError('could not sample a valid training window')
+        # clip_lm_capacity can cover a much longer recording than this rollout.
+        # Drop ONLY unused trailing padding, never overlapping utterance tokens.
+        n_ids = max(160, int(sample['tidm'].sum()))
+        for key in ('tids','tidm','titime','tiseg','tiend'):
+            sample[key] = sample[key][:n_ids].copy()
         torch.manual_seed(a.seed + index)
         q = torch.from_numpy(sample['q']).cuda()[None]
         seed_frames = a.seed_chunks * CHUNK_FRAMES

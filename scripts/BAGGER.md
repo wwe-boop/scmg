@@ -6,7 +6,7 @@
 
 `scripts/bagger_collect.py --ckpt ... --out ... --cond null|reverse` 默认 2000 条、1 块真实前缀 + 23 块生成，10 步 Euler、CFG 从 checkpoint `cfg_w` 取值，缺省采用现有 lane 的 2.0。明确启用 trim_start、cfg_null_fix 和 VoxCPM window_lm_text。支持 --dry-run、--shard/--shards、按索引断点续采；种子由 round 和 index 决定。
 
-只从 View(split='train') 采集，使用原类别/帧长采样权重并排除 holdout，拒绝 glitch 窗口。每条保存前向与反向关节（rad）、原始与条件处理后的音频特征（已归一化）、重编码 latent（已归一化）、原始文本/时间等条件。保留真实 seed 的原始关节，不以 VAE 重建代替。反转后的监督标签不包含原文本、speaker、reference style。
+只从 View(split='train') 采集，使用原类别/帧长采样权重并排除 holdout，拒绝 glitch 窗口。每条保存前向与反向关节（rad）、原始与条件处理后的音频特征（已归一化）、重编码 latent（已归一化）、原始文本/时间等条件。保留真实 seed 的原始关节，不以 VAE 重建代替。反转后的监督标签不包含原文本、speaker、reference style。采集时裁掉整段录音 token 容量中本窗口未使用的尾部 padding（至少留 160 位），有效重叠语句的 tokens 全部保留，再由 Streamer 按窗口取最多 160 个；避免在短窗口上计算整段录音的空 token。
 
 每个采集目录为 COLLECTION.json + NPZ/逐条 JSON + MANIFEST.json，逐条 SHA256 和原始 item ID 可追溯；仅全部完成且 hash 验证通过才写 MANIFEST。View 的 `bagger_dir` 和 WindowDataset 的 `bagger_share` 接入它；多个采集目录以冒号连接，累积池按条均匀采样。集合是实验用纠正池，未通过 COMMON_RULES §15 全部正式数据门禁，不写回 canonical view，不声称可直接执行或正式入库。
 
