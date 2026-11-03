@@ -1,0 +1,85 @@
+{
+  "conclusion": "The available tested checkpoints respond to the initial pose but do not reliably start continuously from it.",
+  "checkpoint_scope": "Base / PEFT / no-MTC causal snapshots; trained state-adapter checkpoint unavailable.",
+  "metric": "Median across 12 streaming trials of max arm-joint absolute difference between first emitted command and stationary starting pose, degrees.",
+  "models": {
+    "base": {
+      "path": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/dlc-scmg-train-r4-1102/base/best.pt",
+      "stage": "base",
+      "step": 6000,
+      "ema_sha256": "eac9add7f1c0e3f576412f7e1c76f5a3321672947f6950fb4e2a987354b47684",
+      "vae_ema_sha256": "6edbf4f0ec20a5933a5f960f0ccbe81bb202430b309241a8e6fc70b451310c72"
+    },
+    "peft": {
+      "path": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/dlc-scmg-train-r4-1102/main-peft/best.pt",
+      "stage": "peft",
+      "step": 2500,
+      "ema_sha256": "6d8fb61bd3f65ebd166576332819b0331dec4d953ca910b2dc3f6a6cbb0675ad",
+      "vae_ema_sha256": "6edbf4f0ec20a5933a5f960f0ccbe81bb202430b309241a8e6fc70b451310c72"
+    },
+    "causal": {
+      "path": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/dlc-scmg-train-r4-1102/nomtc-causal/best.pt",
+      "stage": "causal",
+      "step": 3500,
+      "ema_sha256": "30bc91682b445c7931393d30e45afb25e443d6952240ee848562543a7cc3c162",
+      "vae_ema_sha256": "6edbf4f0ec20a5933a5f960f0ccbe81bb202430b309241a8e6fc70b451310c72"
+    }
+  },
+  "counts": {
+    "total": 324,
+    "streaming": 216,
+    "offline": 108,
+    "first_speed_pass": 0,
+    "startup_va_pass": 0,
+    "all_finite": true
+  },
+  "streaming_table": [
+    {
+      "pose": "mean",
+      "base": 10.560964107513428,
+      "peft": 10.59726333618164,
+      "causal": 10.323826789855957
+    },
+    {
+      "pose": "gt_start",
+      "base": 8.977664947509766,
+      "peft": 9.014602661132812,
+      "causal": 9.092319965362549
+    },
+    {
+      "pose": "other_real",
+      "base": 12.568714618682861,
+      "peft": 12.57517957687378,
+      "causal": 14.255078315734863
+    },
+    {
+      "pose": "arms_plus_03",
+      "base": 31.176142692565918,
+      "peft": 31.15059757232666,
+      "causal": 31.230440139770508
+    },
+    {
+      "pose": "arms_minus_03",
+      "base": 11.730964183807373,
+      "peft": 11.71982717514038,
+      "causal": 11.7833890914917
+    },
+    {
+      "pose": "random_in_limits",
+      "base": 91.30756378173828,
+      "peft": 91.93207550048828,
+      "causal": 91.88248062133789
+    }
+  ],
+  "protocol": "PROTOCOL.json",
+  "interface": "INTERFACE.json",
+  "vae_isolation": "VAE_START.json",
+  "matched_initial_poses_across_models": true,
+  "postprocessing_applied": false,
+  "limitations": [
+    "6 distinct dev audio clips only; repeated seeds/poses are paired trials, not 324 independent clips.",
+    "Random poses respect individual joint ranges but are not collision-validated.",
+    "Limit comparisons use the arm values in the frozen scmg/safety.py, at a 20 ms command interval.",
+    "No live robot execution; no claims about an unavailable trained state model."
+  ]
+}

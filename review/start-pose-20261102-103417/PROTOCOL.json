@@ -1,0 +1,37 @@
+{
+  "question": "Can available SCMG checkpoints start smoothly from an arbitrary stationary joint pose?",
+  "sample": "6 evenly spaced eligible validation clips; each at least 96 frames",
+  "conditions": [
+    "training mean pose",
+    "current clip first pose",
+    "another dev clip pose",
+    "mean arm joints +0.3 rad",
+    "mean arm joints -0.3 rad",
+    "uniform random arm joints inside META joint ranges"
+  ],
+  "clipping": "All initial poses are clipped 0.005 rad inside META limits; random arms are sampled 0.05 rad inside limits. Collision validity is not checked.",
+  "rollout": {
+    "chunks": 6,
+    "frames": 96,
+    "fps": 50,
+    "euler_steps": 10,
+    "precision": "float32",
+    "postprocessing": "none",
+    "initial_velocity": "zero",
+    "H4_seeds": [
+      0,
+      1
+    ],
+    "offline_seeds": [
+      0
+    ]
+  },
+  "rng": "Reset both global torch RNG and per-Streamer generator for every trial; mitigates the unseeded StyleHead found in review.",
+  "first_jump": "max over arm joints of abs(command[0] - initial_pose), converted to degrees; table gives the median over trials",
+  "first_speed": "abs(command[0]-initial_pose)/0.02, compared per joint against scmg/safety.py arm velocity limits",
+  "startup_limits": "First 16 command frames, preceded by three copies of the initial pose; discrete velocity, acceleration and jerk compared against safety.py limits.",
+  "vae_isolation": "Each of 36 unique initial poses held for 64 frames; encode posterior mean then decode; compare final reconstructed frame to the input pose.",
+  "decode_diagnostic": "Reuse exactly the same generated latents, prefix four repetitions of hist0 for decoding only; never count this modified decoding as production output.",
+  "interface_check": "A spy Streamer verifies generate(robot=...) first calls tick(None,None,None), despite robot having initial q/dq.",
+  "scope": "Offline model evaluation only. No robot commands sent. State-adapter trained checkpoint unavailable."
+}

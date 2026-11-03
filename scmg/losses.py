@@ -59,6 +59,8 @@ class StageCfg:
     p_adsc_stream: float = 0.67    # ADSC lanes: share of streaming (online) samples; the rest is the offline mode
     self_force_p: float = 0.5      # r5: probability that a batch uses ONE-STEP SELF-FORCED history (each chunk generated
     self_force_steps: int = 4      # by the current model from GT history, no grad, then used as the next chunk's history)
+    self_force_rounds: int = 1     # 11-03: >1 = MULTI-STEP self-forcing: round r regenerates every chunk from round r-1's generated
+                                   # history, so after R rounds each chunk's history is an R-step own rollout (hold-attractor fix)
 
 
 def logit_normal(n, device, generator=None):
@@ -212,18 +214,21 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         # exposure-bias fix: generate every chunk from GT history (parallel, no grad), then train chunk k on the
         # GENERATED chunk k-1 as its history (planner input, multi-token history token and local-flow context)
         with torch.no_grad():
-            h0 = run_planner(lat_k)
-            st0 = model.style_head(sref[:, None].expand(-1, K, -1), h0)[0].flatten(0, 1) if cfg.style else None
-            ctx0 = torch.cat([torch.zeros_like(lat_k[:, :1]), lat_k[:, :-1]], 1).flatten(0, 1)[:, -cfg.ctx:]
-            kn0 = torch.zeros(M, Lf, dtype=torch.bool, device=dev); kn0[:, :cfg.ctx] = (torch.arange(K, device=dev).repeat(B) > 0)[:, None]
-            x = torch.cat([ctx0, torch.randn(M, CHUNK, cfg.z, device=dev)], 1)
-            mt0 = (mt.flatten(0, 1), mt_mask.flatten(0, 1)[:, None].expand(-1, Lf, -1)) if cfg.mtc else (None, None)
-            for i in range(sc.self_force_steps):
-                tt = torch.full((M, Lf), i / sc.self_force_steps, device=dev); tt[kn0] = 1.
-                v0 = model.flow_velocity(x, tt, kn0, model.sem_h(h0).flatten(0, 1), gi, aw, awm, st0, None, *mt0)
-                x = torch.where(kn0[..., None], x, x + v0 / sc.self_force_steps)
-            gen = x[:, cfg.ctx:].view(B, K, CHUNK, -1)
-            gen = torch.where(lmask.view(B, K, CHUNK)[..., None], gen, lat_k)
+            src = lat_k
+            for _round in range(max(1, sc.self_force_rounds)):
+                h0 = run_planner(src)
+                st0 = model.style_head(sref[:, None].expand(-1, K, -1), h0)[0].flatten(0, 1) if cfg.style else None
+                ctx0 = torch.cat([torch.zeros_like(src[:, :1]), src[:, :-1]], 1).flatten(0, 1)[:, -cfg.ctx:]
+                kn0 = torch.zeros(M, Lf, dtype=torch.bool, device=dev); kn0[:, :cfg.ctx] = (torch.arange(K, device=dev).repeat(B) > 0)[:, None]
+                x = torch.cat([ctx0, torch.randn(M, CHUNK, cfg.z, device=dev)], 1)
+                mt0 = (mt.flatten(0, 1), mt_mask.flatten(0, 1)[:, None].expand(-1, Lf, -1)) if cfg.mtc else (None, None)
+                for i in range(sc.self_force_steps):
+                    tt = torch.full((M, Lf), i / sc.self_force_steps, device=dev); tt[kn0] = 1.
+                    v0 = model.flow_velocity(x, tt, kn0, model.sem_h(h0).flatten(0, 1), gi, aw, awm, st0, None, *mt0)
+                    x = torch.where(kn0[..., None], x, x + v0 / sc.self_force_steps)
+                gen = x[:, cfg.ctx:].view(B, K, CHUNK, -1)
+                gen = torch.where(lmask.view(B, K, CHUNK)[..., None], gen, lat_k)
+                src = gen
         hist = gen
         ctx_lat = torch.cat([torch.zeros_like(gen[:, :1]), gen[:, :-1]], 1).flatten(0, 1)[:, -cfg.ctx:]
         out_sf = 1.

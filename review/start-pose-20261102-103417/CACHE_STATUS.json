@@ -1,0 +1,5 @@
+{
+  "status": "abandoned_weight_transfer",
+  "reason": "slow network; actual evaluation runs in source PAI DSW",
+  "partial_weights_not_used": true
+}

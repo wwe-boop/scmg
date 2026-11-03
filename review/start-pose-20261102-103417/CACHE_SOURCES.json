@@ -1,0 +1,14 @@
+{
+  "/home/xr-25b7/projects/gesture/scmg/review/start-pose-20261102-103417/cache/view/train.json": "/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/train-v1-20261101/views/data-v36_1/train.json",
+  "/home/xr-25b7/projects/gesture/scmg/review/start-pose-20261102-103417/cache/view/SPLIT.json": "/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/train-v1-20261101/views/data-v36_1/SPLIT.json",
+  "/home/xr-25b7/projects/gesture/scmg/review/start-pose-20261102-103417/cache/view/META.json": "/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/train-v1-20261101/views/data-v36_1/META.json",
+  "/home/xr-25b7/projects/gesture/scmg/review/start-pose-20261102-103417/cache/view/cond/COND.json": "/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/train-v1-20261101/views/data-v36_1/cond/COND.json",
+  "/home/xr-25b7/projects/gesture/scmg/review/start-pose-20261102-103417/cache/view/cond/SPK_EMB.npy": "/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/train-v1-20261101/views/data-v36_1/cond/SPK_EMB.npy",
+  "/home/xr-25b7/projects/gesture/scmg/review/start-pose-20261102-103417/cache/data/STATS_v36_1.json": "/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/STATS_v36_1.json",
+  "/home/xr-25b7/projects/gesture/scmg/review/start-pose-20261102-103417/cache/data/text-e5-v36_1/TEXT_TIME.npy": "/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/text-e5-v36_1/TEXT_TIME.npy",
+  "/home/xr-25b7/projects/gesture/scmg/review/start-pose-20261102-103417/cache/data/text-e5-v36_1/TEXT_INDEX.json": "/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/text-e5-v36_1/TEXT_INDEX.json",
+  "/home/xr-25b7/projects/gesture/scmg/review/start-pose-20261102-103417/cache/weights/base.pt": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/dlc-scmg-train-r4-1102/base/best.pt",
+  "/home/xr-25b7/projects/gesture/scmg/review/start-pose-20261102-103417/cache/weights/peft.pt": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/dlc-scmg-train-r4-1102/main-peft/best.pt",
+  "/home/xr-25b7/projects/gesture/scmg/review/start-pose-20261102-103417/cache/weights/causal.pt": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/dlc-scmg-train-r4-1102/nomtc-causal/best.pt",
+  "/home/xr-25b7/projects/gesture/scmg/review/start-pose-20261102-103417/cache/weights/vae.pt": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/trained/vae-r3/final.pt"
+}
