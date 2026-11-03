@@ -27,6 +27,7 @@ ap.add_argument('--deploy-timing', action='store_true')
 ap.add_argument('--window-lm-text', action=argparse.BooleanOptionalAction, default=None)
 ap.add_argument('--trim-start', action=argparse.BooleanOptionalAction, default=True); ap.add_argument('--cfg-null-fix', action=argparse.BooleanOptionalAction, default=True)  # default ON 11-04
 ap.add_argument('--horizon', default='inf', help="audio look-ahead: 'inf' (offline) or N x 80 ms (deployment uses 2 = 160 ms)")
+ap.add_argument('--still-refresh', default=None, help="'thr,t_low' static-history refresh (11-04)")
 ap.add_argument('--seed', type=int, default=0, help='generation seed (default 0 = unchanged)')
 a = ap.parse_args()
 if a.text_mode == 'x2':
@@ -98,7 +99,8 @@ for spec in a.models:
             y = generate(m, vae, s['feat'], variant(ci, v), st, nch, H=INF if a.horizon == 'inf' else int(a.horizon) * U80, steps=10, seed=a.seed, ctx_t=m.ctx_t, cfg_w=w,
                          cfg_text=cfg_text, cfg_t=a.cfg_t, window_lm_text=(m.cfg.planner == 'voxcpm' if a.window_lm_text is None else a.window_lm_text),
                          text_mode=a.text_mode, x2_lag=a.x2_lag, x2_rate=a.x2_rate, deploy_timing=a.deploy_timing,
-                         trim_start=a.trim_start, cfg_null_fix=a.cfg_null_fix, **gk)[0]
+                         trim_start=a.trim_start, cfg_null_fix=a.cfg_null_fix,
+                         still_refresh=tuple(float(x) for x in a.still_refresh.split(',')) if a.still_refresh else None, **gk)[0]
             import tempfile
             with tempfile.NamedTemporaryFile(dir=od, prefix=f.name + '.pending-', suffix='.npy', delete=False) as tmp:
                 np.save(tmp, y[:nch * CHUNK_FRAMES].astype(np.float32))

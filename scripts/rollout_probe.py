@@ -26,7 +26,8 @@ TM = os.environ.get('ROLLOUT_TEXT_MODE', 'final')      # 11-03 user: deployment 
 X2_LAG = float(os.environ.get('ROLLOUT_X2_LAG', '0.15'))
 _H = os.environ.get('ROLLOUT_H', 'inf')                 # 11-04 baseline protocol: audio look-ahead in 80 ms units ('inf' = offline)
 SEED = int(os.environ.get('ROLLOUT_SEED', '0'))
-FIX = os.environ.get('ROLLOUT_FIX', '1') == '1'              # trim_start + cfg_null_fix (agreed default protocol, 11-03 V4)
+FIX = os.environ.get('ROLLOUT_FIX', '1') == '1'
+RF = os.environ.get('ROLLOUT_REFRESH'); RF = tuple(float(x) for x in RF.split(',')) if RF else None   # 'thr,t_low' still refresh              # trim_start + cfg_null_fix (agreed default protocol, 11-03 V4)
 if TM != 'final': WIN = True
 
 
@@ -53,7 +54,7 @@ def run(m, vae, data, w, oracle):
         mu, _ = vae.encode(q); gl = ((mu - m.lat_mean) / m.lat_std)[0]                 # [N, z] GT latents (normalised)
         cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm', 'titime', 'tseg', 'tiseg', 'tiend', 'text_c') if k in s}
         S = Streamer(m, vae, s['feat'], cond, st, H=10 ** 9 if _H == 'inf' else int(_H) * U80, steps=10, seed=SEED, standby=st['q_mean'], ctx_t=m.ctx_t, cfg_w=w,
-                     window_lm_text=WIN and m.cfg.planner == 'voxcpm', text_mode=TM, x2_rate=15.0, x2_lag=X2_LAG, deploy_timing=TM != 'final', trim_start=FIX, cfg_null_fix=FIX)
+                     window_lm_text=WIN and m.cfg.planner == 'voxcpm', text_mode=TM, x2_rate=15.0, x2_lag=X2_LAG, deploy_timing=TM != 'final', trim_start=FIX, cfg_null_fix=FIX, still_refresh=RF)
         gen = []
         for k in range(nch):
             S.tick(None, None, None)
@@ -81,6 +82,6 @@ for spec in args.models:
     tok = resolve_token_cache(cfg, args.tok_cache)
     m, vae = load(ck, VAE, dev); m.eval()
     if tok not in cache: cache[tok] = clips(tok)
-    r = dict(protocol=dict(text_mode=TM, x2_lag=X2_LAG, H=_H, seed=SEED, fix=FIX, window=WIN), label=lab, free=run(m, vae, cache[tok], w, False), oracle=run(m, vae, cache[tok], w, True))
+    r = dict(protocol=dict(text_mode=TM, x2_lag=X2_LAG, H=_H, seed=SEED, fix=FIX, window=WIN, refresh=RF), label=lab, free=run(m, vae, cache[tok], w, False), oracle=run(m, vae, cache[tok], w, True))
     print(json.dumps(r), flush=True)
     del m; torch.cuda.empty_cache()
