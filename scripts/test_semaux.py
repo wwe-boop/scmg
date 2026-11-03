@@ -6,6 +6,8 @@
 Prints ALL_OK / SOME_FAIL."""
 import json, os, subprocess, sys
 import numpy as np, torch
+TEST_TMP = os.environ.get('SCMG_TEST_TMP', '/tmp/claude-1000')
+os.makedirs(TEST_TMP, exist_ok=True)
 D = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg'; dev = 'cuda'
 IF = '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models/intent-frames-v36_1'
 VAE = sys.argv[1]; ORIG = sys.argv[2] if len(sys.argv) > 2 else None
@@ -52,7 +54,7 @@ ds = WD(v, 256, max_tokens=128); cl = semsynth_clips(v, 2)
 b = {k: x.to(dev) for k, x in collate([ds.sample(i, 0, np.random.default_rng(i)) for i in cl]).items()}
 # ---------------- A
 if ORIG:
-    out = '/tmp/claude-1000/semaux_ref.npy'; os.makedirs('/tmp/claude-1000', exist_ok=True)
+    out = os.path.join(TEST_TMP, 'semaux_ref.npy'); os.makedirs(TEST_TMP, exist_ok=True)
     env = dict(os.environ, SEMAUX_CHILD='ref', SEMAUX_OUT=out, PYTHONPATH=ORIG)
     r = subprocess.run([sys.executable, '-c', f'import sys; sys.argv={sys.argv[:2]!r}; exec(open({os.path.abspath(__file__)!r}).read())'], env=env, cwd=ORIG)
     torch.manual_seed(0); m = SCMG(Config(z=vae.z)).to(dev)

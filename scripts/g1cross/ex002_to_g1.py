@@ -11,6 +11,7 @@ from pathlib import Path
 import numpy as np, torch, mujoco
 from scipy.optimize import least_squares
 from scipy.interpolate import PchipInterpolator
+from timing import check_duration
 sys.path.insert(0, '/mnt/cpfs/zbl-cpfs-new/USERS/zehan/baselines/echog-official/code')
 sys.path.insert(0, '/mnt/cpfs/zbl-cpfs-new/USERS/zehan/baselines/echog-official/official/src')
 from echo_g.evaluation.robot_repr import G1_JOINT_NAMES
@@ -66,6 +67,7 @@ class Inverse:
 
     def map_clip(self, q50, base39):
         T = len(q50); N = len(base39)
+        check_duration(T, 50, N, 30)
         t = np.minimum(np.arange(N) / 30, (T - 1) / 50)
         q30 = PchipInterpolator(np.arange(T) / 50, q50, axis=0)(t)
         out = base39.copy(); prev = np.zeros(self.rt.g.nq)
@@ -87,9 +89,10 @@ if __name__ == '__main__':
         for f in sorted(floor.glob('g1_*.npz'), key=lambda p: int(p.stem.split('_')[1])):
             ci = int(f.stem.split('_')[1])
             if cis is not None and ci not in cis: continue
-            if (od / f'dev_{ci}.pt').exists(): continue
             base = np.load(f)['robot_repr']
             q = np.load(floor / f'gt_{ci}.npy') if src == 'gt' else np.load(Path(src) / f'gen_Hinf_{ci}.npy')
+            check_duration(len(q), 50, len(base), 30)
+            if (od / f'dev_{ci}.pt').exists(): continue
             g1 = inv.map_clip(q.astype(np.float64), base)
             torch.save(dict(robot_repr=torch.from_numpy(g1), fps=30.0, real_num_frames=len(g1), source=f'{lab}:{ci}'), od / f'dev_{ci}.pt')
         print('MAPPED', lab, flush=True)

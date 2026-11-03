@@ -21,6 +21,7 @@ D=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg
 TOKC=${TOKC:-}; BASECFG=${BASECFG:-{\}}          # VoxCPM-style planner: TOKC=<token cache>, BASECFG={"planner":"voxcpm"}
 C="--stats $D/STATS_v36_1.json --text-cache $D/text-e5-v36_1 --vae $VAE --workers ${WORKERS:-6} $EXTRA ${TOKC:+--tok-cache $TOKC}"
 cd $CODE && export PYTHONPATH=$CODE
+source "$CODE/scripts/artifacts.sh"
 mkdir -p $R
 rm -f $R/*/FAILED                          # a resubmission retries lanes that failed in an earlier job
 steps() { python3 -c "print(max(4, int($1 * $SCALE)))"; }
@@ -32,10 +33,11 @@ g() { echo ${DEVS[$(( $1 % ${#DEVS[@]} ))]}; }
 
 train() {  # gpu out args...
   local gpu=$1 o=$2; shift 2
-  [ -f $R/$o/DONE.json ] && { echo "skip $o"; return 0; }
+  valid_json "$R/$o/DONE.json" train && { echo "skip $o"; return 0; }
   [ -f $R/$o/FAILED ] && return 1
   mkdir -p $R/$o; echo "$(date -Is) start $o on GPU $gpu"
   if CUDA_VISIBLE_DEVICES=$gpu $PY -m scmg.train --out $R/$o $C --batch $BATCH "$@" >> $R/$o/log.txt 2>&1; then
+    valid_json "$R/$o/DONE.json" train || return 1
     echo "$(date -Is) done $o"
   else
     echo "$(date -Is) FAILED $o"; touch $R/$o/FAILED; return 1
@@ -44,10 +46,8 @@ train() {  # gpu out args...
 evaluate() {  # gpu dir n ckpt-name extra...
   local gpu=$1 o=$2 n=$3 ck=$4; shift 4
   local out=$R/$o/eval-${ck%.pt}${EVTAG:-}
-  [ -f $out/RESULTS.json ] && return 0
-  CUDA_VISIBLE_DEVICES=$gpu $PY -m scmg.evaluate --ckpt $R/$o/$ck --vae $VAE --stats $D/STATS_v36_1.json \
-    --text-cache $D/text-e5-v36_1 ${TOKC:+--tok-cache $TOKC} --cfg-w ${CFGW:-2.5} --out $out --n $n "$@" $( [[ "$EXTRA" == *--mmap* ]] && echo --mmap ) >> $R/$o/eval.log 2>&1 \
-    || echo "$(date -Is) eval FAILED $o/$ck"
+  valid_json "$out/RESULTS.json" eval && return 0
+  CUDA_VISIBLE_DEVICES=$gpu "$ARTIFACT_PY" "$CODE/scripts/artifacts.py" run "$out" eval directory $PY -m scmg.evaluate --ckpt $R/$o/$ck --vae $VAE --stats $D/STATS_v36_1.json     --text-cache $D/text-e5-v36_1 ${TOKC:+--tok-cache $TOKC} --cfg-w ${CFGW:-2.5} --n $n "$@" $( [[ "$EXTRA" == *--mmap* ]] && echo --mmap ) >> $R/$o/eval.log 2>&1     || { echo "$(date -Is) eval FAILED $o/$ck"; return 1; }
 }
 wait_for() {  # dir : returns 1 if upstream failed
   until [ -f $R/$1/DONE.json ]; do [ -f $R/$1/FAILED ] && return 1; sleep 30; done
@@ -170,6 +170,7 @@ fi
 #      chunks (sem_w). Labels: semsynth executed events (scmg/prep_intent_frames.py). The 200 semantic-eval clips are held out of
 #      training -> recall on unseen clips; gnull = own text with the null g_k (how much the flow uses g).
 if [ "${SEMAUX:-0}" = 1 ]; then
+  invalidate_marker "$R/SEMAUX_DONE" || exit 1
   VB="--stage base --steps $(steps 8000) --lr 3e-4 --warmup $(steps 1000) --eval-every $(steps 500) --snap-every 0"
   V='"planner": "voxcpm", "vox_lm_init": "random", "vox_prefsq_norm": true'; SG='"sem_head": true, "sem_cond": true'; SH='"sem_head": true'
   # 11-03 user: pre-FSQ RMSNorm in every VoxCPM lane (the r7h run had saturated FSQ inputs that cut the text off)
@@ -178,19 +179,12 @@ if [ "${SEMAUX:-0}" = 1 ]; then
   slane() {  # gpu dir cfg-w cfg-json sc-json extra...
     local gpu=$1 o=$2 w=$3 cf=$4 scj=$5; shift 5
     train $gpu $o $VB --cfg "$cf" --sc "$scj" --intent-frames ${IFD:?IFD} --holdout $SEMMAN/MANIFEST.json "$@" || return 1
-    SCMG_SAVE_N=43 CFGW=$w evaluate $gpu $o ${NFGD:-43} best.pt --horizons inf,0 --ndiv 20
-    SCMG_SAVE_N=43 SCMG_SEED0=1 EVTAG=-s1 CFGW=$w evaluate $gpu $o ${NFGD:-43} best.pt --horizons inf,0 --ndiv 20
-    [[ "$cf" != *voxcpm* ]] || SCMG_SAVE_N=43 EVTAG=-win CFGW=$w evaluate $gpu $o ${NFGD:-43} best.pt --horizons inf,0 --ndiv 20 --window-lm-text
-    local so=$R/$o/semantic
-    if [ ! -f $so/DONE ]; then
-      CUDA_VISIBLE_DEVICES=$gpu $PY scripts/gen_semantic.py $SEMMAN $so $o=$R/$o/best.pt@$w --n ${NSEM:-200} \
-          --variants own,notext,swap,gnull >> $R/$o/semantic.log 2>&1 \
-        && for vv in own notext swap gnull; do
-             [ -d $so/$o/$vv ] || continue
-             CUDA_VISIBLE_DEVICES=$gpu $PY scripts/semantic_eval.py score --gen-dir $so/$o/$vv --manifest $SEMMAN/MANIFEST.json \
-               --out $so/score-$vv.json >> $R/$o/semantic.log 2>&1
-           done && touch $so/DONE || echo "$(date -Is) semantic eval FAILED $o"
-    fi
+    SCMG_SAVE_N=43 CFGW=$w evaluate $gpu $o ${NFGD:-43} best.pt --horizons inf,0 --ndiv 20 || return 1
+    SCMG_SAVE_N=43 SCMG_SEED0=1 EVTAG=-s1 CFGW=$w evaluate $gpu $o ${NFGD:-43} best.pt --horizons inf,0 --ndiv 20 || return 1
+    [[ "$cf" != *voxcpm* ]] || SCMG_SAVE_N=43 EVTAG=-win CFGW=$w evaluate $gpu $o ${NFGD:-43} best.pt --horizons inf,0 --ndiv 20 --window-lm-text || return 1
+    local so=$R/$o/semantic variants=own,notext,swap
+    if [[ "$cf" == *'"sem_cond": true'* ]]; then variants+=,gnull; fi
+    CUDA_VISIBLE_DEVICES=$gpu semantic_run "$so" "$o" "$R/$o/best.pt" "$w" "$variants" "${NSEM:-200}" >> "$R/$o/semantic.log" 2>&1 || return 1
   }
   L7=()                                  # SERIAL=1 (selftest on one small GPU): lanes one after another
   ( slane $(g 0) s-vox-selaudio 2.0 "{$V}" '{"p_sel_audio": 0.5}' ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
@@ -201,7 +195,9 @@ if [ "${SEMAUX:-0}" = 1 ]; then
   ( slane $(g 5) s-chunk-full 2.5 "{$SG}" "$FULL" ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
   ( slane $(g 6) s-vox-full-seed1 2.0 "{$V, $SG}" "$FULL" --seed 1 ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
   ( slane $(g 7) s-vox-ctl 2.0 "{$V}" '{}' ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
-  wait "${L7[@]}"
+  failed=0
+  for pid in "${L7[@]}"; do wait "$pid" || failed=1; done
+  [ "$failed" = 0 ] || exit 1
   $PY -m scmg.summarize $R > $R/SUMMARY.md 2>&1 || true
   echo "$(date -Is) SEMAUX_DONE"; touch $R/SEMAUX_DONE; exit 0
 fi

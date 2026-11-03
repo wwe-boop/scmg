@@ -7,6 +7,8 @@
 Prints ALL_OK / SOME_FAIL."""
 import json, os, subprocess, sys, tempfile
 import numpy as np, torch
+TEST_TMP = os.environ.get('SCMG_TEST_TMP', '/tmp/claude-1000')
+os.makedirs(TEST_TMP, exist_ok=True)
 D = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg'; B = '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg'; dev = 'cuda'
 VAE, SAT = sys.argv[1], sys.argv[2]
 ok = True
@@ -18,7 +20,7 @@ from scmg.model import SCMG, Config
 from scmg.vae import MotionVAE
 st = json.load(open(D + '/STATS_v36_1.json'))
 # ---- 1
-out = tempfile.mkdtemp(prefix='ft_', dir='/tmp/claude-1000')
+out = tempfile.mkdtemp(prefix='ft_', dir=TEST_TMP)
 base = [sys.executable, '-m', 'scmg.train', '--init', SAT, '--stage', 'base', '--steps', '3', '--warmup', '1', '--batch', '2', '--workers', '1',
         '--mmap', '--eval-every', '1000', '--snap-every', '0', '--stats', D + '/STATS_v36_1.json', '--text-cache', D + '/text-e5-v36_1',
         '--tok-cache', D + '/tok-qwen25-v36_1', '--vae', VAE]

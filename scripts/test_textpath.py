@@ -7,6 +7,8 @@
 Prints ALL_OK / SOME_FAIL."""
 import json, os, subprocess, sys
 import numpy as np, torch
+TEST_TMP = os.environ.get('SCMG_TEST_TMP', '/tmp/claude-1000')
+os.makedirs(TEST_TMP, exist_ok=True)
 D = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg'; dev = 'cuda'
 IF = '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models/intent-frames-v36_1'
 TI = '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models/intent-qwen25-v36_1'
@@ -46,7 +48,7 @@ def check(name, c, msg=''):
 st, v, ds, b, vae, stats = setup(dict(intent_frames=IF, tok_intent=TI))
 from scmg.model import SCMG, Config
 # ---------------- A
-out = '/tmp/claude-1000/tp_ref.npy'; os.makedirs('/tmp/claude-1000', exist_ok=True)
+out = os.path.join(TEST_TMP, 'tp_ref.npy'); os.makedirs(TEST_TMP, exist_ok=True)
 r = subprocess.run([sys.executable, '-c', f'import sys; sys.argv={sys.argv[:4]!r}; exec(open({os.path.abspath(__file__)!r}).read())'],
                    env=dict(os.environ, TP_CHILD='ref', TP_OUT=out, PYTHONPATH=ORIG), cwd=ORIG)
 torch.manual_seed(0); m = SCMG(Config(z=vae.z, planner='voxcpm', vox_lm_init='random')).to(dev)

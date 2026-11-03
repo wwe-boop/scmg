@@ -48,7 +48,9 @@ def overfit_clips(view, n):
     """Restrict `view` IN PLACE to a deterministic subset: the first n BEAT2 train clips of >= 8 s (real mocap, text
     and speaker available); the per-speaker index used for reference-motion sampling is rebuilt."""
     from collections import defaultdict
-    c = [x for x in view.clips if x['frames'] >= 400 and str(x['source']).startswith('beat2')]
+    c = [x for i, x in enumerate(view.clips) if x['frames'] >= 400 and str(x['source']).startswith('beat2')
+         and (view.holdout is None or not view.holdout[i])]
+    if view.holdout is not None: view.holdout = np.zeros(min(n, len(c)), dtype=bool)
     view.clips = sorted(c, key=lambda x: x['clip'])[:n]
     view.by_spk = defaultdict(list)
     for i, x in enumerate(view.clips):
@@ -56,9 +58,28 @@ def overfit_clips(view, n):
     return view.clips
 
 
+ADDABLE = {'vox_prefsq_norm', 'vox_text_xattn', 'vox_slots', 'vox_word_aux', 'sem_head', 'sem_cond', 'intent_aux', 'tts_h'}
+
+
+def validate_additions(old, changes):
+    """Module surgery can add modules, never remove or resize existing ones."""
+    defaults = {f.name: f.default for f in __import__('dataclasses').fields(Config)}
+    for k, value in changes.items():
+        before = old.get(k, defaults.get(k))
+        if type(value) is type(before) and value == before: continue
+        allowed = k in ADDABLE and ((type(before) is bool and before is False and value is True) or
+                  (k == 'vox_slots' and type(before) is int and before == 0 and type(value) is int and value > 0))
+        if not allowed:
+            raise ValueError(f'--cfg changes build-time switches / unsupported module transition: {k}={before!r} -> {value!r}; '
+                             'only false->true, 0->positive slots, or unchanged values are allowed')
+
+
 def build_model(base_cfg, prev_extra, new_extra, prev_state=None):
     """Base-config model -> remember base parameter ids -> rebuild the previous stage's modules -> load its weights
     -> add this stage's modules. LoRA keeps the wrapped Linear parameters, so base ids stay valid through surgery."""
+    if prev_state is not None:
+        effective = {**base_cfg, **prev_extra}
+        validate_additions(effective, {k: v for k, v in new_extra.items() if k in ADDABLE})
     m = SCMG(Config(**base_cfg))
     base_ids = {id(p) for p in m.parameters()}
     for k, v in prev_extra.items(): setattr(m.cfg, k, v)
@@ -163,15 +184,13 @@ def main():
         if a.stage == 'base' and prev is not None and json.loads(a.cfg):
             # only switches whose modules add_modules() can create (zero-init / unit-gain) may be changed on a fine-tune;
             # anything else is a build-time switch (vox_fsq, vox_lm_init, d, ...) that would be silently ignored -> refuse
-            ADDABLE = {'vox_prefsq_norm', 'vox_text_xattn', 'vox_slots', 'vox_word_aux', 'sem_head', 'sem_cond', 'intent_aux', 'tts_h'}
-            dflt = {f.name: f.default for f in __import__('dataclasses').fields(Config)}
-            bad = {k for k, v in json.loads(a.cfg).items() if k not in ADDABLE and prev['base_cfg'].get(k, dflt.get(k)) != v}
-            if bad: raise SystemExit(f'--cfg changes build-time switches {sorted(bad)} on a fine-tune; only {sorted(ADDABLE)} can be added')
+            validate_additions({**prev['base_cfg'], **prev_extra}, json.loads(a.cfg))
             # base-stage fine-tune from a checkpoint that switches NEW optional modules on (11-03): build + load with the
             # checkpoint's own config, then turn the new switches on and add their (zero-initialised) modules
             model, base_ids = build_model(prev['base_cfg'], prev_extra, extra, prev['ema'])
             for k, v in json.loads(a.cfg).items(): setattr(model.cfg, k, v)
             model.add_modules(); base_ids = set()
+            extra.update({k: v for k, v in json.loads(a.cfg).items() if k in extra})
         else:
             model, base_ids = build_model(base_cfg, prev_extra, extra, prev['ema'] if prev is not None else None)
         if prev is None:
@@ -303,7 +322,11 @@ def main():
     save(ck); save(out / 'final.pt', final=True)
     if rank == 0 and not (out / 'best.pt').exists():                # no dev evaluation happened (tiny runs)
         import shutil; shutil.copy(out / 'final.pt', out / 'best.pt')
-    if rank == 0: (out / 'DONE.json').write_text(json.dumps(dict(step=step, skipped=skipped, hours=(time.time() - t0) / 3600)))
+    if rank == 0:
+        done = out / f'DONE.json.pending-{os.getpid()}'
+        done.write_text(json.dumps(dict(step=step, skipped=skipped, hours=(time.time() - t0) / 3600)))
+        assert 'step' in json.loads(done.read_text())
+        os.replace(done, out / 'DONE.json')
     if world > 1: dist.destroy_process_group()
 
 

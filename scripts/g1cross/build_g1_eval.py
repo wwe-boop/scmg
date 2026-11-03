@@ -1,3 +1,4 @@
+from timing import check_duration, replace_upper
 import json, os, sys, numpy as np, torch
 sys.path.insert(0, "/mnt/cpfs/zbl-cpfs-new/USERS/zehan/baselines/echog-official/official/src"); sys.path.insert(0, "/mnt/cpfs/zbl-cpfs-new/USERS/zehan/baselines/echog-official/code")
 from echo_g.evaluation.robot_repr import G1_JOINT_NAMES
@@ -15,9 +16,9 @@ for c in keep:
     save(f"{E}/ref/{s}.pt", ref); save(f"{E}/pred/gt/{s}.pt", ref)
     w=f"{E}/wav/{s}.wav"; 
     if not os.path.exists(w): os.symlink(f"/mnt/cpfs/zbl-cpfs-new/USERS/zehan/baselines/robogesture/audio/clip_{c}.wav", w)
-    eg = np.load(f"/mnt/cpfs/zbl-cpfs-new/USERS/zehan/baselines/echog-official/eval-dev/official/g1_{c}.npz")["robot_repr"][:N]; save(f"{E}/pred/echog-native/{s}.pt", eg)
-    u = ref.copy(); u[:len(eg), UP] = eg[:, UP]; save(f"{E}/pred/echog-upper/{s}.pt", u)
-    rq = np.load(f"/mnt/cpfs/zbl-cpfs-new/USERS/zehan/baselines/robogesture/eval-dev/raw/g1_{c}.npz")["qpos"]; r = ref.copy(); n = min(N, len(rq))
+    eg = np.load(f"/mnt/cpfs/zbl-cpfs-new/USERS/zehan/baselines/echog-official/eval-dev/official/g1_{c}.npz")["robot_repr"]; check_duration(len(eg), 30, N, 30); save(f"{E}/pred/echog-native/{s}.pt", eg)
+    u = replace_upper(ref, eg, UP); save(f"{E}/pred/echog-upper/{s}.pt", u)
+    rq = np.load(f"/mnt/cpfs/zbl-cpfs-new/USERS/zehan/baselines/robogesture/eval-dev/raw/g1_{c}.npz")["qpos"]; check_duration(len(rq), 30, N, 30); r = ref.copy(); n = N
     for j, name in enumerate(G1_JOINT_NAMES):
         if 10 + j in UP: r[:n, 10 + j] = rq[:n, 7 + int(gm.joint(name + "_joint").qposadr[0])]
     save(f"{E}/pred/robogesture-upper/{s}.pt", r)
