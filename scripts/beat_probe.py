@@ -9,7 +9,7 @@ prosody features of the dev view):
   stroke   gesture strokes = prominent peaks of low-passed arm speed (prominence >= 0.25 x the clip's own mean speed),
            Gaussian (sigma 0.15 s) hit of every audio event; also strokes / s
 Per metric: real, shifted, other-clip, real-shift gap and the share of clips where real > shifted."""
-import json, sys
+import json, os, sys
 import numpy as np
 from scipy.ndimage import gaussian_filter1d
 from scipy.signal import butter, filtfilt, find_peaks, argrelextrema
@@ -26,6 +26,8 @@ SHIFTS = [int(s * FPS) for s in (-2.4, -1.6, -1.0, -0.6, 0.6, 1.0, 1.6, 2.4)]
 def events(ci):
     nch = v.clips[ci]['frames'] // CHUNK_FRAMES
     s = WindowDataset(v, nch * CHUNK_FRAMES, max_tokens=8).sample(ci, 0, np.random.default_rng(ci))
+    if os.environ.get('BEAT_EVENTS') == 'prom':                    # prosodic prominence (stressed syllables) instead of onsets
+        return np.clip(s['feat'][:, 81], 0, None)
     b = np.clip(s['feat'][:, 80] + s['feat'][:, 85], 0, None)
     return b
 
@@ -88,4 +90,5 @@ for spec in sys.argv[2:]:
                       gap=float(np.nanmean(r - s)), win=float(np.nanmean(r > s)))
     res[lab] = dict(n=len(rows), **agg)
     print(lab, json.dumps({k: {kk: round(vv, 3) for kk, vv in a.items()} if isinstance(a, dict) else a for k, a in res[lab].items()}), flush=True)
-json.dump(res, open(sys.argv[1], 'w'), indent=1)
+try: json.dump(res, open(sys.argv[1], 'w'), indent=1)
+except OSError as e: print('could not write', sys.argv[1], e)
