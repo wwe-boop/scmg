@@ -25,7 +25,7 @@ ap.add_argument('--text-mode', choices=('final', 'x2', 'segment'), default='fina
 ap.add_argument('--x2-lag', type=float, default=0.15); ap.add_argument('--x2-rate', type=float, default=15.0)
 ap.add_argument('--deploy-timing', action='store_true')
 ap.add_argument('--window-lm-text', action=argparse.BooleanOptionalAction, default=None)
-ap.add_argument('--trim-start', action='store_true'); ap.add_argument('--cfg-null-fix', action='store_true')
+ap.add_argument('--trim-start', action=argparse.BooleanOptionalAction, default=True); ap.add_argument('--cfg-null-fix', action=argparse.BooleanOptionalAction, default=True)  # default ON 11-04
 ap.add_argument('--horizon', default='inf', help="audio look-ahead: 'inf' (offline) or N x 80 ms (deployment uses 2 = 160 ms)")
 ap.add_argument('--seed', type=int, default=0, help='generation seed (default 0 = unchanged)')
 a = ap.parse_args()

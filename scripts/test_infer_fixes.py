@@ -1,5 +1,5 @@
 """11-03 review N1/N3 inference switches. python scripts/test_infer_fixes.py <vae.pt> <orig_code_dir> <vox ckpt>
- a default (trim_start=False, cfg_null_fix=False) is bit-identical to the pre-change streamer
+ a explicit OFF (trim_start=False, cfg_null_fix=False) is bit-identical to the pre-change streamer (both switches default ON since 11-04)
  b trim_start: windows at the clip start have W = k + 1 + LOOK chunks (no pre-clip pseudo chunks), full WIN afterwards
  c cfg_null_fix changes the CFG output (null branch keeps the visibility mask); both switches run end to end
 Prints ALL_OK / SOME_FAIL."""
@@ -31,12 +31,12 @@ def check(n, c, msg=''):
 out = os.path.join(TEST_TMP, 'if_ref.npy'); os.makedirs(TEST_TMP, exist_ok=True)
 r = subprocess.run([sys.executable, '-c', f'import sys; sys.argv={sys.argv[:4]!r}; exec(open({os.path.abspath(__file__)!r}).read())'],
                    env=dict(os.environ, IF_CHILD='1', IF_OUT=out, PYTHONPATH=ORIG), cwd=ORIG)
-y0, W0 = run()
+y0, W0 = run(trim_start=False, cfg_null_fix=False)          # 11-04: both default ON; parity checks the explicit OFF path
 check('a default streamer bit-identical to pre-change', r.returncode == 0 and np.array_equal(y0, np.load(out)), f'W {W0[:3]}')
-y1, W1 = run(trim_start=True)
+y1, W1 = run(trim_start=True, cfg_null_fix=False)
 check('b trim_start windows grow from the clip start', W1[:14] == [3 + k for k in range(14)] and set(W1[14:]) == {16}, f'W {W1}')
 check('b ... and change the start of the output', not np.array_equal(y0, y1), f'max|d| first 1 s {np.abs(y0[:50] - y1[:50]).max():.3f}')
-y2, _ = run(cfg_null_fix=True)
+y2, _ = run(trim_start=False, cfg_null_fix=True)
 check('c cfg_null_fix changes the CFG output', not np.array_equal(y0, y2) and np.isfinite(y2).all(), f'max|d| {np.abs(y0 - y2).max():.3f}')
 y3, _ = run(trim_start=True, cfg_null_fix=True); check('c both switches together run', np.isfinite(y3).all())
 print('ALL_OK' if ok else 'SOME_FAIL')

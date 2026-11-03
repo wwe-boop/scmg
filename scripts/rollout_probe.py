@@ -26,7 +26,7 @@ TM = os.environ.get('ROLLOUT_TEXT_MODE', 'final')      # 11-03 user: deployment 
 X2_LAG = float(os.environ.get('ROLLOUT_X2_LAG', '0.15'))
 _H = os.environ.get('ROLLOUT_H', 'inf')                 # 11-04 baseline protocol: audio look-ahead in 80 ms units ('inf' = offline)
 SEED = int(os.environ.get('ROLLOUT_SEED', '0'))
-FIX = os.environ.get('ROLLOUT_FIX') == '1'              # trim_start + cfg_null_fix (agreed default protocol, 11-03 V4)
+FIX = os.environ.get('ROLLOUT_FIX', '1') == '1'              # trim_start + cfg_null_fix (agreed default protocol, 11-03 V4)
 if TM != 'final': WIN = True
 
 
