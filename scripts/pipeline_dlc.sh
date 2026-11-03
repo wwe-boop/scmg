@@ -156,6 +156,50 @@ if [ "${TTSH:-0}" = 1 ]; then
   $PY -m scmg.summarize $R > $R/SUMMARY.md 2>&1 || true
   echo "$(date -Is) TTSH_DONE"; touch $R/TTSH_DONE; exit 0
 fi
+# ---------------- Text-use methods (SEMAUX=1, 11-03, user): the best FGD model (VoxCPM + random LM) follows its text no better
+# than chance on the semantic recogniser (top-1 4.2 % vs shuffled 4.3 %; real motion 96.9 %). User's two methods:
+#  (1) selective audio dropout: in text-bearing samples, hide the audio of every chunk holding a semantic gesture (planner + Local
+#      Flow window, p_sel_audio), so those chunks can only come from the text;
+#  (2) CoordSpeaker-style Semantic Gesture Head p(g_k | T, A, M<k) on the planner (7 coarse classes, scmg/semclass.py, CE w_gest)
+#      whose g_k representation CONDITIONS the Local Flow (sem_cond; teacher-forced one-hot half of the time, prediction otherwise,
+#      10 % null); "head only" lane = the user's warning case (classifier without conditioning). L_sem = flow up-weight on gesture
+#      chunks (sem_w). Labels: semsynth executed events (scmg/prep_intent_frames.py). The 200 semantic-eval clips are held out of
+#      training -> recall on unseen clips; gnull = own text with the null g_k (how much the flow uses g).
+if [ "${SEMAUX:-0}" = 1 ]; then
+  VB="--stage base --steps $(steps 8000) --lr 3e-4 --warmup $(steps 1000) --eval-every $(steps 500) --snap-every 0"
+  V='"planner": "voxcpm", "vox_lm_init": "random"'; SG='"sem_head": true, "sem_cond": true'; SH='"sem_head": true'
+  FULL='{"w_gest": 0.5, "p_sel_audio": 0.5, "sem_w": 2.0}'
+  SEMMAN=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/semantic-recognizer-v1/manifest-n200
+  slane() {  # gpu dir cfg-w cfg-json sc-json extra...
+    local gpu=$1 o=$2 w=$3 cf=$4 scj=$5; shift 5
+    train $gpu $o $VB --cfg "$cf" --sc "$scj" --intent-frames ${IFD:?IFD} --holdout $SEMMAN/MANIFEST.json "$@" || return 1
+    SCMG_SAVE_N=43 CFGW=$w evaluate $gpu $o ${NFGD:-43} best.pt --horizons inf,0 --ndiv 20
+    SCMG_SAVE_N=43 SCMG_SEED0=1 EVTAG=-s1 CFGW=$w evaluate $gpu $o ${NFGD:-43} best.pt --horizons inf,0 --ndiv 20
+    [[ "$cf" != *voxcpm* ]] || SCMG_SAVE_N=43 EVTAG=-win CFGW=$w evaluate $gpu $o ${NFGD:-43} best.pt --horizons inf,0 --ndiv 20 --window-lm-text
+    local so=$R/$o/semantic
+    if [ ! -f $so/DONE ]; then
+      CUDA_VISIBLE_DEVICES=$gpu $PY scripts/gen_semantic.py $SEMMAN $so $o=$R/$o/best.pt@$w --n ${NSEM:-200} \
+          --variants own,notext,swap,gnull >> $R/$o/semantic.log 2>&1 \
+        && for vv in own notext swap gnull; do
+             [ -d $so/$o/$vv ] || continue
+             CUDA_VISIBLE_DEVICES=$gpu $PY scripts/semantic_eval.py score --gen-dir $so/$o/$vv --manifest $SEMMAN/MANIFEST.json \
+               --out $so/score-$vv.json >> $R/$o/semantic.log 2>&1
+           done && touch $so/DONE || echo "$(date -Is) semantic eval FAILED $o"
+    fi
+  }
+  L7=()                                  # SERIAL=1 (selftest on one small GPU): lanes one after another
+  ( slane $(g 0) s-vox-selaudio 2.0 "{$V}" '{"p_sel_audio": 0.5}' ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
+  ( slane $(g 1) s-vox-sgh 2.0 "{$V, $SG}" '{"w_gest": 0.5}' ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
+  ( slane $(g 2) s-vox-headonly 2.0 "{$V, $SH}" '{"w_gest": 0.5}' ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
+  ( slane $(g 3) s-vox-sgh-selaudio 2.0 "{$V, $SG}" '{"w_gest": 0.5, "p_sel_audio": 0.5}' ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
+  ( slane $(g 4) s-vox-full 2.0 "{$V, $SG}" "$FULL" ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
+  ( slane $(g 5) s-chunk-full 2.5 "{$SG}" "$FULL" ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
+  ( slane $(g 6) s-vox-full-seed1 2.0 "{$V, $SG}" "$FULL" --seed 1 ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
+  ( slane $(g 7) s-vox-ctl 2.0 "{$V}" '{}' ) & L7+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
+  wait "${L7[@]}"
+  $PY -m scmg.summarize $R > $R/SUMMARY.md 2>&1 || true
+  echo "$(date -Is) SEMAUX_DONE"; touch $R/SEMAUX_DONE; exit 0
+fi
 if [ "${VOXQ:-0}" = 1 ]; then
   M=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models
   VB="--stage base --steps $(steps 8000) --lr 3e-4 --warmup $(steps 1000) --eval-every $(steps 500) --snap-every 0"

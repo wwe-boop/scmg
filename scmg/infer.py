@@ -27,7 +27,7 @@ class Streamer:
     def __init__(self, model, vae, feat, cond, stats, H=INF, steps=10, temperature=1.0, n_future=0, seed=0,
                  standby=None, device='cuda', hist_measured=False, ctx_t=1.0, cfg_w=1.0, cfg_text=True, cfg_t=None,
                  text_mode='final', x2_rate=15.0, x2_lag=0.15, seg_lead=0.3, deploy_timing=False,
-                 elastic=None, window_lm_text=False):
+                 elastic=None, window_lm_text=False, g_override=None):
         """feat [T, 89] normalised (whole utterance; access is restricted to what has arrived);
         cond: dict(text [K,768], ttime [K] absolute s, tmask [K], spk [192], spk_valid, source, ref [R,J], ref_valid)
         (+ tts_h [T/4, 2048], tts_hm [T/4] for models with cfg.tts_h: TTS hidden rows aligned to feat frame 0, row r = frames
@@ -65,6 +65,7 @@ class Streamer:
             self.arr_text = cc['tseg'].float() - seg_lead
             if 'tiseg' in cc: self.arr_lm = cc['tiseg'].float() - seg_lead
         self.window_lm_text = window_lm_text
+        self.g_override = g_override         # fixed g_k [n_sem] for every chunk (zeros = null g; None = the head's prediction)
         self.cfg_text = cfg_text             # False: guide on audio only (models never trained with text dropped, e.g. r4 VoxCPM)
         self.ctx_t = ctx_t                   # <1: noise the committed context like in training (exposure-bias fix)
         self.hist_measured = hist_measured   # ablation: context latents = encoded EXECUTED motion, no state adapter
@@ -286,6 +287,11 @@ class Streamer:
             mtk = mtmk = None
             if cfg.mtc: mtk, mtmk = mt[:, kw], mtm[:, kw][:, None].expand(-1, L, -1)
             ada = st_ada if j == 0 else None                         # the measured state only describes "now"
+            if cfg.sem_head and cfg.sem_cond:                        # Local Flow sees the predicted g_k (each CFG branch its own)
+                hk = m.sem_h(hk, self.g_override)
+                if self.cfg_w != 1:
+                    hk_u = m.sem_h(hk_u, self.g_override)
+                    if self.cfg_t is not None: hk_a = m.sem_h(hk_a, self.g_override)
             for s in range(self.steps):
                 tval = s / self.steps
                 t = torch.full((1, L), tval, device=self.dev); t[known] = 1.

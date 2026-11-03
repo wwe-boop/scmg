@@ -2,7 +2,8 @@
     python scripts/gen_semantic.py <manifest dir> <out root> <label=ckpt[@cfg_w]> ... [--variants own,notext,swap] [--n 200]
 For each model and variant writes <out root>/<label>/<variant>/gen_<ci>.npy ([T,34] rad, 50 Hz); then score with
     scripts/semantic_eval.py score --gen-dir <dir> --manifest <manifest dir>/MANIFEST.json
-own = the clip's own text; notext = all text masks 0; swap = text of another manifest clip (times rescaled).
+own = the clip's own text; notext = all text masks 0; swap = text of another manifest clip (times rescaled);
+gnull = own text but the Local Flow gets the null g_k (Semantic Gesture Head models only).
 Same seed (0) for all variants; LM text windowed as in training (VoxCPM planner)."""
 import argparse, json
 from pathlib import Path
@@ -49,14 +50,17 @@ for spec in a.models:
     if '@' in ck: ck, w = ck.split('@'); w = float(w)
     m, vae = load(ck, a.vae, 'cuda')
     cfg_text = m.cfg.planner != 'voxcpm' or getattr(m.cfg, 'vox_text', True)
+    semc = bool(getattr(m.cfg, 'sem_head', False) and getattr(m.cfg, 'sem_cond', False))
     for v in a.variants.split(','):
+        if v == 'gnull' and not semc: continue          # own text, Local Flow given the null g_k: how much the flow uses g
+        gk = dict(g_override=torch.zeros(m.cfg.n_sem, device='cuda')) if v == 'gnull' else {}
         od = Path(a.out) / lab / v; od.mkdir(parents=True, exist_ok=True)
         for ci in cis:
             f = od / f'gen_{ci}.npy'
             if f.exists(): continue
             s = S[ci]; nch = len(s['feat']) // CHUNK_FRAMES
             y = generate(m, vae, s['feat'], variant(ci, v), st, nch, H=INF, steps=10, seed=0, ctx_t=m.ctx_t, cfg_w=w,
-                         cfg_text=cfg_text, cfg_t=a.cfg_t, window_lm_text=m.cfg.planner == 'voxcpm')[0]
+                         cfg_text=cfg_text, cfg_t=a.cfg_t, window_lm_text=m.cfg.planner == 'voxcpm', **gk)[0]
             np.save(f, y[:nch * CHUNK_FRAMES].astype(np.float32))
         print(lab, v, 'done', flush=True)
     del m, vae; torch.cuda.empty_cache()

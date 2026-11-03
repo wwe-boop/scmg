@@ -65,6 +65,11 @@ class Config:
     adsc: bool = False             # Asynchronous Dual-Stream Conditioning: per-chunk text/audio visibility + stream-state token
     # 11-03 opt-in: Qwen3-TTS Talker hidden states (data.View(tts_hidden=...), one 2048-d row per 80 ms) projected
     # (LayerNorm -> Linear, zero-init) and ADDED to the audio-encoder input tokens; dropped / masked exactly like audio
+    sem_head: bool = False         # 11-03 user (CoordSpeaker-style): Semantic Gesture Head p(g_k | T, A, M<k) on the planner output
+    sem_cond: bool = False         # ... and its g_k representation conditions the Local Flow (zero-init embedding added to h)
+    n_sem: int = 7                 # scmg/semclass.py: none / point L / point R / expand / contract / emphasis / other
+    intent_aux: bool = False       # 11-03 opt-in: chunk-level intent classifier on the planner output (losses w_int)
+    n_intent: int = 214            # VOCAB ids 0..213 (0 none, 1 unknown, 2.. classes)
     tts_h: bool = False
     tts_h_dim: int = 2048
     audio_feat: bool = True        # False (only meaningful with tts_h): mel/prosody features zeroed at the audio encoder input
@@ -263,6 +268,12 @@ class SCMG(nn.Module):
             self.vox.ref_gate = nn.Parameter(torch.zeros(1))
         if cfg.adsc and not hasattr(self, 'stream_emb'):
             self._init_adsc()
+        if cfg.sem_head and not hasattr(self, 'sem_head'):
+            self.sem_head = nn.Sequential(nn.LayerNorm(d), nn.Linear(d, d), nn.GELU(), nn.Linear(d, cfg.n_sem))
+        if cfg.sem_head and cfg.sem_cond and not hasattr(self, 'sem_emb'):
+            self.sem_emb = nn.Linear(cfg.n_sem, d, bias=False); nn.init.zeros_(self.sem_emb.weight)   # starts as the plain model
+        if cfg.intent_aux and not hasattr(self, 'int_head'):
+            self.int_head = nn.Linear(d, cfg.n_intent)
         if cfg.tts_h and not hasattr(self, 'tts_in'):
             # zero-init output: switching tts_h on starts from exactly the audio-only function (gradients still reach it)
             self.tts_in = nn.Sequential(nn.LayerNorm(cfg.tts_h_dim), nn.Linear(cfg.tts_h_dim, d))
@@ -276,6 +287,14 @@ class SCMG(nn.Module):
         """Stream-state token (text: 0 nothing yet / 1 partial / 2 final) x (audio: 0 streaming / 1 final), zero-init so
         loading a non-ADSC checkpoint starts from exactly the old function."""
         self.stream_emb = nn.Embedding(6, self.cfg.d); nn.init.zeros_(self.stream_emb.weight)
+
+    # ------------------------------------------------------------------ semantic gesture conditioning
+    def sem_h(self, h, g=None):
+        """Planner vector handed to the Local Flow: h + E g_k. g [.., n_sem] (one-hot / probabilities / zeros = null);
+        None = the head's own prediction softmax(sem_head(h)). Identity for models without sem_cond."""
+        if not (self.cfg.sem_head and self.cfg.sem_cond): return h
+        if g is None: g = torch.softmax(self.sem_head(h.float()), -1)
+        return h + self.sem_emb(g.to(self.sem_emb.weight.dtype)).to(h.dtype)
 
     # ------------------------------------------------------------------ conditions
     def audio_tokens(self, feat, causal, tts_h=None, tts_hm=None):

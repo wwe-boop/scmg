@@ -83,7 +83,8 @@ def require_causal_text(text_c, required, context):
 class View:
     """Everything loaded once (RAM, ~8 GB) before DataLoader workers fork (shared copy-on-write)."""
 
-    def __init__(self, view=VIEW, split='train', text_cache=None, stats=None, mmap=False, tok_cache=None, tts_hidden=None):
+    def __init__(self, view=VIEW, split='train', text_cache=None, stats=None, mmap=False, tok_cache=None, tts_hidden=None,
+                 intent_frames=None, holdout=None):
         v = Path(P(view)); self.root = v
         items = json.loads((v / 'train.json').read_text())
         sp = json.loads((v / 'SPLIT.json').read_text())
@@ -123,6 +124,17 @@ class View:
             import os as _os
             cc = _os.environ.get('SCMG_TEXT_CAUSAL')
             self.text_c = np.load(Path(P(cc)) / 'TEXT_FEAT.npy', mmap_mode='r') if cc else None
+        self.holdout = None                             # semantic-eval clips (+ their rhythm variants) never sampled (11-03)
+        if holdout:
+            pairs = {e['clip_id'].split('__')[0] for e in json.loads(Path(P(holdout)).read_text())['entries']}
+            self.holdout = np.array([any(str(it.get('clip_id', '')).split('__')[0] in pairs for it in c['items'])
+                                     for c in self.clips])
+        self.intent = None                              # frame-level intent track (scmg/prep_intent_frames.py, opt-in 11-03)
+        if intent_frames:
+            self.intent = np.load(Path(P(intent_frames)) / 'INTENT_FRAMES.npy', mmap_mode='r')
+            if len(self.intent) != len(self.q): raise ValueError('INTENT_FRAMES rows != train_q rows')
+            from .semclass import coarse_lut
+            self.gest_lut = coarse_lut(json.loads((v / 'VOCAB.json').read_text()))
         self.tts = None
         if tts_hidden:                                  # Qwen3-TTS Talker hidden states (opt-in conditioning, 11-03)
             tr = Path(P(tts_hidden))
@@ -142,6 +154,7 @@ class View:
         w = np.zeros_like(fr)
         if syn.any(): w[syn] = semsynth_share * fr[syn] / fr[syn].sum()
         w[~syn] = (1 - semsynth_share if syn.any() else 1.) * fr[~syn] / fr[~syn].sum()
+        if getattr(self, 'holdout', None) is not None: w = np.where(self.holdout, 0., w)
         return w / w.sum()
 
 
@@ -244,6 +257,9 @@ class WindowDataset(torch.utils.data.IterableDataset):
                 rs = int(rng.integers(0, max(1, Lr - self.R + 1)))
                 ref, rm, _, _ = self._window(cj, rs, self.R); ref_valid = 1.
         extra = dict(text_c=text_c) if text_c is not None else {}
+        if v.intent is not None:                        # [T] int16: -1 unknown / 0 none / >=2 class (frames past the clip end -1)
+            il = np.full(T, -1, np.int16); il[:n] = v.intent[a:a + n]; extra['intent'] = il
+            extra['gest'] = np.where(il >= 0, v.gest_lut[np.clip(il, 0, None)], -1).astype(np.int16)   # coarse g_k frame labels
         if v.tts is not None:
             if T % 4: raise ValueError(f'tts_hidden needs windows of a multiple of 4 frames (got {T})')
             extra['tts_h'], extra['tts_hm'] = tts_rows(c['items'], c['start'], s, n, T // 4, v.tts_array)

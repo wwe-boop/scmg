@@ -26,6 +26,15 @@ class StageCfg:
     outpaint: bool = False         # random known/unknown masks
     p_noctx: float = 0.1           # instances without any known context
     w_aux: float = 0.1
+    w_int: float = 0.0             # 11-03: chunk intent CE (needs cfg.intent_aux + batch intent); text-dropped samples excluded
+    sem_w: float = 0.0             # 11-03: flow-loss weight 1 + sem_w on chunks that contain an executed semantic gesture
+    int_none_w: float = 0.2        # CE class weight of 'none' (0): ~90 % of labelled chunks
+    # 11-03 user: Semantic Gesture Head (cfg.sem_head / sem_cond) and selective audio dropout
+    w_gest: float = 0.0            # CE of the coarse g_k head (text-dropped samples excluded)
+    gest_none_w: float = 0.3       # CE class weight of g = none
+    sem_tf: float = 0.5            # P(Local Flow gets the TRUE g_k one-hot) on labelled chunks; else the head's prediction
+    sem_drop: float = 0.1          # P(g_k -> null (zeros)) per sample, so g can be guided like a condition
+    p_sel_audio: float = 0.0       # P(per text-bearing sample) that the audio of every gesture chunk is hidden (planner + flow)
     w_cont: float = 0.0
     w_rhy: float = 0.0
     w_kl: float = 0.05
@@ -88,6 +97,15 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     a = model.audio_tokens(feat, stream, batch.get('tts_h'), batch.get('tts_hm'))   # == model.audio(feat, stream) without tts_h
     a = torch.where(drop_audio[:, None, None], model.audio_null.expand_as(a), a)
     amask_k = model.chunk_audio_mask(K, N, H, dev) & ~drop_audio[:, None, None]
+    glab = hide = None
+    if 'gest' in batch:                   # coarse g_k per chunk: majority class with >= 80 ms, 0 none, -1 unknown
+        fg = batch['gest'].long().view(B, K, CHUNK_FRAMES)
+        cnt = F.one_hot(fg.clamp(min=0), model.cfg.n_sem)[..., 1:].sum(2)                # [B, K, n_sem - 1]
+        glab = torch.where(cnt.max(-1).values >= 4, cnt.argmax(-1) + 1,
+                           torch.where((fg >= 0).all(-1), torch.zeros_like(fg[..., 0]), torch.full_like(fg[..., 0], -1)))
+        if sc.p_sel_audio > 0:            # selective audio dropout: gesture chunks of text-bearing samples lose their audio
+            hide = (r(sc.p_sel_audio) & ~drop_text & ~drop_audio)[:, None] & (glab >= 1)   # [B, K]
+            amask_k = amask_k & ~hide[:, :, None]
     text, tmask = model.text_tokens(batch['text'], batch['ttime'], batch['tmask'] & ~drop_text[:, None],
                                     drop=r(cfg.drop_time))
     tidm_d = batch['tidm'] & ~drop_text[:, None] if 'tidm' in batch else None   # VoxCPM LM text: same text dropout
@@ -184,6 +202,8 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
                           tvis=tvis, lvis=lvis, sstate=sstate)
 
     aw, awm = model.local_audio(a, H, K)
+    if hide is not None:                  # the hidden chunks' Local Flow audio window = the null audio (as for dropped audio)
+        aw = torch.where(hide[:, :, None, None], model.audio_null.to(aw.dtype).expand_as(aw), aw)
     aw, awm = aw.flatten(0, 1), awm.flatten(0, 1)
     gi = g[:, None].expand(-1, K, -1).flatten(0, 1)
     Lf = cfg.ctx + CHUNK
@@ -200,7 +220,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             mt0 = (mt.flatten(0, 1), mt_mask.flatten(0, 1)[:, None].expand(-1, Lf, -1)) if cfg.mtc else (None, None)
             for i in range(sc.self_force_steps):
                 tt = torch.full((M, Lf), i / sc.self_force_steps, device=dev); tt[kn0] = 1.
-                v0 = model.flow_velocity(x, tt, kn0, h0.flatten(0, 1), gi, aw, awm, st0, None, *mt0)
+                v0 = model.flow_velocity(x, tt, kn0, model.sem_h(h0).flatten(0, 1), gi, aw, awm, st0, None, *mt0)
                 x = torch.where(kn0[..., None], x, x + v0 / sc.self_force_steps)
             gen = x[:, cfg.ctx:].view(B, K, CHUNK, -1)
             gen = torch.where(lmask.view(B, K, CHUNK)[..., None], gen, lat_k)
@@ -238,18 +258,56 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         tc = (sc.ctx_t[0] + (sc.ctx_t[1] - sc.ctx_t[0]) * torch.rand(M, device=dev))[:, None].expand(M, L)
         xt = torch.where(noisy[..., None], tc[..., None] * x1i + (1 - tc[..., None]) * noise, xt)
         t = torch.where(noisy, tc, t)
-    v = model.flow_velocity(xt, t, known, h.flatten(0, 1), gi, aw, awm, style_tok, state_ada,
+    h_flow = h; g_logits = None
+    if cfg.sem_head:
+        g_logits = model.sem_head(h.float())                                         # [B, K, n_sem]
+        if cfg.sem_cond:
+            gp = torch.softmax(g_logits, -1).detach()                                # flow loss does not train the head
+            if glab is not None:
+                tf = r(sc.sem_tf)[:, None] & (glab >= 0) & ~drop_text[:, None]
+                gp = torch.where(tf[..., None], F.one_hot(glab.clamp(min=0), cfg.n_sem).float(), gp)
+            gp = gp * (~r(sc.sem_drop)).float()[:, None, None]                       # null g_k
+            h_flow = model.sem_h(h, gp)
+    v = model.flow_velocity(xt, t, known, h_flow.flatten(0, 1), gi, aw, awm, style_tok, state_ada,
                             mtp if cfg.mtc else None, mtpm[:, None].expand(-1, L, -1) if cfg.mtc else None)
     tgt_valid = lmask.view(B, K, CHUNK).flatten(0, 1)
     sup = ~known
     sup[:, cfg.ctx:] &= tgt_valid
     sup[:, :cfg.ctx] = False                                                          # past context never supervised
     err = (v - (x1i - noise)).square().mean(-1)
-    out = dict(flow=(err * sup).sum() / sup.sum().clamp(min=1), self_forced=torch.tensor(out_sf, device=dev))
+    ilab = None
+    if 'intent' in batch and (sc.w_int > 0 or sc.sem_w > 0):
+        fi = batch['intent'].long().view(B, K, CHUNK_FRAMES)
+        has = (fi >= 2).sum(-1) >= 4                                                 # >= 80 ms of a gesture in the chunk
+        ilab = torch.where(has, fi.max(-1).values, torch.where((fi >= 0).all(-1), torch.zeros_like(has, dtype=torch.long),
+                                                                torch.full_like(has, -1, dtype=torch.long)))
+    if ilab is not None and sc.sem_w > 0:
+        wi = (1 + sc.sem_w * (ilab >= 2).float()).flatten()[:, None]                   # [M, 1]
+        flow = (err * sup * wi).sum() / (sup * wi).sum().clamp(min=1)
+    else:
+        flow = (err * sup).sum() / sup.sum().clamp(min=1)
+    out = dict(flow=flow, self_forced=torch.tensor(out_sf, device=dev))
     aux = (model.p_aux(h) - lat_k.flatten(-2)).square().mean(-1)
     cm = lmask.view(B, K, CHUNK).all(-1).float()
     out['aux'] = (aux * cm).sum() / cm.sum().clamp(min=1)
     loss = out['flow'] + sc.w_aux * out['aux']
+    if g_logits is not None and glab is not None and sc.w_gest > 0:
+        gl = torch.where(drop_text[:, None] | ~cm.bool(), torch.full_like(glab, -1), glab)
+        cw = torch.ones(cfg.n_sem, device=dev); cw[0] = sc.gest_none_w
+        out['gest'] = F.cross_entropy(g_logits.flatten(0, 1), gl.flatten(), weight=cw, ignore_index=-1) if (gl >= 0).any() \
+            else g_logits.sum() * 0.
+        pos = gl >= 1
+        out['gest_acc'] = ((g_logits.argmax(-1) == gl) & pos).float().sum() / pos.float().sum().clamp(min=1)
+        loss = loss + sc.w_gest * out['gest']
+    if ilab is not None and sc.w_int > 0 and hasattr(model, 'int_head'):
+        il = torch.where(drop_text[:, None] | ~cm.bool(), torch.full_like(ilab, -1), ilab)   # no text -> intent unknowable
+        cw = torch.ones(model.cfg.n_intent, device=dev); cw[0] = sc.int_none_w
+        logits = model.int_head(h.float())
+        out['intent'] = F.cross_entropy(logits.flatten(0, 1), il.flatten(), weight=cw, ignore_index=-1) if (il >= 0).any() \
+            else logits.sum() * 0.
+        pos = il >= 2
+        out['intent_acc'] = ((logits.argmax(-1) == il) & pos).float().sum() / pos.float().sum().clamp(min=1)
+        loss = loss + sc.w_int * out['intent']
 
     # ---- decoded continuity / rhythm
     if sc.w_cont > 0 or sc.w_rhy > 0 or sc.w_phys > 0:
