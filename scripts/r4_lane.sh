@@ -16,7 +16,7 @@ if [ ! -f $R/$o/DONE.json ]; then
   $PY -m scmg.train --out $R/$o --init $INIT --stats $D/STATS_v36_1.json --text-cache $D/text-e5-v36_1 --vae $VAE --workers ${WORKERS:-6} \
     --tok-cache $D/tok-qwen25-v36_1 --tok-intent $B/models/intent-qwen25-v36_1 --intent-frames $B/models/intent-frames-v36_1 \
     --holdout $SEMMAN/MANIFEST.json --semsynth-share ${SEMSHARE:-0.4} --batch ${BATCH:-64} --stage base --steps $ST --lr ${LR:-1e-4} \
-    --warmup 200 --eval-every 1000 --snap-every $SNAP --cfg "$cf" --sc "$scj" ${BAGGER_DIR:+--bagger-dir $BAGGER_DIR --bagger-share ${BAGGER_SHARE:-0.33}} >> $R/$o/log.txt 2>&1 &
+    --warmup 200 --eval-every 1000 --snap-every $SNAP --seed ${TRAIN_SEED:-0} --cfg "$cf" --sc "$scj" ${BAGGER_DIR:+--bagger-dir $BAGGER_DIR --bagger-share ${BAGGER_SHARE:-0.33}} >> $R/$o/log.txt 2>&1 &
   TP=$!; log "TRAIN_START pid $TP"
 else TP=; fi
 evalq() {  # <ckpt> <label>
