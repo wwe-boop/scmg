@@ -92,10 +92,12 @@ def main():
             hp = filtfilt(HB, HA, y[:, ARMS], axis=0); row['hf'] = float((hp ** 2).sum() / max(((y[:, ARMS] - y[:, ARMS].mean(0)) ** 2).sum(), 1e-9))
             j = np.abs(np.diff(y[:, ARMS], 3, axis=0)).mean(); jg = np.abs(np.diff(gt[:, ARMS], 3, axis=0)).mean(); row['jerk'] = float(j / max(jg, 1e-9))
             if LIM is not None:
-                J = [0, 1] + ARMS                    # waist + arms (head pitch of the retargeted GT itself sits outside the 3 % margin)
-                row['lim_pos'] = float(((y[:, J] < LIM['lo'][J]) | (y[:, J] > LIM['hi'][J])).any(1).mean())
+                J = [0, 1] + ARMS                    # waist + arms; HARD limits (the 3 % margin flags upright waist pitch, range 0.23 rad)
+                lo_h, hi_h = np.asarray(meta['lower'])[J], np.asarray(meta['upper'])[J]
+                row['lim_pos'] = float(((y[:, J] < lo_h) | (y[:, J] > hi_h)).any(1).mean())
+                row['waist_pitch'] = float(y[:, 1].mean()); row['waist_pitch_gt'] = float(gt[:, 1].mean())
                 row['lim_vel'] = float((np.abs(np.diff(y[:, J], axis=0)) * FPS > LIM['v'][J]).any(1).mean())
-                row['lim_pos_gt'] = float(((gt[:, J] < LIM['lo'][J]) | (gt[:, J] > LIM['hi'][J])).any(1).mean())
+                row['lim_pos_gt'] = float(((gt[:, J] < lo_h) | (gt[:, J] > hi_h)).any(1).mean())
             row['beat_gap'] = beat_gap(y, z['feat'][:T, PROSODY_COLS['prominence']])
             tk = np.array(tm[1:]) * 1000 if len(tm) > 1 else np.array([0.]); row['tick_p50'] = float(np.percentile(tk, 50)); row['tick_p95'] = float(np.percentile(tk, 95))
             f.write(json.dumps(row) + '\n'); f.flush(); print(lab, r['clip'], r['cond'], round(row['still'], 3), round(row['speed'], 2), flush=True)
