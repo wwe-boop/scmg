@@ -47,10 +47,11 @@ class MotionVAE(nn.Module):
     """Plain causal conv VAE (r3). The first design (residual stacks + stride-2 pairs) got stuck outputting the global
     mean pose even when over-fitting one batch (debug_vae*.py); this flat design fits it (L1 0.11 in 300 steps)."""
 
-    def __init__(self, z=16, c=384, stride=STRIDE):
+    def __init__(self, z=16, c=384, stride=STRIDE, beta=1e-3, w_vel=0.3, w_acc=0.1, w_accmag=0.0):
         super().__init__()
         if stride != STRIDE: raise ValueError(f'VAE built for SCMG_STRIDE={stride}, environment has {STRIDE}')
-        self.z, self.stride = z, stride
+        self.z, self.stride, self.c = z, stride, c
+        self.beta, self.w_vel, self.w_acc, self.w_accmag = beta, w_vel, w_acc, w_accmag     # training-loss weights (11-03 variants)
         self.enc = nn.Sequential(CConv(J, c, 3), nn.SiLU(), CConv(c, c, 3), nn.SiLU(),
                                  nn.Conv1d(c, c, STRIDE, stride=STRIDE),          # latent i <- frames 4i..4i+3
                                  nn.SiLU(), CConv(c, c, 3), nn.SiLU(), CConv(c, c, 3), nn.SiLU(), nn.Conv1d(c, 2 * z, 1))
@@ -68,7 +69,7 @@ class MotionVAE(nn.Module):
         """z [B, N, Z] -> x [B, 4N, J]."""
         return self.dec(z.transpose(1, 2)).transpose(1, 2)
 
-    def forward(self, x, mask=None, beta=1e-3, w=None, deriv=1.0):
+    def forward(self, x, mask=None, beta=None, w=None, deriv=1.0):
         """deriv in [0, 1]: weight ramp of the velocity/acceleration terms. At full weight from step 0 they dominate the
         noisy initial output and the net escapes them by emitting a constant pose (stuck at the mean, KL collapses)."""
         mu, lv = self.encode(x)
@@ -77,7 +78,9 @@ class MotionVAE(nn.Module):
         losses = recon_losses(y, x, mask, w)
         kl = 0.5 * (mu.square() + lv.exp() - 1 - lv).sum(-1).mean()
         losses['kl'] = kl
-        losses['loss'] = losses['rec'] + deriv * (0.3 * losses['vel'] + 0.1 * losses['acc'] + beta * kl)
+        beta = self.beta if beta is None else beta
+        losses['loss'] = losses['rec'] + deriv * (self.w_vel * losses['vel'] + self.w_acc * losses['acc'] + beta * kl
+                                                  + self.w_accmag * losses['accmag'])
         return y, losses
 
 
@@ -90,4 +93,10 @@ def recon_losses(y, x, mask=None, w=None):
         return ((a - b).abs() * w).mean(-1).mul(mm).sum() / mm.sum().clamp(min=1)
     dv = lambda t: t[:, 1:] - t[:, :-1]
     mv = m[:, 1:] * m[:, :-1]; ma = mv[:, 1:] * mv[:, :-1]
-    return dict(rec=l1(y, x, m), vel=l1(dv(y), dv(x), mv) * 10., acc=l1(dv(dv(y)), dv(dv(x)), ma) * 30.)
+    ay, ax = dv(dv(y)), dv(dv(x))
+    out = dict(rec=l1(y, x, m), vel=l1(dv(y), dv(x), mv) * 10., acc=l1(ay, ax, ma) * 30.)
+    # 11-03: per-frame acceleration MAGNITUDE (arms+hands energy, sign-free): signed L1 lets the decoder smooth short beat
+    # strokes to ~0 acceleration; matching |acc| keeps their energy at the right frames (beat_align depends on it)
+    nm = lambda t: (t * w).norm(dim=-1)
+    out['accmag'] = ((nm(ay) - nm(ax)).abs() * ma).sum() / ma.sum().clamp(min=1) * 30.
+    return out

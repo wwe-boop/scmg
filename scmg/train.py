@@ -95,6 +95,7 @@ def main():
     ap.add_argument('--mmap', action='store_true', help='memory-map the arrays instead of loading them (smoke tests)')
     ap.add_argument('--max-hours', type=float, default=0, help='stop cleanly after this wall time (0 = no limit)')
     ap.add_argument('--tts-hidden', default=None, help='Qwen3-TTS hidden-state export (scmg/tts-hidden-v36_1); needed by cfg tts_h')
+    ap.add_argument('--vae-cfg', default='{}', help='stage vae: MotionVAE kwargs (z, c, beta, w_vel, w_acc, w_accmag)')
     ap.add_argument('--holdout', default=None, help='semantic-eval MANIFEST.json: its clips and rhythm variants are never sampled')
     ap.add_argument('--intent-frames', default=None, help='frame-level intent track (scmg.prep_intent_frames); used by sc w_int / sem_w')
     a = ap.parse_args()
@@ -116,7 +117,7 @@ def main():
 
     # ------------------------------------------------------------ model
     if a.stage == 'vae':
-        model = MotionVAE().to(dev); base_ids = set(); vae = None; sc = None
+        model = MotionVAE(**json.loads(a.vae_cfg)).to(dev); base_ids = set(); vae = None; sc = None
     else:
         vck = torch.load(a.vae, map_location='cpu')
         vae = MotionVAE(**vck['cfg']).to(dev); vae.load_state_dict(vck['ema']); vae.eval().requires_grad_(False)
@@ -164,7 +165,8 @@ def main():
     def save(path, final=False):
         if rank: return
         if a.stage == 'vae':
-            d = dict(cfg=dict(z=model.z, stride=model.stride), model=model.state_dict(), ema=ema.state_dict(), step=step)
+            d = dict(cfg=dict(z=model.z, stride=model.stride, **({'c': model.c} if model.c != 384 else {})), model=model.state_dict(),
+                     ema=ema.state_dict(), step=step, vae_cfg=json.loads(a.vae_cfg))
             if final: d.update(latent_stats(ema))
         else:
             d = dict(base_cfg=base_cfg, extra_cfg=extra, ema=ema.state_dict(), model=model.state_dict(), step=step,
