@@ -11,8 +11,9 @@ export SCMG_TEXT_CAUSAL=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models/te
 PY=${PY:-python}; B=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg; D=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg
 VAE=$B/trained/vae-r3/final.pt; TOKC=$D/tok-qwen25-v36_1; SEMMAN=$B/semantic-recognizer-v1/manifest-n200
 O=$R/$lab/$P; mkdir -p $O
-if [ $P = offline ]; then EV=(--horizons inf --window-lm-text); GS=(--horizon inf); RO="ROLLOUT_WINDOW_LM_TEXT=1"; HT=Hinf
-else EV=(--horizons 2 --window-lm-text --text-mode x2 --x2-rate 15 --x2-lag 0.15 --deploy-timing); GS=(--horizon 2 --text-mode x2 --x2-rate 15 --x2-lag 0.15 --deploy-timing); RO="ROLLOUT_TEXT_MODE=x2 ROLLOUT_X2_LAG=0.15 ROLLOUT_H=2"; HT=H2; fi
+WL=--window-lm-text; [ "${NOVOX:-0}" = 1 ] && WL=""          # chunk/main planners have no LM ids to window
+if [ $P = offline ]; then EV=(--horizons inf $WL); GS=(--horizon inf); RO="ROLLOUT_WINDOW_LM_TEXT=1"; HT=Hinf
+else EV=(--horizons 2 $WL --text-mode x2 --x2-rate 15 --x2-lag 0.15 --deploy-timing); GS=(--horizon 2 --text-mode x2 --x2-rate 15 --x2-lag 0.15 --deploy-timing); RO="ROLLOUT_TEXT_MODE=x2 ROLLOUT_X2_LAG=0.15 ROLLOUT_H=2"; HT=H2; fi
 log(){ echo "$(date -Is) $*" >> $O/runner.log; }
 if [ $part = fgd ]; then
   for s in 0 1; do
