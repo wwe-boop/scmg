@@ -84,7 +84,8 @@ class View:
     """Everything loaded once (RAM, ~8 GB) before DataLoader workers fork (shared copy-on-write)."""
 
     def __init__(self, view=VIEW, split='train', text_cache=None, stats=None, mmap=False, tok_cache=None, tts_hidden=None,
-                 intent_frames=None, holdout=None, tok_intent=None):
+                 intent_frames=None, holdout=None, tok_intent=None, bagger_dir=None):
+        self.bagger_dir = bagger_dir
         v = Path(P(view)); self.root = v
         items = json.loads((v / 'train.json').read_text())
         sp = json.loads((v / 'SPLIT.json').read_text())
@@ -186,11 +187,17 @@ class View:
 
 class WindowDataset(torch.utils.data.IterableDataset):
     def __init__(self, view: View, frames=256, ref_frames=128, max_tokens=128, seed=0, semsynth_share=0.4,
-                 fixed=None, max_ids=160):
+                 fixed=None, max_ids=160, bagger_share=0.):
         self.v, self.T, self.R, self.K, self.seed = view, frames, ref_frames, max_tokens, seed
         self.w = view.weights(semsynth_share)
         self.fixed = fixed            # list of (clip_idx, start) for deterministic evaluation
         self.KI = max_ids
+        self.bagger = None
+        if not 0 <= bagger_share <= 1: raise ValueError('bagger_share must be in [0,1]')
+        self.bagger_share = bagger_share
+        if bagger_share > 0:
+            from .bagger import BaggerPool
+            self.bagger = BaggerPool(view.bagger_dir, self)
 
     def __iter__(self):
         wi = torch.utils.data.get_worker_info()
@@ -199,10 +206,17 @@ class WindowDataset(torch.utils.data.IterableDataset):
             for ci, s in self.fixed[(wi.id if wi else 0)::(wi.num_workers if wi else 1)]: yield self.sample(ci, s, rng)
             return
         while True:
+            if self.bagger is not None and rng.random() < self.bagger_share:
+                yield self.bagger.sample(rng)
+                continue
             ci = int(rng.choice(len(self.w), p=self.w))
             L = self.v.clips[ci]['frames']
             s = int(rng.integers(0, max(1, L - self.T + 1))) // STRIDE * STRIDE
-            yield self.sample(ci, s, rng)
+            sample = self.sample(ci, s, rng)
+            if self.bagger is not None:
+                sample['loss_from_chunk'] = np.int64(-1)
+                sample['bagger_null'] = np.bool_(False)
+            yield sample
 
     def _window(self, ci, s, T):
         c = self.v.clips[ci]; a = c['start'] + s; n = max(0, min(T, c['frames'] - s))
