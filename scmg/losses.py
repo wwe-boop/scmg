@@ -87,8 +87,9 @@ def segments(x, K, before, after):
 
 
 def chunk_intent_labels(frames, n_classes):
-    """Dominant labelled class, >=4 frames; ties choose the lowest id. Unknown chunks stay ignored."""
-    counts = F.one_hot(frames.clamp(min=0), n_classes) * (frames >= 0)[..., None]
+    """Dominant GESTURE intent (id >= 2) with >= 4 frames (80 ms), ties -> lowest id; else none (0) if every frame is labelled,
+    -1 (ignored) otherwise.  A chunk with 4 gesture frames and 12 none frames is that gesture (11-03 Claude)."""
+    counts = F.one_hot(frames.clamp(min=0), n_classes) * (frames >= 2)[..., None]   # gesture intents only (0 none, 1 rest)
     counts = counts.sum(-2)
     count, label = counts.max(-1)
     none = torch.where((frames >= 0).all(-1), torch.zeros_like(label), torch.full_like(label, -1))
