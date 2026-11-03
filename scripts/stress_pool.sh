@@ -7,7 +7,7 @@ mkdir -p $R/locks $R/rows
 worker() {
   local gpu=$1 slot=$2 lab ck w tm h tx sd cs j rc t0
   while read -r lab ck w tm h tx sd cs; do
-    [ -n "$lab" ] || continue; j=$lab__$tm-$h-$tx-s$sd-${cs//,/+}
+    [ -n "$lab" ] || continue; j=${lab}__${tm}-${h}-${tx}-s${sd}-${cs//,/+}
     [ -f $R/rows/$j.DONE ] && continue; mkdir $R/locks/$j 2>/dev/null || continue
     t0=$(date +%s); echo "$(date +%T) gpu$gpu.$slot START $j"
     ( cd $REL && PYTHONPATH=$REL CUDA_VISIBLE_DEVICES=$gpu OMP_NUM_THREADS=2 STRESS_TM=$tm STRESS_H=$h STRESS_TEXT=$tx STRESS_SEED=$sd STRESS_CONDS=$cs \
