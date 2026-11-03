@@ -126,6 +126,36 @@ if [ "${TEXTUSE:-0}" = 1 ]; then
   $PY -m scmg.summarize $R > $R/SUMMARY.md 2>&1 || true
   echo "$(date -Is) TEXTUSE_DONE"; touch $R/TEXTUSE_DONE; exit 0
 fi
+# ---------------- TTS hidden-state conditioning (TTSH=1, 11-03): Qwen3-TTS Talker last-layer hidden state, one 2048-d row
+# per 80 ms (what the TTS is saying at that moment, text + prosody), projected (LayerNorm -> Linear, zero-init) and ADDED to
+# the audio-encoder input tokens; dropped / masked / causal exactly like the audio (scripts/test_ttsh.py). Deployment speaks
+# through Qwen3-TTS, so the rows exist online together with the audio. Same budget as VOXABL2; every lane is evaluated
+# with the fgd-eval protocol (43 dev clips saved, H inf/0, generation seeds 0 and 1); VoxCPM lanes also with windowed LM text
+# (-win: only utterances overlapping the planner window, as in training; the old protocol shows the whole clip's text, future included).
+if [ "${TTSH:-0}" = 1 ]; then
+  VB="--stage base --steps $(steps 8000) --lr 3e-4 --warmup $(steps 1000) --eval-every $(steps 500) --snap-every 0"
+  V='"planner": "voxcpm", "vox_lm_init": "random"'; TH='"tts_h": true'
+  hlane() {  # gpu dir cfg-w cfg-json extra...
+    local gpu=$1 o=$2 w=$3 cf=$4; shift 4
+    local th=(); [[ "$cf" == *tts_h* ]] && th=(--tts-hidden ${TTSD:?TTSD})
+    train $gpu $o $VB --cfg "$cf" ${th[@]+"${th[@]}"} "$@" \
+      && SCMG_SAVE_N=43 CFGW=$w evaluate $gpu $o ${NFGD:-43} best.pt --horizons inf,0 --ndiv 20 ${th[@]+"${th[@]}"} \
+      && SCMG_SAVE_N=43 SCMG_SEED0=1 EVTAG=-s1 CFGW=$w evaluate $gpu $o ${NFGD:-43} best.pt --horizons inf,0 --ndiv 20 ${th[@]+"${th[@]}"} \
+      && { [[ "$cf" != *voxcpm* ]] || SCMG_SAVE_N=43 EVTAG=-win CFGW=$w evaluate $gpu $o ${NFGD:-43} best.pt --horizons inf,0 --ndiv 20 --window-lm-text ${th[@]+"${th[@]}"}; }
+  }
+  L6=()                                  # SERIAL=1 (selftest on one small GPU): lanes one after another
+  ( hlane $(g 0) h-vox 2.0 "{$V, $TH}" ) & L6+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
+  ( hlane $(g 1) h-vox-nomel 2.0 "{$V, $TH, \"audio_feat\": false}" ) & L6+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
+  ( hlane $(g 2) h-vox-notext 2.0 "{$V, $TH, \"vox_text\": false}" ) & L6+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
+  ( hlane $(g 3) h-vox-only 2.0 "{$V, $TH, \"audio_feat\": false, \"vox_text\": false}" ) & L6+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
+  ( hlane $(g 4) h-chunk 2.5 "{$TH}" ) & L6+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
+  ( hlane $(g 5) h-chunk-nomel 2.5 "{$TH, \"audio_feat\": false}" ) & L6+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
+  ( hlane $(g 6) h-vox-seed1 2.0 "{$V, $TH}" --seed 1 ) & L6+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
+  ( hlane $(g 7) ctl-vox 2.0 "{$V}" ) & L6+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
+  wait "${L6[@]}"
+  $PY -m scmg.summarize $R > $R/SUMMARY.md 2>&1 || true
+  echo "$(date -Is) TTSH_DONE"; touch $R/TTSH_DONE; exit 0
+fi
 if [ "${VOXQ:-0}" = 1 ]; then
   M=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models
   VB="--stage base --steps $(steps 8000) --lr 3e-4 --warmup $(steps 1000) --eval-every $(steps 500) --snap-every 0"

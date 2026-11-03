@@ -94,13 +94,14 @@ def main():
     ap.add_argument('--overfit', type=int, default=0, help='train AND monitor on the first N long train clips only (sanity check)')
     ap.add_argument('--mmap', action='store_true', help='memory-map the arrays instead of loading them (smoke tests)')
     ap.add_argument('--max-hours', type=float, default=0, help='stop cleanly after this wall time (0 = no limit)')
+    ap.add_argument('--tts-hidden', default=None, help='Qwen3-TTS hidden-state export (scmg/tts-hidden-v36_1); needed by cfg tts_h')
     a = ap.parse_args()
     rank, world = ddp(); dev = torch.device('cuda')
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(a.seed + rank); np.random.seed(a.seed + rank)
     stats = json.loads(Path(a.stats).read_text())
-    view = View(a.view, 'train', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache)
-    dview = View(a.view, 'val', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache)
+    view = View(a.view, 'train', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache, tts_hidden=a.tts_hidden)
+    dview = View(a.view, 'val', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache, tts_hidden=a.tts_hidden)
     if a.overfit:
         overfit_clips(view, a.overfit); dview = view
     ds = WindowDataset(view, a.frames, seed=a.seed * 1000 + rank, semsynth_share=a.semsynth_share)
@@ -130,6 +131,8 @@ def main():
         elif rank == 0:
             print(f'init from {a.init} (stage {prev.get("stage")}); added modules: {sorted(set(extra) - set(prev_extra))}')
         model.to(dev)
+        if getattr(model.cfg, 'tts_h', False) and not a.tts_hidden:
+            raise SystemExit('cfg tts_h needs --tts-hidden <dir>')
         sc = StageCfg(**{**spec['sc'], **json.loads(a.sc)})
         if a.stage != 'base':
             for p in model.parameters(): p.requires_grad_(id(p) not in base_ids)

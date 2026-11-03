@@ -113,13 +113,17 @@ def main():
     ap.add_argument('--deploy-timing', action='store_true', help='token times only once voiced (online deployment)')
     ap.add_argument('--cfg-audio-only', action='store_true', help='guide audio only (planner LM text dropout was ineffective before r6)')
     ap.add_argument('--n-future', type=int, default=0, help='open loop: provisional chunks (closed loop always uses 1)')
+    ap.add_argument('--tts-hidden', default=None, help='Qwen3-TTS hidden-state export; required by models trained with tts_h')
     ap.add_argument('--ndiv', type=int, default=20, help='clips that get a second seed for the diversity metric'); ap.add_argument('--mmap', action='store_true')
     a = ap.parse_args()
     dev = 'cuda'; out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     stats = json.loads(Path(a.stats).read_text())
-    view = View(a.view, 'val', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache)
-    require_causal_text(view.text_c, a.text_mode == 'x2', 'evaluate --text-mode x2')
     m, vae = load(a.ckpt, a.vae, dev)
+    if getattr(m.cfg, 'tts_h', False) and not a.tts_hidden:
+        raise SystemExit('checkpoint was trained with tts_h (TTS hidden states): pass --tts-hidden <dir>')
+    view = View(a.view, 'val', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache,
+                tts_hidden=a.tts_hidden if getattr(m.cfg, 'tts_h', False) else None)
+    require_causal_text(view.text_c, a.text_mode == 'x2', 'evaluate --text-mode x2')
     qm, qs = np.asarray(stats['q_mean'], np.float32), np.asarray(stats['q_std'], np.float32)
     standby = qm
     res = {}; per = []
@@ -132,7 +136,7 @@ def main():
             if nch < 3: continue
             ds = WindowDataset(view, nch * CHUNK_FRAMES, max_tokens=256, max_ids=clip_lm_capacity(view, ci) if a.window_lm_text else 160)
             s = ds.sample(ci, 0, np.random.default_rng(ci))
-            cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm', 'titime', 'tseg', 'tiseg', 'tiend', 'text_c') if k in s}
+            cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm', 'titime', 'tseg', 'tiseg', 'tiend', 'text_c', 'tts_h', 'tts_hm') if k in s}
             gt = s['q'] * qs + qm
             beat = np.clip(s['feat'][:, PROSODY_COLS['onset']] + s['feat'][:, PROSODY_COLS['beat']], 0, None)
             gens = []
@@ -165,7 +169,7 @@ def main():
                 if nch < 6: continue
                 ds = WindowDataset(view, nch * CHUNK_FRAMES, max_tokens=256, max_ids=clip_lm_capacity(view, ci) if a.window_lm_text else 160)
                 s = ds.sample(ci, 0, np.random.default_rng(ci))
-                cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm', 'titime', 'tseg', 'tiseg', 'tiend', 'text_c') if k in s}
+                cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm', 'titime', 'tseg', 'tiseg', 'tiend', 'text_c', 'tts_h', 'tts_hm') if k in s}
                 rg = np.random.default_rng(ci)
                 hl = int(rg.integers(20, 51)); h0 = int(rg.integers(2 * CHUNK_FRAMES, max(2 * CHUNK_FRAMES + 1, (nch - 2) * CHUNK_FRAMES - hl)))
                 robot = Robot(standby, hold_start=h0, hold_len=hl, seed=ci)

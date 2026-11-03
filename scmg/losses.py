@@ -85,7 +85,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         stream = r(sc.p_stream); asy = torch.zeros_like(stream)
     hz = U80 * torch.tensor(sc.horizons, device=dev)[torch.randint(len(sc.horizons), (B,), device=dev)]
     H = torch.where(stream, hz, torch.full_like(hz, INF))
-    a = model.audio(feat, causal=stream)
+    a = model.audio_tokens(feat, stream, batch.get('tts_h'), batch.get('tts_hm'))   # == model.audio(feat, stream) without tts_h
     a = torch.where(drop_audio[:, None, None], model.audio_null.expand_as(a), a)
     amask_k = model.chunk_audio_mask(K, N, H, dev) & ~drop_audio[:, None, None]
     text, tmask = model.text_tokens(batch['text'], batch['ttime'], batch['tmask'] & ~drop_text[:, None],

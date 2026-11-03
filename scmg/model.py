@@ -63,6 +63,11 @@ class Config:
     vox_ref_gate: bool = False     # VoxCPM style reference: zero-gated add onto the speaker token (11-02 review fix) instead of
                                    # an extra LM token (which changed the base output at initialisation)
     adsc: bool = False             # Asynchronous Dual-Stream Conditioning: per-chunk text/audio visibility + stream-state token
+    # 11-03 opt-in: Qwen3-TTS Talker hidden states (data.View(tts_hidden=...), one 2048-d row per 80 ms) projected
+    # (LayerNorm -> Linear, zero-init) and ADDED to the audio-encoder input tokens; dropped / masked exactly like audio
+    tts_h: bool = False
+    tts_h_dim: int = 2048
+    audio_feat: bool = True        # False (only meaningful with tts_h): mel/prosody features zeroed at the audio encoder input
     # condition dropout (classifier-free guidance)
     drop_text: float = 0.1
     drop_audio: float = 0.1
@@ -103,10 +108,12 @@ class AudioEncoder(nn.Module):
         self.enc = Encoder(cfg.d, cfg.heads, cfg.audio_layers)
         self.d = cfg.d
 
-    def forward(self, feat, causal, avail=None):
-        """causal: bool [B] (True = token i attends j <= i); avail: bool [B, N] keys that have arrived."""
+    def forward(self, feat, causal, avail=None, add=None):
+        """causal: bool [B] (True = token i attends j <= i); avail: bool [B, N] keys that have arrived;
+        add [B, N, d]: extra per-token input (TTS hidden states, SCMG.audio_tokens), None = the original encoder."""
         B, T, _ = feat.shape; N = T // STRIDE
         x = self.inp(feat.reshape(B, N, STRIDE * FEAT)) + sincos(torch.arange(N, device=feat.device), self.d)[None]
+        if add is not None: x = x + add
         i = torch.arange(N, device=feat.device)
         m = (i[None, :] <= i[:, None])[None] | ~causal[:, None, None]       # [B, N, N]
         if avail is not None: m = m & avail[:, None, :]
@@ -256,6 +263,10 @@ class SCMG(nn.Module):
             self.vox.ref_gate = nn.Parameter(torch.zeros(1))
         if cfg.adsc and not hasattr(self, 'stream_emb'):
             self._init_adsc()
+        if cfg.tts_h and not hasattr(self, 'tts_in'):
+            # zero-init output: switching tts_h on starts from exactly the audio-only function (gradients still reach it)
+            self.tts_in = nn.Sequential(nn.LayerNorm(cfg.tts_h_dim), nn.Linear(cfg.tts_h_dim, d))
+            nn.init.zeros_(self.tts_in[1].weight); nn.init.zeros_(self.tts_in[1].bias)
         if cfg.lora_r > 0 and not getattr(self, '_lora', False):
             for m in (self.planner, self.flow, self.audio) + ((self.vox.ralm,) if hasattr(self, 'vox') else ()):
                 apply_lora(m, r=cfg.lora_r)
@@ -267,6 +278,23 @@ class SCMG(nn.Module):
         self.stream_emb = nn.Embedding(6, self.cfg.d); nn.init.zeros_(self.stream_emb.weight)
 
     # ------------------------------------------------------------------ conditions
+    def audio_tokens(self, feat, causal, tts_h=None, tts_hm=None):
+        """Audio tokens [B, N, d]. Default (cfg.tts_h False): exactly self.audio(feat, causal).
+        tts_h [B, T/4, tts_h_dim] (one row per 80 ms), tts_hm [B, T/4] (1 = row exists): the projected row r is added to the
+        encoder input of the token(s) of frames [4r, 4r+4) -- the same token the audio of those frames enters, so the
+        causal encoder / chunk visibility masks / audio dropout (audio_null) / CFG null branch apply to it unchanged."""
+        if not self.cfg.tts_h:
+            return self.audio(feat, causal=causal)
+        if tts_h is None:
+            raise ValueError('model was trained with tts_h (TTS hidden states): pass --tts-hidden / batch tts_h')
+        e = self.tts_in(tts_h.float())
+        if tts_hm is not None: e = e * tts_hm.to(e.dtype)[..., None]
+        if U80 > 1: e = e.repeat_interleave(U80, 1)             # 25 Hz latents: one 80 ms row -> U80 tokens
+        N = feat.shape[1] // STRIDE
+        if e.shape[1] != N: raise ValueError(f'tts_h rows {e.shape[1] // U80} do not match {feat.shape[1]} frames')
+        if not self.cfg.audio_feat: feat = torch.zeros_like(feat)
+        return self.audio(feat, causal=causal, add=e)
+
     def text_tokens(self, text, ttime, tmask, drop=None):
         x = self.text_in(text)
         known = torch.isfinite(ttime)

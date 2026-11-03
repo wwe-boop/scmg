@@ -13,7 +13,7 @@ export USE_TF=0 USE_FLAX=0 OMP_NUM_THREADS=4 PYTHONUNBUFFERED=1
 TC=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models/text-e5-causal-v36_1
 [ -f $TC/TEXT_FEAT.npy ] && export SCMG_TEXT_CAUSAL=$TC
 case $PHASE in
-  full|full25|fullvox|adsc|adscvox|voxabl|voxabl2|textuse|voxq)
+  full|full25|fullvox|adsc|adscvox|voxabl|voxabl2|textuse|voxq|ttsh)
     : "${DLC_JOB_ID:?real DLC job required}"
     case $(hostname) in dsw*) echo "refusing to run the full phase on DSW"; exit 78;; esac
     SUF=""
@@ -21,6 +21,7 @@ case $PHASE in
     [ "$PHASE" = adscvox ] && export ONLY_ADSC=1
     if [ "$PHASE" = voxq ]; then export VOXQ=1 TOKC=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/tok-qwen25-v36_1; SUF=-voxq; fi
     if [ "$PHASE" = textuse ]; then export TEXTUSE=1 TOKC=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/tok-qwen25-v36_1; SUF=-textuse; fi
+    if [ "$PHASE" = ttsh ]; then export TTSH=1 TOKC=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/tok-qwen25-v36_1 TTSD=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/tts-hidden-v36_1; SUF=-ttsh; fi
     if [ "$PHASE" = voxabl2 ]; then export VOXABL2=1 TOKC=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/tok-qwen25-v36_1; SUF=-voxabl2; fi
     if [ "$PHASE" = voxabl ]; then                     # VoxCPM module ablation, own output root
       export VOXABL=1 TOKC=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/tok-qwen25-v36_1; SUF=-voxabl
@@ -46,9 +47,11 @@ case $PHASE in
     OUT=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/selftest/$SCMG_DSW_RUNID; rm -rf $OUT   # CPFS, never the shared /tmp
     export RANK=0 WORLD_SIZE=1 MASTER_ADDR=localhost MASTER_PORT=29500   # what DLC sets on every pod
     [ "${SCMG_STRIDE:-4}" = 2 ] && VAE=$OUT/vae25/final.pt
+    [ "${SCMG_TTSH:-0}" = 1 ] && export TTSH=1 NFGD=2 SERIAL=1 TOKC=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/tok-qwen25-v36_1 TTSD=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/tts-hidden-v36_1
     [ "${SCMG_VOX:-0}" = 1 ] && export TOKC=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/tok-qwen25-v36_1 BASECFG='{"planner": "voxcpm", "d": 256}'
     NGPU=1 SCALE=0.002 SNAP=40000 NEVAL=1 NFULL=1 NMID=1 BATCH=8 WORKERS=2 EXTRA=--mmap PY=${PY:-/usr/local/bin/python} \
       bash $P/scripts/pipeline_dlc.sh $P $OUT $VAE
+    [ "${SCMG_TTSH:-0}" = 1 ] && { test -f $OUT/TTSH_DONE && ls $OUT/*/eval-best*/RESULTS.json && echo SELFTEST_PASS; exit; }
     test -f $OUT/PIPELINE_DONE && ls $OUT && cat $OUT/SUMMARY.md && echo SELFTEST_PASS ;;
   *) echo "unknown phase $PHASE"; exit 2 ;;
 esac

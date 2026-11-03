@@ -8,6 +8,8 @@ contiguous in the arrays, verified 0 gaps), so a window may span several utteran
   ttime  [K]      token time in s relative to window start (NaN = unknown)
   spk    [192], spk_valid, source        (cond/COND.json + SPK_EMB.npy)
   ref    [R, J]   reference motion: a window of ANOTHER clip of the same speaker (ref_valid = 0 if none)
+  tts_h  [T/4, 2048] fp16, tts_hm [T/4]   ONLY with View(tts_hidden=<dir>): Qwen3-TTS Talker last-layer hidden state
+                  per 80 ms row of the window (row r = window frames [4r, 4r+4)); see tts_rows()
 """
 import json, os
 from collections import defaultdict
@@ -31,6 +33,46 @@ def compute_stats(view, n=400000, seed=0):
                 f_mean=fmean.tolist(), f_std=np.maximum(fstd, 1e-3).tolist())
 
 
+TTS_DIM = 2048              # Qwen3-TTS Talker hidden size (scmg/tts-hidden-v36_1)
+
+
+def load_tts_index(root):
+    """tts-hidden export index: id -> (relative npy path, codec frames). Items with an export error are absent."""
+    idx = {}
+    for f in sorted((Path(root) / 'index').glob('worker_*.jsonl')):
+        for line in f.read_text().splitlines():
+            if not line.strip(): continue
+            r = json.loads(line)
+            if 'file' in r and 'error' not in r: idx[r['id']] = (r['file'], int(r['codec']))
+    return idx
+
+
+def tts_rows(items, clip_start, s, n, R, load):
+    """TTS hidden states of a window, one row per 80 ms (row r = window frames [4r, 4r+4), window frame 0 = clip frame s).
+    h[k] of an item is the Talker state BEFORE emitting codec frame k, i.e. it covers item time [0.08k, 0.08(k+1)) =
+    item frames [4k, 4k+4). Row r takes the codec frame that CONTAINS its first frame (clip frame s + 4r): k =
+    (s + 4r - i0) // 4. When the item does not start on a 4-frame boundary of the window (item offset mid-codec, or
+    STRIDE-2 windows) the row lags its codec frame by 1-3 frames -- never leads it, so the row is available as soon as
+    the row's first audio frame is (h[k] exists once codec k-1 has been emitted). Rows past the clip end, of items
+    without an export, or beyond an item's codec count stay zero with mask 0.
+    items: clip items sorted by offset; load(item_id) -> (array [codec, D] (mmap) or None).
+    Returns (h [R, D] float16, m [R] float32)."""
+    h = np.zeros((R, TTS_DIM), np.float16); m = np.zeros(R, np.float32)
+    rmax = min(R, -(-n // 4))                                  # rows whose first frame is inside the clip
+    for it in items:
+        i0 = it['offset'] - clip_start; i1 = i0 + it['frames']
+        if i1 <= s or i0 >= s + n: continue
+        r0 = max(0, -(-(i0 - s) // 4)); r1 = min(rmax, -(-(i1 - s) // 4))   # rows with first frame in [i0, i1)
+        if r1 <= r0: continue
+        arr = load(it['id'])
+        if arr is None: continue
+        k0 = (s + 4 * r0 - i0) // 4
+        k1 = min(arr.shape[0], k0 + (r1 - r0))
+        if k1 <= k0: continue
+        h[r0:r0 + (k1 - k0)] = np.asarray(arr[k0:k1], np.float16); m[r0:r0 + (k1 - k0)] = 1
+    return h, m
+
+
 def require_causal_text(text_c, required, context):
     """Reject token streaming without prefix-causal E5, before sampling modes or running the model."""
     if required and text_c is None:
@@ -41,7 +83,7 @@ def require_causal_text(text_c, required, context):
 class View:
     """Everything loaded once (RAM, ~8 GB) before DataLoader workers fork (shared copy-on-write)."""
 
-    def __init__(self, view=VIEW, split='train', text_cache=None, stats=None, mmap=False, tok_cache=None):
+    def __init__(self, view=VIEW, split='train', text_cache=None, stats=None, mmap=False, tok_cache=None, tts_hidden=None):
         v = Path(P(view)); self.root = v
         items = json.loads((v / 'train.json').read_text())
         sp = json.loads((v / 'SPLIT.json').read_text())
@@ -81,6 +123,17 @@ class View:
             import os as _os
             cc = _os.environ.get('SCMG_TEXT_CAUSAL')
             self.text_c = np.load(Path(P(cc)) / 'TEXT_FEAT.npy', mmap_mode='r') if cc else None
+        self.tts = None
+        if tts_hidden:                                  # Qwen3-TTS Talker hidden states (opt-in conditioning, 11-03)
+            tr = Path(P(tts_hidden))
+            self.tts = dict(root=tr, index=load_tts_index(tr))
+
+    def tts_array(self, item_id):
+        """[codec, 2048] fp16 memory map of one item's TTS hidden states, or None (no export)."""
+        e = self.tts['index'].get(item_id)
+        if e is None: return None
+        a = np.load(self.tts['root'] / e[0], mmap_mode='r')
+        return a[:e[1]]
 
     def weights(self, semsynth_share=0.4):
         """Clip sampling weights: human / semsynth category shares, frame-proportional inside a category."""
@@ -191,6 +244,9 @@ class WindowDataset(torch.utils.data.IterableDataset):
                 rs = int(rng.integers(0, max(1, Lr - self.R + 1)))
                 ref, rm, _, _ = self._window(cj, rs, self.R); ref_valid = 1.
         extra = dict(text_c=text_c) if text_c is not None else {}
+        if v.tts is not None:
+            if T % 4: raise ValueError(f'tts_hidden needs windows of a multiple of 4 frames (got {T})')
+            extra['tts_h'], extra['tts_hm'] = tts_rows(c['items'], c['start'], s, n, T // 4, v.tts_array)
         return dict(**extra, q=q, mask=m, feat=f, text=text, ttime=ttime, tmask=tmask, spk=spk, spk_valid=np.float32(spk_valid),
                     source=np.int64(source), tids=tids, tidm=tidm, titime=titime, tseg=tseg, tiseg=tiseg, tiend=tiend, ref=ref, ref_valid=np.float32(ref_valid), clip=np.int64(ci), start=np.int64(s))
 

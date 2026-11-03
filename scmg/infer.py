@@ -29,11 +29,15 @@ class Streamer:
                  text_mode='final', x2_rate=15.0, x2_lag=0.15, seg_lead=0.3, deploy_timing=False,
                  elastic=None, window_lm_text=False):
         """feat [T, 89] normalised (whole utterance; access is restricted to what has arrived);
-        cond: dict(text [K,768], ttime [K] absolute s, tmask [K], spk [192], spk_valid, source, ref [R,J], ref_valid)."""
+        cond: dict(text [K,768], ttime [K] absolute s, tmask [K], spk [192], spk_valid, source, ref [R,J], ref_valid)
+        (+ tts_h [T/4, 2048], tts_hm [T/4] for models with cfg.tts_h: TTS hidden rows aligned to feat frame 0, row r = frames
+        [4r, 4r+4); a row is visible exactly when the audio of its frames is -- the same arrival rule as feat)."""
         require_causal_text(cond.get('text_c'), text_mode == 'x2', 'Streamer text_mode=x2')
         self.m, self.vae, self.dev = model.eval(), vae.eval(), device
         self.feat = torch.as_tensor(feat, device=device).float()
         self.cond = {k: torch.as_tensor(v, device=device) for k, v in cond.items()}
+        if getattr(model.cfg, 'tts_h', False) and 'tts_h' not in self.cond:
+            raise ValueError('model was trained with tts_h (TTS hidden states): cond needs tts_h / tts_hm')
         self.qm = torch.tensor(stats['q_mean'], device=device); self.qs = torch.tensor(stats['q_std'], device=device)
         self.H, self.steps, self.temp, self.n_future = H, steps, temperature, n_future
         self.g = torch.Generator(device=device).manual_seed(seed)
@@ -101,6 +105,18 @@ class Streamer:
         arrived = Tf if self.H >= INF else min(Tf, (k * CHUNK + self.H) * STRIDE)
         ok = (idx >= 0) & (idx < arrived)
         feat = torch.where(ok[:, None], self.feat[idx.clamp(0, Tf - 1)], torch.zeros_like(self.feat[:1]))
+        if 'tts_h' in self.cond and getattr(m.cfg, 'tts_h', False):
+            # TTS hidden rows of the window (row r = frames [f0 + 4r, f0 + 4r + 4)); same arrival rule as the audio frames:
+            # visible iff its first frame has arrived (arrived is a multiple of STRIDE: for STRIDE 4 = all 4 frames arrived).
+            # h[k] is computed before codec frame k is emitted, so this never uses a state the TTS has not produced yet.
+            th = self.cond['tts_h']; Rf = th.shape[0]
+            rows = torch.div(idx[::4], 4, rounding_mode='floor')
+            vis = (rows >= 0) & (rows < Rf) & (rows * 4 < arrived)
+            hm = self.cond['tts_hm'][rows.clamp(0, Rf - 1)].float() if 'tts_hm' in self.cond else torch.ones_like(rows, dtype=torch.float)
+            hw = torch.where(vis[:, None], th[rows.clamp(0, Rf - 1)], torch.zeros_like(th[:1]))   # not-yet-arrived rows: zeros
+            self._tts = (hw[None], (hm * vis)[None])
+        else:
+            self._tts = (None, None)
         return c0, f0, feat[None]
 
     @torch.no_grad()
@@ -141,7 +157,7 @@ class Streamer:
         cur = WIN - 1 - LOOK                                         # index of chunk k in the window
         N = WIN * CHUNK
         causal = torch.tensor([self.H < INF], device=self.dev)
-        a = m.audio(feat, causal=causal)
+        a = m.audio_tokens(feat, causal, *self._tts)                  # == m.audio(feat, causal) for models without tts_h
         Hrel = torch.tensor([self.H if self.H < INF else INF], device=self.dev)
         amask = m.chunk_audio_mask(WIN, N, Hrel, self.dev)
         # chunks before the clip start do not exist: hide their audio (zeros) is enough; text times relative to window
