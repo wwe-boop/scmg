@@ -27,7 +27,7 @@ class Streamer:
     def __init__(self, model, vae, feat, cond, stats, H=INF, steps=10, temperature=1.0, n_future=0, seed=0,
                  standby=None, device='cuda', hist_measured=False, ctx_t=1.0, cfg_w=1.0, cfg_text=True, cfg_t=None,
                  text_mode='final', x2_rate=15.0, x2_lag=0.15, seg_lead=0.3, deploy_timing=False,
-                 elastic=None, window_lm_text=False, g_override=None):
+                 elastic=None, window_lm_text=False, g_override=None, trim_start=False, cfg_null_fix=False):
         """feat [T, 89] normalised (whole utterance; access is restricted to what has arrived);
         cond: dict(text [K,768], ttime [K] absolute s, tmask [K], spk [192], spk_valid, source, ref [R,J], ref_valid)
         (+ tts_h [T/4, 2048], tts_hm [T/4] for models with cfg.tts_h: TTS hidden rows aligned to feat frame 0, row r = frames
@@ -65,6 +65,10 @@ class Streamer:
             self.arr_text = cc['tseg'].float() - seg_lead
             if 'tiseg' in cc: self.arr_lm = cc['tiseg'].float() - seg_lead
         self.window_lm_text = window_lm_text
+        self.trim_start = trim_start         # 11-03 review N3: no pre-clip pseudo chunks -- the window starts at the clip start (as a
+                                             # training window with s = 0) until it is full; default False = the old protocol
+        self.cfg_null_fix = cfg_null_fix     # 11-03 review N1: CFG null branch attends to the null audio tokens with the normal
+                                             # visibility mask (as dropped audio in training); default False = old (mask all)
         self.g_override = g_override         # fixed g_k [n_sem] for every chunk (zeros = null g; None = the head's prediction)
         self.cfg_text = cfg_text             # False: guide on audio only (models never trained with text dropped, e.g. r4 VoxCPM)
         self.ctx_t = ctx_t                   # <1: noise the committed context like in training (exposure-bias fix)
@@ -90,8 +94,8 @@ class Streamer:
         if self.window_lm_text:
             if 'tiend' not in c or 'tiseg' not in c:
                 raise ValueError('window_lm_text requires untruncated clip ids with tiseg/tiend')
-            start = (self.k - (WIN - 1 - LOOK)) * CHUNK_FRAMES / 50.
-            end = start + WIN * CHUNK_FRAMES / 50.
+            start = getattr(self, '_c0', self.k - (WIN - 1 - LOOK)) * CHUNK_FRAMES / 50.
+            end = start + getattr(self, '_W', WIN) * CHUNK_FRAMES / 50.
             mask = mask & (c['tiseg'] < end) & (c['tiend'] > start)
             mask = mask & (mask.long().cumsum(0) <= 160)
         return c['tids'][None].long(), mask[None]
@@ -100,7 +104,10 @@ class Streamer:
     def _window(self):
         m, k = self.m, self.k
         c0 = k - (WIN - 1 - LOOK)                                   # first chunk of the window (may be < 0)
-        f0 = c0 * CHUNK_FRAMES; T = WIN * CHUNK_FRAMES
+        W = WIN
+        if self.trim_start and c0 < 0: W, c0 = WIN + c0, 0              # window = clip start .. chunk k + look-ahead
+        self._W, self._c0 = W, c0
+        f0 = c0 * CHUNK_FRAMES; T = W * CHUNK_FRAMES
         idx = torch.arange(f0, f0 + T, device=self.dev)
         Tf = self.feat.shape[0]
         arrived = Tf if self.H >= INF else min(Tf, (k * CHUNK + self.H) * STRIDE)
@@ -155,12 +162,13 @@ class Streamer:
         m, cfg = self.m, self.m.cfg
         torch.cuda.synchronize(); t0 = time.perf_counter()
         c0, f0, feat = self._window()
-        cur = WIN - 1 - LOOK                                         # index of chunk k in the window
-        N = WIN * CHUNK
+        W = self._W                                                  # W, or shorter at the clip start with trim_start
+        cur = W - 1 - LOOK                                           # index of chunk k in the window
+        N = W * CHUNK
         causal = torch.tensor([self.H < INF], device=self.dev)
         a = m.audio_tokens(feat, causal, *self._tts)                  # == m.audio(feat, causal) for models without tts_h
         Hrel = torch.tensor([self.H if self.H < INF else INF], device=self.dev)
-        amask = m.chunk_audio_mask(WIN, N, Hrel, self.dev)
+        amask = m.chunk_audio_mask(W, N, Hrel, self.dev)
         # chunks before the clip start do not exist: hide their audio (zeros) is enough; text times relative to window
         c = self.cond
         tt = c['ttime'] - f0 / 50.
@@ -169,7 +177,7 @@ class Streamer:
         tvis = lvis = sstate = None
         adsc_m = hasattr(m, 'stream_emb')
         if self.text_mode != 'final' or self.deploy_timing or adsc_m:
-            now = torch.arange(WIN, device=self.dev).float() * CHUNK_FRAMES / 50.         # window-relative chunk starts
+            now = torch.arange(W, device=self.dev).float() * CHUNK_FRAMES / 50.         # window-relative chunk starts
             final = torch.tensor([self.text_mode == 'final'], device=self.dev)
             tm0 = c['tmask'][None].bool()
             nan = lambda n: torch.full((1, n), float('nan'), device=self.dev)
@@ -179,8 +187,8 @@ class Streamer:
                 larr = (self.arr_lm - f0 / 50.)[None] if self.arr_lm is not None else nan(c['tidm'].shape[0])
                 lvis = arrival_mask(larr, c['tidm'][None].bool(), final, now)
             if adsc_m:
-                kg = torch.arange(WIN, device=self.dev) + c0
-                afin = torch.full((1, WIN), self.H >= INF, device=self.dev) | ((kg * CHUNK + min(self.H, 10 ** 6)) * STRIDE >= self.feat.shape[0])[None]
+                kg = torch.arange(W, device=self.dev) + c0
+                afin = torch.full((1, W), self.H >= INF, device=self.dev) | ((kg * CHUNK + min(self.H, 10 ** 6)) * STRIDE >= self.feat.shape[0])[None]
                 sstate = stream_state(tvis, tm0, afin)
             if (self.deploy_timing or adsc_m) and self.H < INF:              # timing only for tokens voiced by now + H
                 heard = now + self.H * STRIDE / 50.
@@ -193,7 +201,7 @@ class Streamer:
         # committed latents of the window chunks (zeros before the start)
         z = cfg.z
         def window(src):
-            w = torch.zeros(WIN, CHUNK, z, device=self.dev)
+            w = torch.zeros(W, CHUNK, z, device=self.dev)
             allc = torch.stack(src).view(-1, CHUNK, z) if src else None
             for j in range(cur):
                 kc = c0 + j
@@ -228,16 +236,16 @@ class Streamer:
         n_gen = 1 + self.n_future
         for j in range(n_gen):
             kw = cur + j
-            if kw >= WIN: break
+            if kw >= W: break
             mt = mtm = None
             stw = None
             if st_tok is not None:
                 # 11-02 review fix: every window position gets the state token of ITS OWN chunk (as in training), not a
                 # copy of the current one; chunks without a recorded state (before the start) use the current token
                 self.st_hist[self.k] = st_tok.detach()
-                stw = torch.stack([self.st_hist.get(c0 + jj, st_tok)[0] for jj in range(WIN)])[None]
+                stw = torch.stack([self.st_hist.get(c0 + jj, st_tok)[0] for jj in range(W)])[None]
             if cfg.mtc:
-                mt, mtm = m.mt_memory(text, tmask, a, amask, g, sref, lat[None], stw, WIN, tvis=tvis)
+                mt, mtm = m.mt_memory(text, tmask, a, amask, g, sref, lat[None], stw, W, tvis=tvis)
                 mflat, pm = m.planner_memory(mt, mtm)
                 h = m.plan((plan_lat if j == 0 else lat)[None], a, amask, text, tmask, g, mflat, pm, *self._ids(), sref, tvis=tvis, lvis=lvis, sstate=sstate)
             else:
@@ -246,7 +254,7 @@ class Streamer:
             if self.cfg_w != 1:                                     # unconditional branch: audio + text dropped
                 a_u = m.audio_null.expand_as(a); am_u = torch.zeros_like(amask); tm_u = torch.zeros_like(tmask) if self.cfg_text else tmask
                 if cfg.mtc:
-                    mt_u, mtm_u = m.mt_memory(text, tm_u, a_u, am_u, g, sref, lat[None], stw, WIN, tvis=tvis)
+                    mt_u, mtm_u = m.mt_memory(text, tm_u, a_u, am_u, g, sref, lat[None], stw, W, tvis=tvis)
                     mf_u, pm_u = m.planner_memory(mt_u, mtm_u)
                     h_u = m.plan(lat[None], a_u, am_u, text, tm_u, g, mf_u, pm_u, self._ids()[0], self._null_ids(), sref, tvis=tvis, lvis=lvis, sstate=sstate)
                 else:
@@ -254,7 +262,7 @@ class Streamer:
                 hk_u = h_u[:, kw]
                 if self.cfg_t is not None:                          # audio-only branch (text dropped, audio kept)
                     if cfg.mtc:
-                        mt_a, mtm_a = m.mt_memory(text, tm_u, a, amask, g, sref, lat[None], stw, WIN, tvis=tvis)
+                        mt_a, mtm_a = m.mt_memory(text, tm_u, a, amask, g, sref, lat[None], stw, W, tvis=tvis)
                         mf_a, pm_a = m.planner_memory(mt_a, mtm_a)
                         h_a = m.plan(lat[None], a, amask, text, tm_u, g, mf_a, pm_a, self._ids()[0], self._null_ids(), sref, tvis=tvis, lvis=lvis, sstate=sstate)
                     else:
@@ -265,6 +273,7 @@ class Streamer:
                 style_tok, _, _ = m.style_head(sref, hk, temperature=self.temp, generator=self.g)
             # context = last ctx latents before chunk kw
             prev = (lat_ctx if j == 0 else lat)[kw - 1] if kw >= 1 else torch.zeros(CHUNK, z, device=self.dev)
+            if kw == 0 and c0 + kw - 1 == -1 and self.hist0 is not None: prev = self.hist0   # trimmed window at the clip start
             has_ctx = (c0 + kw - 1 >= 0 and len(self.lat) > 0) or (c0 + kw - 1 == -1 and self.hist0 is not None) or j > 0
             L = cfg.ctx + CHUNK
             known = torch.zeros(1, L, dtype=torch.bool, device=self.dev); known[:, :cfg.ctx] = has_ctx
@@ -275,10 +284,10 @@ class Streamer:
             c_ = prev[-cfg.ctx:][None]
             if self.ctx_t < 1: c_ = self.ctx_t * c_ + (1 - self.ctx_t) * torch.randn(c_.shape, device=self.dev, generator=self.g)
             x[:, :cfg.ctx] = torch.where(known[:, :cfg.ctx, None], c_, x[:, :cfg.ctx])
-            aw, awm = m.local_audio(a, Hrel, WIN)
+            aw, awm = m.local_audio(a, Hrel, W)
             aw, awm = aw[:, kw], awm[:, kw]
             if self.cfg_w != 1:
-                aw_u = m.audio_null.expand_as(aw); awm_u = torch.zeros_like(awm)
+                aw_u = m.audio_null.expand_as(aw); awm_u = awm.clone() if self.cfg_null_fix else torch.zeros_like(awm)
                 mtk_u = mtmk_u = None
                 if cfg.mtc: mtk_u, mtmk_u = mt_u[:, kw], mtm_u[:, kw][:, None].expand(-1, cfg.ctx + CHUNK, -1)
                 if self.cfg_t is not None:

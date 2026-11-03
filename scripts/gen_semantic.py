@@ -40,7 +40,7 @@ def variant(ci, v):
         r = len(s['feat']) / len(so['feat'])
         for k in TK:
             if k in so: c[k] = so[k]
-        for k in ('ttime', 'titime', 'tiend'):
+        for k in ('ttime', 'titime', 'tseg', 'tiseg', 'tiend'):        # 11-03 review N6: segment starts too (window text)
             if k in c: c[k] = c[k] * r
     return c
 

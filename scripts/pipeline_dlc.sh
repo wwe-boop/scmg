@@ -145,11 +145,13 @@ if [ "${TTSH:-0}" = 1 ]; then
       && SCMG_SAVE_N=43 SCMG_SEED0=1 EVTAG=-s1 CFGW=$w evaluate $gpu $o ${NFGD:-43} best.pt --horizons inf,0 --ndiv 20 ${th[@]+"${th[@]}"} \
       && { [[ "$cf" != *voxcpm* ]] || SCMG_SAVE_N=43 EVTAG=-win CFGW=$w evaluate $gpu $o ${NFGD:-43} best.pt --horizons inf,0 --ndiv 20 --window-lm-text ${th[@]+"${th[@]}"}; }
   }
+  # 11-03 review N2: the TTS hidden states are exported WITH the whole sentence text, so h-vox-nolmtext / h-vox-ttsonly still
+  # see the text through the TTS rows (no LM text only); a text-free control needs a re-export with the text positions padded
   L6=()                                  # SERIAL=1 (selftest on one small GPU): lanes one after another
   ( hlane $(g 0) h-vox 2.0 "{$V, $TH}" ) & L6+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
   ( hlane $(g 1) h-vox-nomel 2.0 "{$V, $TH, \"audio_feat\": false}" ) & L6+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
-  ( hlane $(g 2) h-vox-notext 2.0 "{$V, $TH, \"vox_text\": false}" ) & L6+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
-  ( hlane $(g 3) h-vox-only 2.0 "{$V, $TH, \"audio_feat\": false, \"vox_text\": false}" ) & L6+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
+  ( hlane $(g 2) h-vox-nolmtext 2.0 "{$V, $TH, \"vox_text\": false}" ) & L6+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
+  ( hlane $(g 3) h-vox-ttsonly 2.0 "{$V, $TH, \"audio_feat\": false, \"vox_text\": false}" ) & L6+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
   ( hlane $(g 4) h-chunk 2.5 "{$TH}" ) & L6+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
   ( hlane $(g 5) h-chunk-nomel 2.5 "{$TH, \"audio_feat\": false}" ) & L6+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!
   ( hlane $(g 6) h-vox-seed1 2.0 "{$V, $TH}" --seed 1 ) & L6+=($!); [ "${SERIAL:-0}" = 1 ] && wait $!

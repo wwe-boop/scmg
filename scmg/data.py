@@ -121,6 +121,12 @@ class View:
                     src = json.loads(pj.read_text()).get('tok_cache')
                     if src and Path(src).name != Path(str(tok_cache)).name:
                         raise ValueError(f'word intent labels were built on {src}, not on the token cache {tok_cache}')
+                sh = Path(P(tok_intent)) / 'TOK_IDS.sha256'        # written after a token-by-token rebuild check (11-03 review #6)
+                if sh.exists():
+                    import hashlib
+                    got = hashlib.sha256(np.ascontiguousarray(self.tok['ids']).tobytes()).hexdigest()
+                    if got != sh.read_text().split()[0]:
+                        raise ValueError(f'word intent labels were verified against another TOK_IDS (sha {got[:12]} != {sh.read_text()[:12]})')
                 il = np.load(Path(P(tok_intent)) / 'INTENT_LABEL.npy')
                 if len(il) != len(self.tok['ids']): raise ValueError('INTENT_LABEL rows != TOK_IDS rows')
                 self.tok['ilab'] = il

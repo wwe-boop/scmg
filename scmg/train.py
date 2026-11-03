@@ -198,11 +198,15 @@ def main():
         mu = torch.cat(mus)
         return dict(lat_mean=mu.mean(0).tolist(), lat_std=mu.std(0).clamp(min=1e-3).tolist())
 
-    def losses(m, b):
+    # 11-03 review: the dev loss that picks best.pt is teacher-forced and clean -- no self-forcing, text-focused batches or
+    # selective audio dropout (with self_force_p = 1 the old dev loss was itself self-forced, unlike the other lanes)
+    sc_dev = __import__('dataclasses').replace(sc, self_force_p=0., text_focus_p=0., p_sel_audio=0.) if sc is not None else None
+
+    def losses(m, b, dev_eval=False):
         if a.stage == 'vae':
             _, l = m(b['q'], b['mask'], deriv=min(1., step / a.deriv_ramp))
             return l
-        return m(vae, b, sc, st)
+        return m(vae, b, sc_dev if dev_eval else sc, st)
 
     @torch.no_grad()
     def evaluate():
@@ -212,7 +216,7 @@ def main():
         for b in dl_:
             b = {k: v.to(dev) for k, v in b.items()}
             with torch.autocast('cuda', torch.bfloat16):
-                l = losses(ema, b)
+                l = losses(ema, b, dev_eval=True)
             for k, v in l.items(): acc[k] = acc.get(k, 0.) + float(v)
             n += 1
         torch.random.set_rng_state(g); torch.cuda.set_rng_state(gc)
