@@ -162,8 +162,9 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             hidden_tokens = hide.repeat_interleave(CHUNK, 1)
             a = torch.where(hidden_tokens[..., None], model.audio_null.expand_as(a), a)
             amask_k = amask_k & ~hidden_tokens[:, None, :]  # planner AND MTC lose the hidden source tokens
-    text, tmask = model.text_tokens(batch['text'], batch['ttime'], batch['tmask'] & ~drop_text[:, None],
-                                    drop=r(cfg.drop_time))
+    dtime = r(cfg.drop_time)
+    text, tmask = model.text_tokens(batch['text'], batch['ttime'], batch['tmask'] & ~drop_text[:, None], drop=dtime)
+    tsec = model.token_seconds(batch['ttime'], dtime)                                # flow_text_xattn: usable token times
     tidm_d = batch['tidm'] & ~drop_text[:, None] if 'tidm' in batch else None   # VoxCPM LM text: same text dropout
     tvis = lvis = sstate = None
     if sc.p_async > 0:                    # ADSC: what has arrived at the start of each chunk (window-relative seconds)
@@ -189,10 +190,13 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         raw = batch['text']
         if 'text_c' in batch:             # token streaming: prefix-causal features (a bidirectional encoder sees later words)
             raw = torch.where((asy & ~seg)[:, None, None], batch['text_c'], raw)
-            tt_, _ = model.text_tokens(raw, batch['ttime'], tmask, drop=r(cfg.drop_time))
+            dtime_c = r(cfg.drop_time)
+            tt_, _ = model.text_tokens(raw, batch['ttime'], tmask, drop=dtime_c)
             text = torch.where((asy & ~seg)[:, None, None], tt_, text)
+            tsec = torch.where((asy & ~seg)[:, None], model.token_seconds(batch['ttime'], dtime_c), tsec)
         tu, _ = model.text_tokens(raw, batch['ttime'], tmask, drop=torch.ones(B, dtype=torch.bool, device=dev))
         text = torch.cat([text, tu], 1); tmask = torch.cat([tmask, tmask], 1)
+        tsec = torch.cat([tsec, torch.full_like(tsec, float('nan'))], 1)              # the untimed copy has no time
         tvis = torch.cat([tvis & voiced, tvis & ~voiced], -1)
     src = torch.where(r(0.1), torch.zeros_like(batch['source']), batch['source'])
     g = model.global_cond(batch['spk'], batch['spk_valid'] * (~drop_spk), src)
@@ -259,6 +263,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         return model.plan(lat_in, a, amask_k, text, tmask, g, tids=batch.get('tids'), tidm=tidm_d, sref=sref,
                           tvis=tvis, lvis=lvis, sstate=sstate)
 
+    ftext = model.flow_text(text, tmask, tvis, tsec, K)                             # None without flow_text_xattn
     aw, awm = model.local_audio(a, H, K)
     if hide is not None:                  # the hidden chunks' Local Flow audio window = the null audio (as for dropped audio)
         aw = torch.where(hide[:, :, None, None], model.audio_null.to(aw.dtype).expand_as(aw), aw)
@@ -295,12 +300,14 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
                                          sref=sref, tvis=tvis, lvis=lvis, sstate=sstate)
                         mt0_u = (None, None)
                     h0_u = model.sem_h(h_u).flatten(0, 1)
+                    ftext_u = model.flow_text(text, tm_u, tvis, tsec, K)              # text hidden like the planner's
                     aw_u = model.audio_null.expand_as(aw); awm_u = awm.clone()
                 for i in range(sc.self_force_steps):
                     tt = torch.full((M, Lf), i / sc.self_force_steps, device=dev); tt[kn0] = 1.
-                    v0 = model.flow_velocity(x, tt, kn0, model.sem_h(h0).flatten(0, 1), gi, aw, awm, st0, None, *mt0)
+                    v0 = model.flow_velocity(x, tt, kn0, model.sem_h(h0).flatten(0, 1), gi, aw, awm, st0, None, *mt0,
+                                             ftext=ftext)
                     if sc.self_force_cfg > 0:
-                        v_u = model.flow_velocity(x, tt, kn0, h0_u, gi, aw_u, awm_u, st0, None, *mt0_u)
+                        v_u = model.flow_velocity(x, tt, kn0, h0_u, gi, aw_u, awm_u, st0, None, *mt0_u, ftext=ftext_u)
                         v0 = v_u + sc.self_force_cfg * (v0 - v_u)
                     x = torch.where(kn0[..., None], x, x + v0 / sc.self_force_steps)
                 gen = x[:, cfg.ctx:].view(B, K, CHUNK, -1)
@@ -366,7 +373,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             gp = gp * (~r(sc.sem_drop)).float()[:, None, None]                       # null g_k
             h_flow = model.sem_h(h, gp)
     v = model.flow_velocity(xt, t, known, h_flow.flatten(0, 1), gi, aw, awm, style_tok, state_ada,
-                            mtp if cfg.mtc else None, mtpm[:, None].expand(-1, L, -1) if cfg.mtc else None)
+                            mtp if cfg.mtc else None, mtpm[:, None].expand(-1, L, -1) if cfg.mtc else None, ftext=ftext)
     tgt_valid = lmask.view(B, K, CHUNK).flatten(0, 1)
     if supervise is not None: tgt_valid = tgt_valid & supervise.reshape(M, 1)
     sup = ~known

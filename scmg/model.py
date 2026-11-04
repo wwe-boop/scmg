@@ -83,9 +83,91 @@ class Config:
     drop_spk: float = 0.2
     drop_ref: float = 0.5
     drop_time: float = 0.5         # token time embedding -> 'unknown' (text is NOT hard-aligned)
+    # 11-04 ECHO-G-style text route into the Local Flow (default off = the exact old model): after every flow block a
+    # word-time cross-attention over the planner's text tokens (global cosine attention mixed with a Gaussian prior on
+    # latent time - token time, per head), output added through a zero-initialised AdaLN gate. Chunk k sees exactly the
+    # planner's text of chunk k (tmask & ADSC tvis); tokens without a known time get global attention only.
+    flow_text_xattn: bool = False
 
     def dict(self):
         return asdict(self)
+
+
+# ECHO-G word-time attention bounds (release30-bounded-qk-global-local-wordtime-v2.1, word_time_attention.py)
+WT = dict(temp=(1.0, 16.0, 8.0), sigma=(0.25, 2.0, 0.75), lag=0.5, mix=(0.5, 0.1), max_log_penalty=12.0, eps=1e-6)
+
+
+def _logit(v, lo, hi):
+    p = (v - lo) / (hi - lo)
+    return math.log(p / (1 - p))
+
+
+def _masked_softmax(logits, keep):
+    """keep [B, 1, Q, K] bool; rows without a key -> all-zero weights; masked keys get weight exactly 0."""
+    has = keep.any(-1, keepdim=True)
+    safe = torch.where(has, logits.masked_fill(~keep, -torch.inf), torch.zeros_like(logits))
+    return safe.softmax(-1).masked_fill(~keep, 0.)
+
+
+class WordTimeXAttn(nn.Module):
+    """ECHO-G WordTimeCrossAttentionBlock's text sub-layer for the SCMG Local Flow. Per head: weights =
+    (1 - m s) softmax(tau cos(q, k)) + m s softmax(tau cos(q, k) + log N(dt - lag; 0, sigma)), dt = query time - token time
+    (s), s = max_j N(...) over visible timed tokens (support), tau in [1, 16], sigma in [0.25, 2] s, lag in +-0.5 s,
+    m <= 0.5 learnable. Tokens with unknown time (NaN) carry no prior (global only). Output gated by AdaLN(c) (shift,
+    scale, gate; zero-init -> the sub-layer is an exact identity at initialisation). No dropout (keeps RNG streams of
+    the base untouched). Query rows with no visible token add exactly 0."""
+
+    def __init__(self, d, heads):
+        super().__init__()
+        self.h = heads
+        self.n = nn.LayerNorm(d, elementwise_affine=False)
+        self.q = nn.Linear(d, d); self.k = nn.Linear(d, d); self.v = nn.Linear(d, d); self.o = nn.Linear(d, d)
+        self.ada = nn.Linear(d, 3 * d)
+        nn.init.zeros_(self.ada.weight); nn.init.zeros_(self.ada.bias)
+        tl, th, t0 = WT['temp']; sl, sh, s0 = WT['sigma']; mx, m0 = WT['mix']
+        self.temp_raw = nn.Parameter(torch.full((heads,), _logit(t0, tl, th)))
+        self.sigma_raw = nn.Parameter(torch.full((heads,), _logit(s0, sl, sh)))
+        self.lag_raw = nn.Parameter(torch.zeros(heads))
+        self.mix_raw = nn.Parameter(torch.full((heads,), _logit(m0, 0., mx)))
+
+    def params(self):
+        tl, th, _ = WT['temp']; sl, sh, _ = WT['sigma']
+        return dict(temp=tl + (th - tl) * self.temp_raw.float().sigmoid(), sigma=sl + (sh - sl) * self.sigma_raw.float().sigmoid(),
+                    lag=WT['lag'] * self.lag_raw.float().tanh(), mix=WT['mix'][0] * self.mix_raw.float().sigmoid())
+
+    def weights(self, q, k, keep, dt):
+        """q [B, H, Q, dh], k [B, H, K, dh], keep [B, Q, K] bool, dt [B, Q, K] s (NaN = token time unknown) -> [B, H, Q, K]."""
+        p = self.params(); keep = keep[:, None]
+        q = F.normalize(q.float(), dim=-1, eps=WT['eps']); k = F.normalize(k.float(), dim=-1, eps=WT['eps'])
+        logits = (q @ k.transpose(-1, -2)) * p['temp'][None, :, None, None]
+        glob = _masked_softmax(logits, keep)
+        timed = torch.isfinite(dt)[:, None]
+        z = (torch.nan_to_num(dt, 0.)[:, None].float() - p['lag'][None, :, None, None]) / p['sigma'][None, :, None, None]
+        lp = torch.where(timed, -0.5 * z.square(), torch.full_like(z, -WT['max_log_penalty']))
+        loc = _masked_softmax(logits + lp.clamp_min(-WT['max_log_penalty']), keep)
+        support = torch.where(keep & timed, lp.exp(), torch.zeros_like(lp)).amax(-1, keepdim=True)
+        em = p['mix'][None, :, None, None] * support
+        return (1 - em) * glob + em * loc
+
+    def forward(self, x, c, kv, keep, tsec, qsec):
+        """x [M, L, d] flow tokens, c [M, L, d] or [M, d] AdaLN condition; kv [Bt, Kt, d] text tokens, keep [M, Kt] tokens
+        visible to instance m, tsec [Bt, Kt] token time (s, NaN unknown), qsec [M, L] time of every flow position (s, same
+        origin); instances are grouped by sample: m = b * G + g (M = Bt * G)."""
+        M, L, D = x.shape; Bt, Kt = kv.shape[:2]; G = M // Bt
+        if G * Bt != M: raise ValueError(f'flow instances {M} are not a multiple of the text batch {Bt}')
+        a = self.ada(F.silu(c))
+        if a.ndim == 2: a = a[:, None]
+        sh, sc, gt = a.chunk(3, -1)
+        y = (self.n(x) * (1 + sc) + sh).reshape(Bt, G * L, D)
+        keep_q = keep.view(Bt, G, 1, Kt).expand(Bt, G, L, Kt).reshape(Bt, G * L, Kt)
+        dt = qsec.reshape(Bt, G * L)[:, :, None].float() - tsec[:, None, :].float()
+        H = self.h
+        q = self.q(y).view(Bt, G * L, H, -1).transpose(1, 2)
+        k = self.k(kv).view(Bt, Kt, H, -1).transpose(1, 2); v = self.v(kv).view(Bt, Kt, H, -1).transpose(1, 2)
+        w = self.weights(q, k, keep_q, dt)
+        o = (w @ v.float()).to(x.dtype).transpose(1, 2).reshape(Bt, G * L, D)
+        o = self.o(o) * keep_q.any(-1, keepdim=True).to(x.dtype)                     # no visible text -> exactly 0
+        return x + gt * o.view(M, L, D)
 
 
 def gate(n):
@@ -288,6 +370,12 @@ class SCMG(nn.Module):
             # zero-init output: switching tts_h on starts from exactly the audio-only function (gradients still reach it)
             self.tts_in = nn.Sequential(nn.LayerNorm(cfg.tts_h_dim), nn.Linear(cfg.tts_h_dim, d))
             nn.init.zeros_(self.tts_in[1].weight); nn.init.zeros_(self.tts_in[1].bias)
+        if getattr(cfg, 'flow_text_xattn', False) and not hasattr(self, 'f_text'):
+            # own RNG stream: adding the module (fine-tune) or building it (from scratch) leaves the global RNG untouched
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(20261104)
+                self.f_text = nn.ModuleList([WordTimeXAttn(d, cfg.heads) for _ in range(cfg.flow_layers)])
+            self.f_text.to(self.f_in.weight.device)
         if cfg.lora_r > 0 and not getattr(self, '_lora', False):
             for m in (self.planner, self.flow, self.audio) + ((self.vox.ralm,) if hasattr(self, 'vox') else ()):
                 apply_lora(m, r=cfg.lora_r)
@@ -331,6 +419,33 @@ class SCMG(nn.Module):
         te = self.text_time(sincos(torch.nan_to_num(ttime, 0.) * FPS / STRIDE, self.cfg.d))
         return x + torch.where(known[..., None], te, self.text_time_unk), tmask
 
+    @staticmethod
+    def token_seconds(ttime, drop=None):
+        """Token times the model may use (s; NaN = unknown): exactly the tokens text_tokens() gives a time embedding."""
+        known = torch.isfinite(ttime)
+        if drop is not None: known = known & ~drop[:, None]
+        return torch.where(known, ttime, torch.full_like(ttime, float('nan')))
+
+    @staticmethod
+    def chunk_text_mask(tmask, tvis, K):
+        """bool [B, Kt] valid text (+ ADSC tvis [B, K, Kt]) -> text visible to chunk k [B, K, Kt] (planner AND flow)."""
+        tm = tmask[:, None, :].expand(tmask.shape[0], K, -1)
+        return tm & tvis if tvis is not None else tm
+
+    @staticmethod
+    def flow_seconds(k, L, ctx):
+        """Time (s, window origin) of the centre of every Local Flow position of chunk(s) k: latent 4k - ctx + j.
+        k [n] long -> [n, L]."""
+        i = k[:, None] * CHUNK - ctx + torch.arange(L, device=k.device)[None]
+        return (i.float() + 0.5) * STRIDE / FPS
+
+    def flow_text(self, text, tmask, tvis, tsec, K):
+        """Flow text memory for the B*K training instances (m = b*K + k), None without flow_text_xattn."""
+        if not hasattr(self, 'f_text'): return None
+        keep = self.chunk_text_mask(tmask, tvis, K).flatten(0, 1)
+        q = self.flow_seconds(torch.arange(K, device=text.device), self.cfg.ctx + CHUNK, self.cfg.ctx)
+        return text, keep, tsec, q.repeat(text.shape[0], 1)
+
     def global_cond(self, spk, spk_valid, source):
         s = torch.where(spk_valid[:, None] > .5, self.spk_in(spk), self.spk_null)
         return s + self.source(source)
@@ -357,8 +472,7 @@ class SCMG(nn.Module):
         x = prev + self.p_audio(pooled) + sincos(torch.arange(K, device=lat.device), self.cfg.d)[None]
         if semb is not None: x = x + semb
         causal = torch.ones(K, K, dtype=torch.bool, device=lat.device).tril()[None]
-        tm = tmask[:, None, :].expand(B, K, -1)
-        if tvis is not None: tm = tm & tvis                                           # ADSC: text arrived by chunk k
+        tm = self.chunk_text_mask(tmask, tvis, K)                                     # ADSC: text arrived by chunk k
         for blk in self.planner:
             if isinstance(blk, GatedXBlock): x = blk(x, g, causal, text, tm, mt, mt_mask)
             else: x = blk(x, g, causal, text, tm)
@@ -370,17 +484,21 @@ class SCMG(nn.Module):
         return (i[None] // CHUNK) == k[:, None]
 
     # ------------------------------------------------------------------ local flow
-    def flow_velocity(self, xt, t, known, h, g, aw, aw_mask, style_tok=None, state_ada=None, mt=None, mt_mask=None):
+    def flow_velocity(self, xt, t, known, h, g, aw, aw_mask, style_tok=None, state_ada=None, mt=None, mt_mask=None,
+                      ftext=None):
         """xt [M, L, z] (known positions hold clean latents); t [M, L] (1 on known); h [M, d]; g [M, d];
-        aw [M, W, d] local audio window, aw_mask [M, W]."""
+        aw [M, W, d] local audio window, aw_mask [M, W]; ftext (flow_text_xattn): (text [Bt, Kt, d], keep [M, Kt],
+        token s [Bt, Kt], position s [M, L]) or None (= no text visible)."""
         x = self.f_in(xt) + self.f_role(known.long()) + self.f_pos[None]
         c = self.f_t(sincos(t * 1000., self.cfg.d)) + (self.f_plan(h) + g)[:, None]
         if style_tok is not None: c = c + style_tok[:, None]
         if state_ada is not None: c = c + state_ada[:, None]
         am = aw_mask[:, None, :].expand(-1, x.shape[1], -1)
-        for blk in self.flow:
+        ftx = self.f_text if (ftext is not None and hasattr(self, 'f_text')) else None
+        for i, blk in enumerate(self.flow):
             if isinstance(blk, GatedXBlock): x = blk(x, c, None, aw, am, mt, mt_mask)
             else: x = blk(x, c, None, aw, am)
+            if ftx is not None: x = ftx[i](x, c, *ftext)
         sh, sc = self.f_ada(F.silu(c)).chunk(2, -1)
         return self.f_out(self.f_norm(x) * (1 + sc) + sh)
 

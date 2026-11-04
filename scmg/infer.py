@@ -181,6 +181,7 @@ class Streamer:
         tt = c['ttime'] - f0 / 50.
         raw = c['text_c'] if self.text_mode == 'x2' else c['text']   # token streaming: causal features
         text, tmask = m.text_tokens(raw[None].float(), tt[None].float(), c['tmask'][None].bool())
+        tsec = m.token_seconds(tt[None].float())                    # flow_text_xattn: token times (window origin)
         tvis = lvis = sstate = None
         adsc_m = hasattr(m, 'stream_emb')
         if self.text_mode != 'final' or self.deploy_timing or adsc_m:
@@ -204,6 +205,7 @@ class Streamer:
                 tu, _ = m.text_tokens(raw[None].float(), ttw[None], tm0, drop=torch.ones(1, dtype=torch.bool, device=self.dev))
                 text = torch.cat([text, tu], 1); tmask = torch.cat([tmask, tmask], 1)
                 tvis = torch.cat([tvis & voiced, tvis & ~voiced], -1)
+                tsec = torch.cat([tsec, torch.full_like(tsec, float('nan'))], 1)
         g = m.global_cond(c['spk'][None].float(), c['spk_valid'][None].float(), c['source'][None].long())
         # committed latents of the window chunks (zeros before the start)
         z = cfg.z
@@ -307,6 +309,11 @@ class Streamer:
                     if cfg.mtc: mtk_a, mtmk_a = mt_a[:, kw], mtm_a[:, kw][:, None].expand(-1, cfg.ctx + CHUNK, -1)
             mtk = mtmk = None
             if cfg.mtc: mtk, mtmk = mt[:, kw], mtm[:, kw][:, None].expand(-1, L, -1)
+            ft = ft_u = None
+            if hasattr(m, 'f_text'):                                 # the planner's text visibility of chunk kw (incl. CFG branches)
+                qsec = m.flow_seconds(torch.tensor([kw], device=self.dev), L, cfg.ctx)
+                ft = (text, m.chunk_text_mask(tmask, tvis, W)[:, kw], tsec, qsec)
+                if self.cfg_w != 1: ft_u = (text, m.chunk_text_mask(tm_u, tvis, W)[:, kw], tsec, qsec)
             ada = st_ada if j == 0 else None                         # the measured state only describes "now"
             if cfg.sem_head and cfg.sem_cond:                        # Local Flow sees the predicted g_k (each CFG branch its own)
                 hk = m.sem_h(hk, self.g_override)
@@ -317,11 +324,11 @@ class Streamer:
                 tval = s / self.steps
                 t = torch.full((1, L), tval, device=self.dev); t[known] = 1.
                 if ct < 1: t[:, :cfg.ctx] = torch.where(known[:, :cfg.ctx], torch.full_like(t[:, :cfg.ctx], ct), t[:, :cfg.ctx])
-                v = m.flow_velocity(x, t, known, hk, g, aw, awm, style_tok, ada, mtk, mtmk)
+                v = m.flow_velocity(x, t, known, hk, g, aw, awm, style_tok, ada, mtk, mtmk, ftext=ft)
                 if self.cfg_w != 1:
-                    v_u = m.flow_velocity(x, t, known, hk_u, g, aw_u, awm_u, style_tok, ada, mtk_u, mtmk_u)
+                    v_u = m.flow_velocity(x, t, known, hk_u, g, aw_u, awm_u, style_tok, ada, mtk_u, mtmk_u, ftext=ft_u)
                     if self.cfg_t is not None:
-                        v_a = m.flow_velocity(x, t, known, hk_a, g, aw, awm, style_tok, ada, mtk_a, mtmk_a)
+                        v_a = m.flow_velocity(x, t, known, hk_a, g, aw, awm, style_tok, ada, mtk_a, mtmk_a, ftext=ft_u)
                         v = v_u + self.cfg_w * (v_a - v_u) + self.cfg_t * (v - v_a)
                     else:
                         v = v_u + self.cfg_w * (v - v_u)
