@@ -40,6 +40,12 @@ def main():
     ap.add_argument('--x2-rate', type=float, default=15.0); ap.add_argument('--x2-lag', type=float, default=0.15)
     ap.add_argument('--deploy-timing', action=argparse.BooleanOptionalAction, default=None)
     ap.add_argument('--text-causal', default=None, help='prefix-causal e5 cache row-aligned with --text-cache (needed by x2)')
+    # 11-04 G1 metric work (inference-only probes, chosen on the dev split): speaker conditioning off (the learned null,
+    # drop_spk 0.2 in training) for unseen test speakers; Savitzky-Golay smoothing of the 50 Hz joint channels
+    ap.add_argument('--noise-scale', type=float, default=1.0, help='scale of the initial flow noise (1 = standard)')
+    ap.add_argument('--no-spk', action='store_true', help='use the learned null speaker embedding (spk_valid = 0)')
+    ap.add_argument('--smooth', default=None, help="'w,o': SG filter on the 29 joint channels at 50 Hz (root channels untouched)")
+    ap.add_argument('--smooth-legs', default=None, help="'w,o': SG filter on the 12 leg joints only (after --smooth)")
     a = ap.parse_args()
     if EMBODIMENT != 'g1': raise SystemExit('run with SCMG_J=39')
     eng = a.protocol == 'engine'
@@ -75,17 +81,23 @@ def main():
         ds = WindowDataset(view, nch * CHUNK_FRAMES, max_tokens=256)
         s = ds.sample(ci, 0, np.random.default_rng(ci))
         s['ref'] = np.zeros_like(s['ref']); s['ref_valid'] = np.float32(0.)
+        if a.no_spk: s['spk'] = np.zeros_like(s['spk']); s['spk_valid'] = np.float32(0.)
         cond = {kk: s[kk] for kk in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm',
                                      'titime', 'tseg', 'tiseg', 'tiend', 'text_c') if kk in s}
         kw = {} if proto is None else dict(text_mode=tm, x2_rate=a.x2_rate, x2_lag=a.x2_lag, deploy_timing=dt)
         cmd, _, tk = generate(m, vae, s['feat'], cond, stats, nch, H=H, steps=a.steps, seed=a.seed, standby=qm, ctx_t=m.ctx_t,
-                              cfg_w=a.cfg_w, **kw)
+                              cfg_w=a.cfg_w, noise_scale=a.noise_scale, **kw)
         if cmd.shape[0] < L or cmd.shape[1] != J or not np.isfinite(cmd).all(): raise ValueError(f'{stem}: generated {cmd.shape}')
         q50 = cmd[:L].astype(np.float64)
+        for opt, ch in ((a.smooth, g1.JOINTS), (a.smooth_legs, g1.LEGS)):
+            if opt:
+                from scipy.signal import savgol_filter
+                w, o = (int(x) for x in opt.split(','))
+                if len(q50) > w: q50[:, ch] = savgol_filter(q50[:, ch], w, o, axis=0, mode='interp')
         r30 = g1.to30(q50, n30).astype(np.float32)
         torch.save(dict(robot_repr=torch.from_numpy(r30), real_num_frames=n30, fps=30.0, representation_units='physical',
                         representation_schema='projecthermes-g1-39d-standard-v2', source=stem,
-                        generator=dict(ckpt=str(a.ckpt), seed=a.seed, steps=a.steps, cfg_w=a.cfg_w, frames50=L,
+                        generator=dict(ckpt=str(a.ckpt), seed=a.seed, steps=a.steps, cfg_w=a.cfg_w, frames50=L, noise_scale=a.noise_scale, no_spk=a.no_spk, smooth=a.smooth, smooth_legs=a.smooth_legs,
                                        resample='scmg/g1.py to30 (cubic / heading spline / RotationSpline)',
                                        **({} if proto is None else dict(stream=proto)))), o)
         if a.save50: np.save(out / f'{stem}.q50.npy', q50.astype(np.float32))

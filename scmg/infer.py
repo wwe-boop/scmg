@@ -24,7 +24,7 @@ WIN, LOOK = 16, 2
 
 
 class Streamer:
-    def __init__(self, model, vae, feat, cond, stats, H=INF, steps=10, temperature=1.0, n_future=0, seed=0,
+    def __init__(self, model, vae, feat, cond, stats, H=INF, steps=10, temperature=1.0, n_future=0, seed=0, noise_scale=1.0,
                  standby=None, device='cuda', hist_measured=False, ctx_t=1.0, cfg_w=1.0, cfg_text=True, cfg_t=None,
                  text_mode='final', x2_rate=15.0, x2_lag=0.15, seg_lead=0.3, deploy_timing=False,
                  elastic=None, window_lm_text=False, g_override=None, trim_start=True, cfg_null_fix=True, still_refresh=None):
@@ -40,6 +40,7 @@ class Streamer:
             raise ValueError('model was trained with tts_h (TTS hidden states): cond needs tts_h / tts_hm')
         self.qm = torch.tensor(stats['q_mean'], device=device); self.qs = torch.tensor(stats['q_std'], device=device)
         self.H, self.steps, self.temp, self.n_future = H, steps, temperature, n_future
+        self.noise_scale = float(noise_scale)   # 11-04: scale of the initial flow noise (1 = standard sampling; <1 = lower diversity)
         self.g = torch.Generator(device=device).manual_seed(seed)
         self.lat = []                     # committed latents (normalised), one [z] per latent step
         self.frames = []                  # emitted joint frames (rad)
@@ -287,6 +288,7 @@ class Streamer:
             L = cfg.ctx + CHUNK
             known = torch.zeros(1, L, dtype=torch.bool, device=self.dev); known[:, :cfg.ctx] = has_ctx
             x = torch.randn(1, L, z, device=self.dev, generator=self.g)
+            if self.noise_scale != 1.0: x = x * self.noise_scale
             if self.noise_override is not None:      # stage-2 latent steering (DSRL): a policy chooses the initial noise
                 eps = self.noise_override(self, self.k + j, x[:, cfg.ctx:].clone())
                 if eps is not None: x[:, cfg.ctx:] = eps.to(x)

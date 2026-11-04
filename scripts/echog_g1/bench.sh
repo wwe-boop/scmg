@@ -32,7 +32,7 @@ case $1 in
     GL=(${GPUS:-0}); n=${#GL[@]}; mkdir -p $P
     for i in $(seq 0 $((n - 1))); do
       CUDA_VISIBLE_DEVICES=${GL[$i]} $PY scripts/echog_g1/infer_test.py --ckpt $ck --vae $vae --stats $STATS --view $VIEW_TEST \
-        --text-cache $TEXT_TEST --out $P --stems $stems --seed $seed --steps ${STEPS:-10} --cfg-w ${CFGW:-2.5} --split ${VSPLIT:-test} --shard $i/$n "${PA[@]}" &
+        --text-cache $TEXT_TEST --out $P --stems $stems --seed $seed --steps ${STEPS:-10} --cfg-w ${CFGW:-2.5} --split ${VSPLIT:-test} --shard $i/$n "${PA[@]}" ${INFER_EXTRA:-} &
     done; wait
     ev $P $stems scmg_${proto}_seed$seed $(dirname $P)/benchmark_$(basename $P).json;;
   eval) ev $2 $3 $4 $5;;
