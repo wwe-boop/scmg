@@ -135,7 +135,9 @@ def extract(pcm16, chars, plain, lang, T, variant, st=None, final=True):
         F.features, F.pick_beats = ORIG_FEATURES, ORIG_PICK
 
 
-def speaker_stats(train, spk, lang, audio, n=6, max_s=60.):
+def speaker_stats(pool, spk, lang, audio, exclude, n=6, max_s=60.):
+    """Fixed prominence statistics of a voice from OTHER recordings of it (dev speakers are not in train: the other dev
+    clips of the speaker, never the evaluated one) -- the deployment analogue is a calibration set of the TTS voice."""
     E, Fv, Dd = [], [], []
     def rec(syllables, pcm, fs=24000, cache=None):
         pcm = np.asarray(pcm, np.float32)
@@ -143,7 +145,8 @@ def speaker_stats(train, spk, lang, audio, n=6, max_s=60.):
             e, f = F_measure(s, pcm, fs); E.append(e); Fv.append(f); Dd.append(s.offset_s - s.onset_s)
         return ORIG_FEATURES(syllables, pcm, fs)
     k = 0
-    for c, xs in train:
+    for c, xs in pool:
+        if c == exclude: continue
         if xs[0].get('speaker') != spk or xs[0]['lang'] != lang or not xs[0].get('dir'): continue
         start = int(xs[0]['offset']); fr = min(sum(int(x['frames']) for x in xs), int(max_s * 50)) // 16 * 16
         plain, chars = chars_of(xs, start)
@@ -194,8 +197,8 @@ def main():
         c, xs = cl['val'][ci]; lang = xs[0]['lang']; spk = xs[0].get('speaker')
         start = int(xs[0]['offset']); L = sum(int(x['frames']) for x in xs); nch = L // 16; T = nch * 16
         pcm16 = np.asarray(audio[start * 320:(start + T) * 320]); plain, chars = chars_of(xs, start)
-        key = (spk, lang)
-        if key not in st_cache: st_cache[key] = speaker_stats(cl['train'], spk, lang, audio)
+        key = (spk, lang, c)
+        if key not in st_cache: st_cache[key] = speaker_stats(cl['val'], spk, lang, audio, c)
         st = st_cache[key][0]
         t0 = time.time()
         full = {v: extract(pcm16, chars, plain, lang, T, v, st, final=True) for v in ('v0', 'v1', 'v2')}
