@@ -60,24 +60,29 @@ def overfit_clips(view, n):
 
 ADDABLE = {'vox_prefsq_norm', 'vox_text_xattn', 'vox_slots', 'vox_word_aux', 'sem_head', 'sem_cond', 'intent_aux', 'tts_h', 'adsc',
            'flow_text_xattn'}  # adsc: zero-init stream_emb (11-04); flow_text_xattn: zero-gated flow text cross-attn (11-04)
+RESIZE_TEXT = {'text_dim'}  # allowed on a fine-tune: ONLY the text input LayerNorm+Linear is re-initialised (see build_model)
 
 
 def validate_additions(old, changes):
-    """Module surgery can add modules, never remove or resize existing ones."""
+    """Module surgery can add modules or resize the text input, never remove/resize anything else."""
     defaults = {f.name: f.default for f in __import__('dataclasses').fields(Config)}
     for k, value in changes.items():
         before = old.get(k, defaults.get(k))
         if type(value) is type(before) and value == before: continue
-        allowed = k in ADDABLE and ((type(before) is bool and before is False and value is True) or
-                  (k == 'vox_slots' and type(before) is int and before == 0 and type(value) is int and value > 0))
+        allowed = (k in ADDABLE and ((type(before) is bool and before is False and value is True) or
+                   (k == 'vox_slots' and type(before) is int and before == 0 and type(value) is int and value > 0))) or \
+                  (k in RESIZE_TEXT and type(before) is int and type(value) is int and before > 0 and value > 0)
         if not allowed:
             raise ValueError(f'--cfg changes build-time switches / unsupported module transition: {k}={before!r} -> {value!r}; '
-                             'only false->true, 0->positive slots, or unchanged values are allowed')
+                             'only false->true, 0->positive slots, text_dim>0, or unchanged values are allowed')
 
 
 def build_model(base_cfg, prev_extra, new_extra, prev_state=None):
     """Base-config model -> remember base parameter ids -> rebuild the previous stage's modules -> load its weights
-    -> add this stage's modules. LoRA keeps the wrapped Linear parameters, so base ids stay valid through surgery."""
+    -> add this stage's modules. LoRA keeps the wrapped Linear parameters, so base ids stay valid through surgery.
+
+    text_dim differs from the checkpoint (e.g. r4 e5 768 -> LLM 1024/2560): every other weight is loaded normally and
+    only text_in (LayerNorm + Linear) is re-initialised, because its input width changed."""
     if prev_state is not None:
         effective = {**base_cfg, **prev_extra}
         validate_additions(effective, {k: v for k, v in new_extra.items() if k in ADDABLE})
@@ -87,7 +92,16 @@ def build_model(base_cfg, prev_extra, new_extra, prev_state=None):
     m.add_modules()
     missing = []
     if prev_state is not None:
-        missing, unexpected = m.load_state_dict(prev_state, strict=False)
+        state = prev_state
+        prev_dim = int(prev_state['text_in.0.weight'].shape[0]) if 'text_in.0.weight' in prev_state else m.cfg.text_dim
+        if prev_dim != m.cfg.text_dim:
+            state = {k: v for k, v in prev_state.items() if not k.startswith('text_in.')}
+            print(f'text_dim {prev_dim} -> {m.cfg.text_dim}: re-initialised text_in (LayerNorm + Linear); '
+                  f'all other weights load from the checkpoint', flush=True)
+        missing, unexpected = m.load_state_dict(state, strict=False)
+        if prev_dim != m.cfg.text_dim:
+            missing = [k for k in missing if not k.startswith('text_in.')]
+            unexpected = [k for k in unexpected if not k.startswith('text_in.')]
         if unexpected or missing: raise RuntimeError(f'checkpoint mismatch: missing {missing[:5]} unexpected {unexpected[:5]}')
     for k, v in new_extra.items(): setattr(m.cfg, k, v)
     m.add_modules()
@@ -193,8 +207,11 @@ def main():
             # anything else is a build-time switch (vox_fsq, vox_lm_init, d, ...) that would be silently ignored -> refuse
             validate_additions({**prev['base_cfg'], **prev_extra}, json.loads(a.cfg))
             # base-stage fine-tune from a checkpoint that switches NEW optional modules on (11-03): build + load with the
-            # checkpoint's own config, then turn the new switches on and add their (zero-initialised) modules
-            model, base_ids = build_model(prev['base_cfg'], prev_extra, extra, prev['ema'])
+            # checkpoint's own config, then turn the new switches on and add their (zero-initialised) modules.
+            # text_dim is special: it must be set while building, so text_in is re-initialised before loading.
+            build_cfg = dict(prev['base_cfg'])
+            if 'text_dim' in base_cfg: build_cfg['text_dim'] = base_cfg['text_dim']
+            model, base_ids = build_model(build_cfg, prev_extra, extra, prev['ema'])
             for k, v in json.loads(a.cfg).items(): setattr(model.cfg, k, v)
             model.add_modules(); base_ids = set()
             extra.update({k: v for k, v in json.loads(a.cfg).items() if k in extra})
@@ -209,6 +226,9 @@ def main():
             expand_source(model)
             base_cfg['n_source'] = model.cfg.n_source
         model.to(dev)
+        if view.text is not None and int(model.cfg.text_dim) != view.text_dim:
+            raise SystemExit(f'text cache dim {view.text_dim} != model cfg.text_dim {model.cfg.text_dim}; '
+                             f'pass --cfg \'{{"text_dim": {view.text_dim}}}\' (fine-tune re-initialises only text_in)')
         if getattr(model.cfg, 'tts_h', False) and not a.tts_hidden:
             raise SystemExit('cfg tts_h needs --tts-hidden <dir>')
         sc = StageCfg(**{**spec['sc'], **json.loads(a.sc)})

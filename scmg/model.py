@@ -40,6 +40,7 @@ class Config:
     n_source: int = 7          # preserve legacy init/RNG exactly; BAgger explicitly expands to N_SOURCE
     z: int = 16                    # VAE latent dim
     d: int = 512
+    text_dim: int = TEXT_DIM       # frozen text-encoder feature dim (e5 = 768; LLM caches: 1024 / 2560)
     heads: int = 8
     audio_layers: int = 4
     planner_layers: int = 8
@@ -326,8 +327,8 @@ class SCMG(nn.Module):
         self.cfg = cfg; d = cfg.d
         if cfg.stride != STRIDE: raise ValueError(f'checkpoint built for SCMG_STRIDE={cfg.stride}, environment has {STRIDE}')
         self.audio = AudioEncoder(cfg)
-        # semantic tokens (frozen e5 features come in; this projection is trainable)
-        self.text_in = nn.Sequential(nn.LayerNorm(TEXT_DIM), nn.Linear(TEXT_DIM, d))
+        # semantic tokens (frozen text-encoder features come in; this projection is trainable)
+        self.text_in = nn.Sequential(nn.LayerNorm(cfg.text_dim), nn.Linear(cfg.text_dim, d))
         self.text_time = nn.Linear(d, d); self.text_time_unk = nn.Parameter(torch.zeros(d))
         # global (AdaLN) style of the base: speaker embedding + data source
         self.spk_in = nn.Sequential(nn.LayerNorm(SPK), nn.Linear(SPK, d)); self.spk_null = nn.Parameter(torch.zeros(d))

@@ -33,6 +33,9 @@ st = json.load(open(R_STATS)); qm, qs = np.array(st['q_mean'], np.float32), np.a
 ap = argparse.ArgumentParser(); ap.add_argument('vae'); ap.add_argument('models', nargs='+')
 ap.add_argument('--tok-cache'); args = ap.parse_args()
 VAE = args.vae; NCLIP = int(os.environ.get('ROLLOUT_NCLIP', '20'))
+MAXCHUNK = int(os.environ.get('ROLLOUT_MAXCHUNK', '40'))   # cap rollout length per clip (quick curves use 20)
+if os.environ.get('ROLLOUT_TEXT_CACHE') and not os.environ.get('ROLLOUT_TEXT'):   # exp/llm-text name for the same switch
+    R_TEXT = os.environ['ROLLOUT_TEXT_CACHE']
 WIN = os.environ.get('ROLLOUT_WINDOW_LM_TEXT') == '1'   # 11-03 review: windowed LM text (training protocol) for VoxCPM
 TM = os.environ.get('ROLLOUT_TEXT_MODE', 'final')      # 11-03 user: deployment text streams word by word -> x2 (+ deploy timing, windowed LM)
 X2_LAG = float(os.environ.get('ROLLOUT_X2_LAG', '0.15'))
@@ -46,7 +49,7 @@ if TM != 'final': WIN = True
 def clips(tok):
     v = View(R_VIEW, split='val', stats=st, mmap=True, text_cache=R_TEXT, tok_cache=tok); out = []
     for ci in range(min(SCAN, len(v.clips))):
-        nch = min(v.clips[ci]['frames'] // CHUNK_FRAMES, 40)
+        nch = min(v.clips[ci]['frames'] // CHUNK_FRAMES, MAXCHUNK)
         if nch < 8: continue
         s = WindowDataset(v, nch * CHUNK_FRAMES, max_tokens=256, max_ids=clip_lm_capacity(v, ci) if WIN else 160).sample(ci, 0, np.random.default_rng(ci))
         if s['mask'].min() < 1: continue

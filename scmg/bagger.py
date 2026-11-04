@@ -62,7 +62,7 @@ class BaggerPool:
             f = z['feat_reversed'][start:start+T].astype(np.float32)
             style = {key: z['original_'+key].copy() for key in ('spk','spk_valid','ref','ref_valid')} if row['cond']=='reverse' else {}
         s = dict(q=q, mask=np.ones(T, np.float32), feat=f,
-                 text=np.zeros((K, TEXT_DIM), np.float32), ttime=np.full(K, np.nan, np.float32),
+                 text=np.zeros((K, getattr(v, 'text_dim', TEXT_DIM)), np.float32), ttime=np.full(K, np.nan, np.float32),
                  tmask=np.zeros(K, bool), tseg=np.full(K, np.nan, np.float32),
                  tids=np.zeros(I, np.int64), tidm=np.zeros(I, bool),
                  titime=np.full(I, np.nan, np.float32), tiseg=np.full(I, np.nan, np.float32),
