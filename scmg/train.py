@@ -152,6 +152,7 @@ def main():
     ap.add_argument('--cfg', default='{}', help='JSON overrides of the model Config (e.g. ablations)')
     ap.add_argument('--sc', default='{}', help='JSON overrides of the StageCfg')
     ap.add_argument('--semsynth-share', type=float, default=0.4)
+    ap.add_argument('--anchor-share', default=None, help='JSON {"sources": [...], "share": x}: sampling share of measured-motion sources inside the human mass')
     ap.add_argument('--snap-every', type=int, default=10000, help='EMA snapshot for mid-training evaluation')
     ap.add_argument('--deriv-ramp', type=int, default=3000, help='vae: steps to ramp in derivative losses, noise, KL')
     ap.add_argument('--tok-cache', default=None, help='LM token ids (voxcpm planner)')
@@ -181,6 +182,7 @@ def main():
     dview = View(a.view, 'val', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache, tts_hidden=a.tts_hidden)
     if a.overfit:
         overfit_clips(view, a.overfit); dview = view
+    if a.anchor_share: view.anchor = json.loads(a.anchor_share)
     ds = WindowDataset(view, a.frames, seed=a.seed * 1000 + rank, semsynth_share=a.semsynth_share, bagger_share=a.bagger_share)
     dl = iter(torch.utils.data.DataLoader(ds, a.batch, num_workers=a.workers, collate_fn=collate, pin_memory=True,
                                           persistent_workers=a.workers > 0, prefetch_factor=4 if a.workers else None))
