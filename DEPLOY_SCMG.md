@@ -29,7 +29,8 @@ SCMG_SRC=~/projects/gesture/scmg-wt-deploy ./gateway/sync_remote_scmg.sh
 `sync_remote_scmg.sh` 同时把 `gateway/remote/edge_live_remote.py` 同步到
 `.../edge-live-20261026/remote/`。大文件不要走 CPFS：worker 优先读
 `/tmp/scmg-deploy-cache/{ckpt/sbag-seed1-final.pt,ckpt/vae-r3-final.pt,models/multilingual-e5-base}`，
-有副本时模型加载 ~2 s；没有时直接从 CPFS 读（首次约 30–70 s）。
+有副本时权重加载 2–3.5 s；没有时直接从 CPFS 读。worker 首次 ready 的总耗时实测 30–68 s，大头是
+`transformers`/e5 从 CPFS 导入（不是权重加载），之后常驻。
 
 ### 1.2 网关（另起端口，18910/18911 不动）
 
@@ -58,7 +59,8 @@ curl -sN -X POST 127.0.0.1:18912/speak -H 'Content-Type: application/json' \
 ```
 
 worker 是**懒启动**的：18910 的 BJ50-only remote 不会额外占一张 GPU；18912 收到第一句 SCMG 请求才拉起
-`scmg.deploy_stream`。第一句会等模型加载（有 `/tmp` 缓存约 4 s，没有约 30–70 s），之后常驻。
+`scmg.deploy_stream`。第一句会等 worker ready（实测 30–68 s，主要是 CPFS 上的 Python 包导入；模型权重加载
+2–3.5 s），之后常驻。
 
 ### 1.3 机器人端（本机影子客户端）
 
