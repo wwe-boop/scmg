@@ -123,13 +123,15 @@ def verify_causal(model, tok, items, layer, n=20, seed=0, device='cuda', tol_rel
     (tol_rel = 5e-3 ~ 5 fp16 eps); we also record the raw abs error and the abs error normalised by the vector scale.
     """
     rng = np.random.default_rng(seed)
-    pick = rng.choice(len(items), min(n, len(items)), replace=False) if items else []
+    order = rng.permutation(len(items)) if items else []
     max_abs = max_abs_scaled = max_rel_norm = 0.0
     p99s = []; n_prefix = 0; n_within = 0; per = []
-    for k in pick:
+    for k in order:
+        if len(per) >= n:
+            break
         text = items[int(k)]['text']
         ids = tok(text, add_special_tokens=False)['input_ids']
-        if len(ids) < 2:
+        if len(ids) < 2:                    # 1-token utterances have no prefix to compare; draw another
             continue
         full = hidden(model, [ids], layer, device)[0]                      # [n, D]
         pmax = pscaled = preln = 0.0; pwithin = 0; pn = 0
@@ -146,7 +148,7 @@ def verify_causal(model, tok, items, layer, n=20, seed=0, device='cuda', tol_rel
         n_prefix += pn; n_within += pwithin
         per.append(dict(id=items[int(k)]['id'], tokens=int(len(ids)), max_abs=pmax,
                         max_abs_over_scale=pscaled, max_rel_norm=preln, frac_within_rel_tol=float(pwithin / max(pn, 1))))
-        print(f'  causal {len(per)}/{len(pick)} id={items[int(k)]["id"]} tokens={len(ids)} '
+        print(f'  causal {len(per)}/{n} id={items[int(k)]["id"]} tokens={len(ids)} '
               f'max_abs={pmax:.3e} max_rel_norm={preln:.3e}', flush=True)
     return dict(n_items=len(per), n_prefixes=int(n_prefix), tol_rel_norm=float(tol_rel),
                 max_abs=float(max_abs), max_abs_over_scale=float(max_abs_scaled), p99_abs=float(np.percentile(p99s, 99)),

@@ -19,20 +19,26 @@ SC='{"p_stream": 0.67, "p_async": 1.0, "p_async_seg": 0.0}'
 mkdir -p $R/$o/curve; log(){ echo "$(date -Is) $*" >> $R/$o/lane.log; }
 
 log "TEXT_CACHE $TEXT dim $TD"
-$PY -m scmg.train --out $R/$o --init $INIT --stats $D/STATS_v36_1.json --text-cache $TEXT --vae $VAE --workers ${WORKERS:-6} \
-  --tok-cache $D/tok-qwen25-v36_1 --tok-intent $B/models/intent-qwen25-v36_1 --intent-frames $B/models/intent-frames-v36_1 \
-  --holdout $SEMMAN/MANIFEST.json --semsynth-share ${SEMSHARE:-0.4} --batch ${BATCH:-64} --stage base --steps $ST --lr ${LR:-1e-4} \
-  --warmup 200 --eval-every 500 --snap-every 500 --save-every 500 --seed ${TRAIN_SEED:-0} --cfg "$CFG" --sc "$SC" \
-  --bagger-dir "$BAGGER" --bagger-share ${BAGGER_SHARE:-0.33} >> $R/$o/log.txt 2>&1
-log "TRAIN_EXIT $?"
+if [ -f "$R/$o/final.pt" ] && [ "${FORCE_TRAIN:-0}" != 1 ]; then
+  log "SKIP_TRAIN final.pt exists"
+else
+  $PY -m scmg.train --out $R/$o --init $INIT --stats $D/STATS_v36_1.json --text-cache $TEXT --vae $VAE --workers ${WORKERS:-6} \
+    --tok-cache $D/tok-qwen25-v36_1 --tok-intent $B/models/intent-qwen25-v36_1 --intent-frames $B/models/intent-frames-v36_1 \
+    --holdout $SEMMAN/MANIFEST.json --semsynth-share ${SEMSHARE:-0.4} --batch ${BATCH:-64} --stage base --steps $ST --lr ${LR:-1e-4} \
+    --warmup 200 --eval-every 500 --snap-every 500 --save-every 500 --seed ${TRAIN_SEED:-0} --cfg "$CFG" --sc "$SC" \
+    --bagger-dir "$BAGGER" --bagger-share ${BAGGER_SHARE:-0.33} >> $R/$o/log.txt 2>&1
+  log "TRAIN_EXIT $?"
+fi
 
-for f in $(ls $R/$o/snap_*.pt 2>/dev/null | sort -V) $R/$o/final.pt; do
+# Quick curve protocol: 10 clips x <=20 chunks, seeds 0/1, offline + engine (r4_lane uses 20 clips x <=40 chunks).
+RC=${ROLLOUT_NCLIP:-10}; RM=${ROLLOUT_MAXCHUNK:-20}
+for f in $(ls $R/$o/snap_*.pt 2>/dev/null | sort -V); do
   [ -f "$f" ] || continue
   lab=$(basename $f .pt)
   for sd in 0 1; do
-    ROLLOUT_SEED=$sd ROLLOUT_TEXT_CACHE=$TEXT ROLLOUT_WINDOW_LM_TEXT=1 \
+    ROLLOUT_SEED=$sd ROLLOUT_NCLIP=$RC ROLLOUT_MAXCHUNK=$RM ROLLOUT_TEXT_CACHE=$TEXT ROLLOUT_WINDOW_LM_TEXT=1 \
       $PY scripts/rollout_probe.py $VAE $lab=$f@${CFGW:-2.5} >> $R/$o/curve/offline.jsonl 2>> $R/$o/curve/probe.log
-    ROLLOUT_SEED=$sd ROLLOUT_TEXT_CACHE=$TEXT ROLLOUT_TEXT_MODE=x2 ROLLOUT_X2_LAG=0.15 ROLLOUT_H=2 \
+    ROLLOUT_SEED=$sd ROLLOUT_NCLIP=$RC ROLLOUT_MAXCHUNK=$RM ROLLOUT_TEXT_CACHE=$TEXT ROLLOUT_TEXT_MODE=x2 ROLLOUT_X2_LAG=0.15 ROLLOUT_H=2 \
       $PY scripts/rollout_probe.py $VAE $lab=$f@${CFGW:-2.5} >> $R/$o/curve/engine.jsonl 2>> $R/$o/curve/probe.log
   done
   log "CURVE_DONE $lab"
