@@ -13,7 +13,7 @@ export SCMG_J=39 PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=4 USE_TF=0; unset SCM
 log() { echo "$(date -Is) $*" >> $O/arch.log; }
 if [ ! -f $O/DONE.json ]; then
   log "TRAIN_START $cf on $NGPU GPUs"
-  $PY -m torch.distributed.run --nnodes=1 --rdzv-backend=c10d --rdzv-endpoint=localhost:${RDZV_PORT:-29611} --nproc_per_node=$NGPU -m scmg.train --stage base --view $C/echog-g1-v1 \
+  $PY -m torch.distributed.run --nnodes=1 --rdzv-backend=c10d --rdzv-endpoint=localhost:${RDZV_PORT:-29611} --nproc_per_node=$NGPU -m scmg.train --stage base --view ${G1_VIEW:-$C/echog-g1-v1} \
     --stats $C/scmg/STATS_echog_g1_v1.json --text-cache $C/scmg/text-e5-echog-g1-v1 --vae ${VAE_CK:-$R/vae/final.pt} --out $O --seed ${TRAIN_SEED:-0} \
     --cfg "$cf" ${ARCH_SC:+--sc "$ARCH_SC"} --batch $((1024 / NGPU / ${ACCUM:-1})) --accum ${ACCUM:-1} --steps 8000 --lr 3e-4 --warmup 1000 --frames 256 --workers ${WORKERS:-6} --eval-every 500 --snap-every 2000 >> $O/log.txt 2>&1
 fi
