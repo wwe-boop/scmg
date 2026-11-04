@@ -23,6 +23,7 @@ ap.add_argument('--view', default='/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/
 ap.add_argument('--stats', default='/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/STATS_echog_g1_v1.json')
 ap.add_argument('--steps', type=int, default=3000); ap.add_argument('--batch', type=int, default=64); ap.add_argument('--frames', type=int, default=256)
 ap.add_argument('--lr', type=float, default=1e-4); ap.add_argument('--w-foot', type=float, default=1.0); ap.add_argument('--ema', type=float, default=0.999)
+ap.add_argument('--w-jerk', type=float, default=0.0, help='per-channel jerk-energy matching (sign-free, counters decoder over-smoothing)')
 ap.add_argument('--workers', type=int, default=6); ap.add_argument('--seed', type=int, default=0); ap.add_argument('--log-every', type=int, default=50)
 a = ap.parse_args()
 if EMBODIMENT != 'g1': raise SystemExit('run with SCMG_J=39')
@@ -48,6 +49,14 @@ for step in range(1, a.steps + 1):
         y, l = vae(x, m, deriv=1.0)
     fc = foot_contact_loss(y.float() * qs + qm, x.float() * qs + qm, m.float(), 50.)
     loss = l['loss'] + a.w_foot * (fc['foot_slide'] + 10. * fc['foot_height'])
+    if a.w_jerk > 0:
+        # per-channel mean |3rd difference| over valid frames, decoded vs GT, relative (log ratio): adds back the high-frequency
+        # energy the smoothing decoder removes without forcing exact positions
+        j3 = lambda t: torch.diff(t.float(), 3, dim=1).abs()
+        mj = (m[:, 3:] * m[:, 2:-1] * m[:, 1:-2] * m[:, :-3]).float()[..., None]
+        ey = (j3(y) * mj).sum((0, 1)) / mj.sum().clamp(min=1); ex = (j3(x) * mj).sum((0, 1)) / mj.sum().clamp(min=1)
+        fc['jerk_energy'] = (torch.log(ey + 1e-4) - torch.log(ex + 1e-4)).abs().mean()
+        loss = loss + a.w_jerk * fc['jerk_energy']
     opt.zero_grad(set_to_none=True); loss.backward()
     torch.nn.utils.clip_grad_norm_(dec, 1.0); opt.step()
     with torch.no_grad():
@@ -59,5 +68,5 @@ for step in range(1, a.steps + 1):
 # the encoder is untouched: its weights in the EMA copy are the original ones; latent statistics are copied
 assert all(torch.equal(pe, pm) for pe, pm in zip(ema.enc.parameters(), vae.enc.parameters()))
 d = dict(cfg=vck['cfg'], model=vae.state_dict(), ema=ema.state_dict(), step=a.steps, vae_cfg=vck.get('vae_cfg', vck['cfg']),
-         lat_mean=vck['lat_mean'], lat_std=vck['lat_std'], decoder_ft=dict(source=a.vae, w_foot=a.w_foot, steps=a.steps, lr=a.lr))
+         lat_mean=vck['lat_mean'], lat_std=vck['lat_std'], decoder_ft=dict(source=a.vae, w_foot=a.w_foot, w_jerk=a.w_jerk, steps=a.steps, lr=a.lr))
 tmp = out / 'final.pt.tmp'; torch.save(d, tmp); tmp.replace(out / 'final.pt'); print('wrote', out / 'final.pt')
