@@ -106,6 +106,10 @@ nvidia-smi: 2942815, 1580 MiB, GPU-a10dcd9a-ed94-97b9-ce2c-bf29444d7b2b   # 物�
 
 GPU0 未使用；没有重启/改共享 TTS 63261、BJ50 hub 18777/8842；没有在 x2tts 上起进程；没有碰封存测试集。
 
+> 调试副作用（透明记录）：调试中按 PID 停过 18912 自己的 remote/SCMG 进程；有一次 `pkill -f` 误伤了
+> 18910 的 remote worker，18910 的 supervisor 自动拉起（`worker_restarts=3`），现在 `worker_ready=true`、
+> `active=0`；共享 TTS/BJ50 没有被动过。后续只用精确 PID 停进程。
+
 ---
 
 ## 3. 延迟数字（5 句，本机影子客户端，`--start-buffer-ms 800`）
