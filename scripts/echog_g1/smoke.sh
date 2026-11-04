@@ -7,7 +7,7 @@ GPU=${GPU:?set GPU}; OUT=${OUT:-$HOME/bulk/scmg-local/echog-g1-smoke}; N=${N:-20
 CODE=$(cd "$(dirname "$0")/../.." && pwd)
 PY=${PY:-/home/xr-25b7/envs/part2-exec-20261029/bin/python}
 C=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture
-VIEW=$C/echog-g1-v1; STATS=$C/scmg/STATS_echog_g1_v1.json; TEXT=$C/scmg/text-e5-echog-g1-v1; TEXT_TEST=$C/scmg/text-e5-echog-g1-v1-test
+VIEW=${VIEW:-$C/echog-g1-v1}; STATS=${STATS:-$C/scmg/STATS_echog_g1_v1.json}; TEXT=${TEXT:-$C/scmg/text-e5-echog-g1-v1}; TEXT_TEST=${TEXT_TEST:-$C/scmg/text-e5-echog-g1-v1-test}
 EG=${EG:-/mnt/bulk/zehan/echog-dataset}; OFF=${OFF:-$HOME/bulk/echog-official-ro/official}
 export SCMG_J=39 SCMG_LOCAL_MIRROR=${SCMG_LOCAL_MIRROR:-$HOME/bulk/cpfs-mirror} CUDA_VISIBLE_DEVICES=$GPU PYTHONDONTWRITEBYTECODE=1
 export OMP_NUM_THREADS=4 MKL_NUM_THREADS=4

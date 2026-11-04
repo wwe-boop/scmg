@@ -158,6 +158,7 @@ def cmd_extract(a):
     stems = [s for f in ('train_drop', 'val_common') for s in (Path(a.meta) / 'splits' / f'{f}.txt').read_text().split()]
     if a.limit: stems = stems[:a.limit] if not a.stems else stems
     if a.stems: stems = [s for s in a.stems.split(',')]
+    if a.available: stems = [s for s in stems if (Path(a.data) / 'audio' / f'{s}.wav').exists()]   # partial downloads
     out = Path(a.work) / 'items'; out.mkdir(parents=True, exist_ok=True)
     jobs = [(s, a.data, al[s], str(out)) for s in stems]
     import multiprocessing as mp
@@ -232,8 +233,12 @@ def cmd_assemble(a):
     recs = {}
     for s in tr + te:
         p = work / 'items' / f'{s}.npz.json'
-        if not p.exists(): raise SystemExit(f'missing extraction for {s}')
+        if not p.exists():
+            if a.allow_missing: continue
+            raise SystemExit(f'missing extraction for {s}')
         recs[s] = json.loads(p.read_text())
+    if a.allow_missing:                                   # TRIAL views only (pipeline test before all audio is there)
+        tr = [s for s in tr if s in recs]; te = [s for s in te if s in recs]
     al = aligned(a.meta)
     for s in tr + te:
         if recs[s]['n30'] != al[s]: raise ValueError(f'{s}: n30 != aligned_frames')
@@ -326,6 +331,8 @@ def main():
     ap.add_argument('--data', default='/mnt/bulk/zehan/echog-dataset/ds'); ap.add_argument('--meta', default='/mnt/bulk/zehan/echog-dataset/official-meta')
     ap.add_argument('--work', required=True); ap.add_argument('--out'); ap.add_argument('--stats')
     ap.add_argument('--workers', type=int, default=20); ap.add_argument('--limit', type=int, default=0); ap.add_argument('--stems', default='')
+    ap.add_argument('--allow-missing', action='store_true', help='assemble: TRIAL view from the stems extracted so far')
+    ap.add_argument('--available', action='store_true', help='extract only stems whose audio is already present')
     ap.add_argument('--campplus', default='/home/xr-25b7/bulk/models-ro/campplus')
     ap.add_argument('--mjcf', default='/mnt/bulk/zehan/echog-dataset/assets-x/assets/unitree_g1/g1_mocap_29dof.xml')
     ap.add_argument('--canonical', default='/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/echog-g1-v1', help='CPFS path recorded in META/STATS')
