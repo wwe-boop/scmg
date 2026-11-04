@@ -99,7 +99,8 @@ def main():
                         representation_schema='projecthermes-g1-39d-standard-v2', source=stem,
                         generator=dict(ckpt=str(a.ckpt), seed=a.seed, steps=a.steps, cfg_w=a.cfg_w, frames50=L, noise_scale=a.noise_scale, no_spk=a.no_spk, smooth=a.smooth, smooth_legs=a.smooth_legs,
                                        resample='scmg/g1.py to30 (cubic / heading spline / RotationSpline)',
-                                       **({} if proto is None else dict(stream=proto)))), o)
+                                       **({} if proto is None else dict(stream=proto)))), o.with_suffix('.pt.tmp'))
+        os.replace(o.with_suffix('.pt.tmp'), o)      # atomic: an interrupted run never leaves a truncated <stem>.pt that a resume skips
         if a.save50: np.save(out / f'{stem}.q50.npy', q50.astype(np.float32))
         log.append(dict(stem=stem, frames50=L, frames30=n30, tick_ms_p50=float(np.median(tk[1:]) * 1e3) if len(tk) > 1 else None))
         if k % 20 == 0: print(f'{k + 1}/{len(stems)} {stem} L50={L} n30={n30} {time.time() - t0:.0f}s', flush=True)
