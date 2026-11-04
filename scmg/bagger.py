@@ -3,7 +3,7 @@ import json
 from pathlib import Path
 import numpy as np
 import torch
-from .common import CHUNK_FRAMES, J, FEAT, TEXT_DIM, SPK, N_SOURCE
+from .common import CHUNK_FRAMES, J, FEAT, TEXT_DIM, SPK, N_SOURCE, P
 
 SOURCE_ID = N_SOURCE - 1
 
@@ -39,7 +39,7 @@ class BaggerPool:
         if ds.v.tts is not None: raise ValueError('BAgger does not support TTS hidden conditioning')
         if ds.T % CHUNK_FRAMES: raise ValueError('BAgger windows must be chunk aligned')
         for root in str(roots).split(':'):
-            p = Path(root)
+            p = Path(P(root))   # local mirror on the 5090 host (sshfs CPFS reads stall the loaders)
             meta = json.loads((p / 'MANIFEST.json').read_text())
             if meta['source'] != 'bagger_reversed' or meta['split'] != 'train':
                 raise ValueError('only training BAgger collections may be aggregated')
