@@ -135,7 +135,8 @@ class View:
         if text_cache:
             tc = Path(P(text_cache))
             feat = np.load(tc / 'TEXT_FEAT.npy', mmap_mode=mode)
-            prep = json.loads((tc / 'PREP.json').read_text())
+            # PREP.json is optional for legacy / ad-hoc caches (old e5 path must keep working); LLM caches always write it.
+            prep = json.loads((tc / 'PREP.json').read_text()) if (tc / 'PREP.json').is_file() else {}
             self.text_dim = int(feat.shape[1])
             if 'hidden_size' in prep and int(prep['hidden_size']) != self.text_dim:
                 raise ValueError(f'text cache PREP.hidden_size={prep["hidden_size"]} but TEXT_FEAT has {self.text_dim} dims')
