@@ -22,8 +22,8 @@ else TP=; fi
 evalq() {  # <ckpt> <label>
   if [ "${ROLLOUT_ONLY:-0}" = 1 ]; then         # stillness curve only: rollout 20 clips, seeds 0/1, offline + engine
     mkdir -p $R/$o/curve
-    for s in 0 1; do ROLLOUT_SEED=$s ROLLOUT_WINDOW_LM_TEXT=1 $PY scripts/rollout_probe.py $VAE $2=$1@${CFGW:-2.5} >> $R/$o/curve/offline.jsonl 2>> $R/$o/curve/probe.log
-      ROLLOUT_SEED=$s ROLLOUT_TEXT_MODE=x2 ROLLOUT_X2_LAG=0.15 ROLLOUT_H=2 $PY scripts/rollout_probe.py $VAE $2=$1@${CFGW:-2.5} >> $R/$o/curve/engine.jsonl 2>> $R/$o/curve/probe.log; done
+    local sd; for sd in 0 1; do ROLLOUT_SEED=$sd ROLLOUT_WINDOW_LM_TEXT=1 $PY scripts/rollout_probe.py $VAE $2=$1@${CFGW:-2.5} >> $R/$o/curve/offline.jsonl 2>> $R/$o/curve/probe.log
+      ROLLOUT_SEED=$sd ROLLOUT_TEXT_MODE=x2 ROLLOUT_X2_LAG=0.15 ROLLOUT_H=2 $PY scripts/rollout_probe.py $VAE $2=$1@${CFGW:-2.5} >> $R/$o/curve/engine.jsonl 2>> $R/$o/curve/probe.log; done
     log "CURVE_DONE $2"; return
   fi
   for P in offline engine; do QUICK=1 NOVOX=1 bash $CODE/scripts/baseline_eval.sh $gpu $R/$o/eval $2 $1 $P probes ${CFGW:-2.5} || log "QUICK_FAILED $2 $P"; done
