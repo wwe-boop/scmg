@@ -4,22 +4,32 @@
 # Fine-tunes r4 base (base stage, lr 1e-4) with EMA snapshots every SNAP steps; every snapshot (and final.pt) gets the
 # QUICK baseline protocol (rollout 20 clips + semantic 60 clips, seed 0, offline AND engine-streaming); final.pt also gets
 # the full tier (FGD gen + rollout/semantic seeds 0/1).  Inference fixes are default-on in the code.
+# PROFILE=g1 (11-04): the same lane on the ECHO-G G1 view (scripts/lane_profile.sh; INIT + VAE required). Evaluation there:
+# rollout/stillness probe (dev split, arms only) offline + engine for every snapshot and final.pt; with G1_BENCH=1 final.pt
+# also runs the official ECHO-G benchmark on val_common (scripts/echog_g1/bench.sh; G1_BENCH_STEMS = stem list, default
+# all 3,242; seeds G1_BENCH_SEEDS, default 0 1) offline AND engine.
 set -uo pipefail
 gpu=$1; R=$2; o=$3; cf=$4; scj=$5; ST=${6:-6000}; SNAP=${SNAP:-2000}
 CODE=$(cd "$(dirname "$0")/.." && pwd); cd $CODE
 export PYTHONPATH=$CODE${PYTHONPATH_EXTRA:+:$PYTHONPATH_EXTRA} USE_TF=0 OMP_NUM_THREADS=${OMP_NUM_THREADS:-4} CUDA_VISIBLE_DEVICES=$gpu
-export SCMG_TEXT_CAUSAL=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models/text-e5-causal-v36_1
-PY=${PY:-python}; B=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg; D=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg
-INIT=${INIT:-$B/dlc-scmg-train-r4-1102/base/best.pt}; VAE=$B/trained/vae-r3/final.pt; SEMMAN=$B/semantic-recognizer-v1/manifest-n200
+PY=${PY:-python}
+source $CODE/scripts/lane_profile.sh
 mkdir -p $R/$o; log(){ echo "$(date -Is) $*" >> $R/$o/lane.log; }
 if [ ! -f $R/$o/DONE.json ]; then
-  $PY -m scmg.train --out $R/$o --init $INIT --stats $D/STATS_v36_1.json --text-cache $D/text-e5-v36_1 --vae $VAE --workers ${WORKERS:-6} \
-    --tok-cache $D/tok-qwen25-v36_1 --tok-intent $B/models/intent-qwen25-v36_1 --intent-frames $B/models/intent-frames-v36_1 \
-    --holdout $SEMMAN/MANIFEST.json --semsynth-share ${SEMSHARE:-0.4} --batch ${BATCH:-64} --stage base --steps $ST --lr ${LR:-1e-4} \
+  $PY -m scmg.train --out $R/$o --init $INIT "${DATA_ARGS[@]}" --vae $VAE --workers ${WORKERS:-6} \
+    --semsynth-share ${SEMSHARE:-0.4} --batch ${BATCH:-64} --stage base --steps $ST --lr ${LR:-1e-4} \
     --warmup 200 --eval-every 1000 --snap-every $SNAP --seed ${TRAIN_SEED:-0} --cfg "$cf" --sc "$scj" ${BAGGER_DIR:+--bagger-dir $BAGGER_DIR --bagger-share ${BAGGER_SHARE:-0.33}} >> $R/$o/log.txt 2>&1 &
   TP=$!; log "TRAIN_START pid $TP"
 else TP=; fi
 evalq() {  # <ckpt> <label>
+  if [ "${PROFILE:-ex002}" = g1 ]; then          # G1: stillness / speed probe on the dev split, offline + engine
+    mkdir -p $R/$o/probe
+    local sd; for sd in ${PROBE_SEEDS:-0}; do
+      ROLLOUT_SEED=$sd ROLLOUT_VIEW=$VIEW ROLLOUT_STATS=$STATS ROLLOUT_TEXT=$TEXT $PY scripts/rollout_probe.py $VAE $2=$1@${CFGW:-2.5} >> $R/$o/probe/offline.jsonl 2>> $R/$o/probe/probe.log || log "PROBE_FAILED $2 offline"
+      ROLLOUT_SEED=$sd ROLLOUT_VIEW=$VIEW ROLLOUT_STATS=$STATS ROLLOUT_TEXT=$TEXT ROLLOUT_TEXT_MODE=x2 ROLLOUT_X2_LAG=0.15 ROLLOUT_H=2 \
+        $PY scripts/rollout_probe.py $VAE $2=$1@${CFGW:-2.5} >> $R/$o/probe/engine.jsonl 2>> $R/$o/probe/probe.log || log "PROBE_FAILED $2 engine"; done
+    log "PROBE_DONE $2"; return
+  fi
   if [ "${ROLLOUT_ONLY:-0}" = 1 ]; then         # stillness curve only: rollout 20 clips, seeds 0/1, offline + engine
     mkdir -p $R/$o/curve
     local sd; for sd in 0 1; do ROLLOUT_SEED=$sd ROLLOUT_WINDOW_LM_TEXT=1 $PY scripts/rollout_probe.py $VAE $2=$1@${CFGW:-2.5} >> $R/$o/curve/offline.jsonl 2>> $R/$o/curve/probe.log
@@ -44,5 +54,15 @@ done
 [ -f $R/$o/final.pt ] || { log "NO_FINAL"; exit 1; }
 rm -f $R/$o/resume.pt
 [ "${ROLLOUT_ONLY:-0}" = 1 ] && { evalq $R/$o/final.pt final; log "LANE_DONE"; exit 0; }
+if [ "${PROFILE:-ex002}" = g1 ]; then
+  evalq $R/$o/final.pt final
+  if [ "${G1_BENCH:-0}" = 1 ]; then
+    for P in offline engine; do for sd in ${G1_BENCH_SEEDS:-0 1}; do
+      GPUS=$gpu CFGW=${CFGW:-2.5} bash $CODE/scripts/echog_g1/bench.sh scmg $R/$o/final.pt $VAE $R/$o/bench/$P/seed_$(printf %03d $sd) $P $sd ${G1_BENCH_STEMS:-} \
+        >> $R/$o/bench.log 2>&1 && log "BENCH_DONE $P s$sd" || log "BENCH_FAILED $P s$sd"
+    done; done
+  fi
+  log "LANE_DONE"; exit 0
+fi
 for P in offline engine; do for part in fgd probes; do NOVOX=1 bash $CODE/scripts/baseline_eval.sh $gpu $R/$o/eval final $R/$o/final.pt $P $part ${CFGW:-2.5} || log "FULL_FAILED $P $part"; done; done
 log "LANE_DONE"

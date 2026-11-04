@@ -7,7 +7,13 @@ For N dev clips (offline, generation seed 0) every model is rolled out twice:
 Reported per mode (frames within 2 of a chunk boundary excluded from the motion statistics):
   speed     mean arm speed / GT;  still  fraction of frames slower than 0.25 x GT median speed
   copy      mean ||gen chunk k - history chunk k-1|| / mean ||GT chunk k - GT chunk k-1|| in latent space
-            (history = own chunk k-1 for free, GT chunk k-1 for oracle; << 1 = the model repeats what it was shown)"""
+            (history = own chunk k-1 for free, GT chunk k-1 for oracle; << 1 = the model repeats what it was shown)
+Speed / stillness use the ARM joints of the embodiment only (scmg.common.ARMS): EX002 channels 4..17 of 34; ECHO-G G1
+channels 25..38 of 39 (left + right arm 7 each). G1 legs (10..21), waist (22..24) and root (0..9: 6D orientation, yaw
+change, root velocity) are NOT part of speed / still. The copy ratio is in latent space (all channels).
+Data (11-04): EX002 defaults (v36_1 val split, 43-clip scan). Other embodiments need explicit ROLLOUT_VIEW / ROLLOUT_STATS /
+ROLLOUT_TEXT (view, stats, e5 cache; dev split 'val' -- never the test view); ROLLOUT_SCAN = clips scanned (default 43),
+ROLLOUT_NCLIP = clips used (default 20). Engine mode (ROLLOUT_TEXT_MODE=x2) needs SCMG_TEXT_CAUSAL of the same rows."""
 import argparse, json, sys
 import numpy as np, torch
 import os
@@ -15,12 +21,18 @@ from scmg.data import View, WindowDataset, clip_lm_capacity
 from scmg.token_cache import checkpoint_config, resolve_token_cache
 from scmg.evaluate import load, ARMS
 from scmg.infer import Streamer
-from scmg.common import CHUNK, CHUNK_FRAMES, U80
+from scmg.common import CHUNK, CHUNK_FRAMES, U80, EMBODIMENT, ARMS as ARMS_EMB
+from scmg.data import VIEW
 D = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg'; dev = 'cuda'
-st = json.load(open(D + '/STATS_v36_1.json')); qm, qs = np.array(st['q_mean'], np.float32), np.array(st['q_std'], np.float32)
+if ARMS != ARMS_EMB: raise RuntimeError('evaluate.ARMS differs from the embodiment arm joints')
+_EX = EMBODIMENT == 'ex002'
+_need = lambda k, d: os.environ.get(k) or (d if _EX else sys.exit(f'{k} is required for embodiment {EMBODIMENT} (no EX002 default)'))
+R_VIEW = _need('ROLLOUT_VIEW', VIEW); R_STATS = _need('ROLLOUT_STATS', D + '/STATS_v36_1.json'); R_TEXT = _need('ROLLOUT_TEXT', D + '/text-e5-v36_1')
+SCAN = int(os.environ.get('ROLLOUT_SCAN', '43'))
+st = json.load(open(R_STATS)); qm, qs = np.array(st['q_mean'], np.float32), np.array(st['q_std'], np.float32)
 ap = argparse.ArgumentParser(); ap.add_argument('vae'); ap.add_argument('models', nargs='+')
 ap.add_argument('--tok-cache'); args = ap.parse_args()
-VAE = args.vae; NCLIP = 20
+VAE = args.vae; NCLIP = int(os.environ.get('ROLLOUT_NCLIP', '20'))
 WIN = os.environ.get('ROLLOUT_WINDOW_LM_TEXT') == '1'   # 11-03 review: windowed LM text (training protocol) for VoxCPM
 TM = os.environ.get('ROLLOUT_TEXT_MODE', 'final')      # 11-03 user: deployment text streams word by word -> x2 (+ deploy timing, windowed LM)
 X2_LAG = float(os.environ.get('ROLLOUT_X2_LAG', '0.15'))
@@ -32,8 +44,8 @@ if TM != 'final': WIN = True
 
 
 def clips(tok):
-    v = View(split='val', stats=st, mmap=True, text_cache=D + '/text-e5-v36_1', tok_cache=tok); out = []
-    for ci in range(43):
+    v = View(R_VIEW, split='val', stats=st, mmap=True, text_cache=R_TEXT, tok_cache=tok); out = []
+    for ci in range(min(SCAN, len(v.clips))):
         nch = min(v.clips[ci]['frames'] // CHUNK_FRAMES, 40)
         if nch < 8: continue
         s = WindowDataset(v, nch * CHUNK_FRAMES, max_tokens=256, max_ids=clip_lm_capacity(v, ci) if WIN else 160).sample(ci, 0, np.random.default_rng(ci))
@@ -82,6 +94,8 @@ for spec in args.models:
     tok = resolve_token_cache(cfg, args.tok_cache)
     m, vae = load(ck, VAE, dev); m.eval()
     if tok not in cache: cache[tok] = clips(tok)
-    r = dict(protocol=dict(text_mode=TM, x2_lag=X2_LAG, H=_H, seed=SEED, fix=FIX, window=WIN, refresh=RF), label=lab, free=run(m, vae, cache[tok], w, False), oracle=run(m, vae, cache[tok], w, True))
+    pr = dict(text_mode=TM, x2_lag=X2_LAG, H=_H, seed=SEED, fix=FIX, window=WIN, refresh=RF)
+    if not _EX: pr.update(embodiment=EMBODIMENT, view=R_VIEW, clips=len(cache[tok]), still_joints=f'arms {ARMS[0]}..{ARMS[-1]}')
+    r = dict(protocol=pr, label=lab, free=run(m, vae, cache[tok], w, False), oracle=run(m, vae, cache[tok], w, True))
     print(json.dumps(r), flush=True)
     del m; torch.cuda.empty_cache()

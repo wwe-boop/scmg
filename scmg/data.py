@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from .common import J, FEAT, SPK, TEXT_DIM, STRIDE, CHUNK_FRAMES, P
+from .common import J, FEAT, SPK, TEXT_DIM, STRIDE, CHUNK_FRAMES, P, EMBODIMENT
 
 VIEW = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/train-v1-20261101/views/data-v36_1'
 SEMSYNTH = ('semsynth_r7p1',)
@@ -98,7 +98,8 @@ class View:
         self.q = np.load(v / 'train_q.npy', mmap_mode=mode)
         # frames inside retargeting jumps (BEAT2 only, scripts/glitch_audit.py; jump frame +-1) are excluded from losses
         gm = Path(P('/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/glitch-audit/GLITCH_MASK.npy'))
-        self.glitch = np.load(gm, mmap_mode='r') if (gm.exists() and os.environ.get('SCMG_NO_GLITCH') != '1') else None   # data ablation switch
+        self.glitch = np.load(gm, mmap_mode='r') if (gm.exists() and os.environ.get('SCMG_NO_GLITCH') != '1'
+                                                     and EMBODIMENT == 'ex002') else None   # data ablation switch; EX002 rows only
         if self.glitch is not None and len(self.glitch) != len(self.q):
             # the mask is row-aligned with data-v36_1 only: another view (e.g. echog-g1-v1) must not index it (11-04)
             print(f'View {v.name}: GLITCH_MASK rows {len(self.glitch)} != {len(self.q)} view rows -> not used', flush=True)
@@ -169,10 +170,23 @@ class View:
             if len(self.intent) != len(self.q): raise ValueError('INTENT_FRAMES rows != train_q rows')
             from .semclass import coarse_lut
             self.gest_lut = coarse_lut(json.loads((v / 'VOCAB.json').read_text()))
+        if EMBODIMENT != 'ex002': self._refuse_foreign_assets(v, holdout, tok_cache, tok_intent, intent_frames)
         self.tts = None
         if tts_hidden:                                  # Qwen3-TTS Talker hidden states (opt-in conditioning, 11-03)
             tr = Path(P(tts_hidden))
             self.tts = dict(root=tr, index=load_tts_index(tr))
+
+    def _refuse_foreign_assets(self, v, holdout, tok_cache, tok_intent, intent_frames):
+        """Non-EX002 views (G1, 11-04): the EX002 side assets (semantic holdout manifest, Qwen2.5 token / intent caches,
+        frame intent track) are keyed by EX002 item / clip ids. On another view they would silently match nothing (an
+        empty holdout, empty LM ids) -> refuse instead of training on a silently changed condition set."""
+        if holdout is not None and not self.holdout.any():
+            raise ValueError(f'holdout {holdout} matches no clip of {v.name} (EX002 manifest on a {EMBODIMENT} view?)')
+        if self.tok is not None:
+            cov = np.mean([str(it['id']) in self.tok['index'] for it in self.items]) if self.items else 0.
+            if cov < 0.5: raise ValueError(f'token cache {tok_cache} covers {cov:.0%} of {v.name} items (EX002 cache on a {EMBODIMENT} view?)')
+        if intent_frames is not None or tok_intent is not None:
+            raise ValueError(f'intent tracks / word intent labels exist for EX002 only (view {v.name}, embodiment {EMBODIMENT})')
 
     def tts_array(self, item_id):
         """[codec, 2048] fp16 memory map of one item's TTS hidden states, or None (no export)."""

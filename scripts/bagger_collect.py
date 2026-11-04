@@ -11,7 +11,7 @@ from pathlib import Path
 import time
 import numpy as np
 import torch
-from scmg.common import CHUNK, CHUNK_FRAMES
+from scmg.common import CHUNK, CHUNK_FRAMES, EMBODIMENT
 from scmg.data import View, WindowDataset, clip_lm_capacity, VIEW
 from scmg.evaluate import load
 from scmg.infer import Streamer
@@ -29,18 +29,31 @@ def atomic_json(path, data):
 def parse():
     p = argparse.ArgumentParser()
     p.add_argument('--ckpt', required=True); p.add_argument('--out', type=Path, required=True)
-    p.add_argument('--vae', default=B + '/trained/vae-r3/final.pt')
-    p.add_argument('--view', default=VIEW); p.add_argument('--stats', default=D + '/STATS_v36_1.json')
-    p.add_argument('--text-cache', default=D + '/text-e5-v36_1')
-    p.add_argument('--tok-cache', default=D + '/tok-qwen25-v36_1')
-    p.add_argument('--holdout', default=B + '/semantic-recognizer-v1/manifest-n200/MANIFEST.json')
+    # EX002 defaults (unchanged); other embodiments (SCMG_J=39 = ECHO-G G1) get NO defaults: --vae/--view/--stats/
+    # --text-cache must be given, --tok-cache/--holdout default to none ('none' also switches them off explicitly)
+    p.add_argument('--vae', default=None); p.add_argument('--view', default=None); p.add_argument('--stats', default=None)
+    p.add_argument('--text-cache', default=None)
+    p.add_argument('--tok-cache', default=None)
+    p.add_argument('--holdout', default=None)
     p.add_argument('--cond', choices=['null', 'reverse'], required=True)
     p.add_argument('--count', type=int, default=2000); p.add_argument('--n-gen', type=int, default=23)
     p.add_argument('--seed-chunks', type=int, default=1); p.add_argument('--seed', type=int, default=0)
     p.add_argument('--cfg-w', type=float, default=None, help='checkpoint cfg_w, otherwise established lane value 2.0')
     p.add_argument('--shard', type=int, default=0); p.add_argument('--shards', type=int, default=1)
     p.add_argument('--dry-run', action='store_true')
-    return p.parse_args()
+    a = p.parse_args()
+    ex002 = dict(vae=B + '/trained/vae-r3/final.pt', view=VIEW, stats=D + '/STATS_v36_1.json', text_cache=D + '/text-e5-v36_1',
+                 tok_cache=D + '/tok-qwen25-v36_1', holdout=B + '/semantic-recognizer-v1/manifest-n200/MANIFEST.json')
+    for k, v in ex002.items():
+        if getattr(a, k) is None:
+            if EMBODIMENT == 'ex002': setattr(a, k, v)
+            elif k in ('tok_cache', 'holdout'): setattr(a, k, 'none')
+            else: p.error(f'--{k.replace("_", "-")} is required for embodiment {EMBODIMENT} (no EX002 default)')
+        elif EMBODIMENT != 'ex002' and getattr(a, k) == v:
+            p.error(f'--{k.replace("_", "-")} {v} is an EX002 asset (embodiment {EMBODIMENT})')
+    for k in ('tok_cache', 'holdout'):
+        if getattr(a, k) == 'none': setattr(a, k, None)
+    return a
 
 
 @torch.no_grad()
