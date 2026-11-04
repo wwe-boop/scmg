@@ -23,6 +23,8 @@ ap.add_argument('--view', default='/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/
 ap.add_argument('--stats', default='/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/STATS_echog_g1_v1.json')
 ap.add_argument('--steps', type=int, default=3000); ap.add_argument('--batch', type=int, default=64); ap.add_argument('--frames', type=int, default=256)
 ap.add_argument('--lr', type=float, default=1e-4); ap.add_argument('--w-foot', type=float, default=1.0); ap.add_argument('--ema', type=float, default=0.999)
+ap.add_argument('--vae-w-vel', type=float, default=None, help='override the VAE velocity-L1 weight (default: checkpoint value 0.3)')
+ap.add_argument('--vae-w-acc', type=float, default=None, help='override the VAE acceleration-L1 weight (default 0.1): fidelity of accelerations / jerk')
 ap.add_argument('--w-jerk', type=float, default=0.0, help='per-channel jerk-energy matching (sign-free, counters decoder over-smoothing)')
 ap.add_argument('--workers', type=int, default=6); ap.add_argument('--seed', type=int, default=0); ap.add_argument('--log-every', type=int, default=50)
 a = ap.parse_args()
@@ -32,6 +34,9 @@ vck = torch.load(a.vae, map_location='cpu')
 vae = MotionVAE(**vck['cfg']).to(dev); vae.load_state_dict(vck['ema'])
 if getattr(vae, 'identity', False): raise SystemExit('identity codec has no decoder to fine-tune')
 for p in vae.enc.parameters(): p.requires_grad_(False)
+if a.vae_w_vel is not None: vae.w_vel = a.vae_w_vel
+if a.vae_w_acc is not None: vae.w_acc = a.vae_w_acc
+print('decoder FT: w_vel', vae.w_vel, 'w_acc', vae.w_acc, 'w_foot', a.w_foot, 'w_jerk', a.w_jerk, flush=True)
 dec = [p for p in vae.dec.parameters()]
 ema = copy.deepcopy(vae).eval().requires_grad_(False)
 stats = json.loads(Path(a.stats).read_text())
@@ -68,5 +73,5 @@ for step in range(1, a.steps + 1):
 # the encoder is untouched: its weights in the EMA copy are the original ones; latent statistics are copied
 assert all(torch.equal(pe, pm) for pe, pm in zip(ema.enc.parameters(), vae.enc.parameters()))
 d = dict(cfg=vck['cfg'], model=vae.state_dict(), ema=ema.state_dict(), step=a.steps, vae_cfg=vck.get('vae_cfg', vck['cfg']),
-         lat_mean=vck['lat_mean'], lat_std=vck['lat_std'], decoder_ft=dict(source=a.vae, w_foot=a.w_foot, w_jerk=a.w_jerk, steps=a.steps, lr=a.lr))
+         lat_mean=vck['lat_mean'], lat_std=vck['lat_std'], decoder_ft=dict(source=a.vae, w_foot=a.w_foot, w_jerk=a.w_jerk, w_vel=vae.w_vel, w_acc=vae.w_acc, steps=a.steps, lr=a.lr))
 tmp = out / 'final.pt.tmp'; torch.save(d, tmp); tmp.replace(out / 'final.pt'); print('wrote', out / 'final.pt')
