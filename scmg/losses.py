@@ -58,6 +58,9 @@ class StageCfg:
                                    # sphere proxy, scmg/kinematics.py); boundary continuity is the existing w_cont term
     phys_frames: int = 256         # frames per step that go through FK / collision (random subset of the decoded targets)
     phys_pairs: int = 40000        # sphere pairs per step (random subset; unbiased up to a constant)
+    phys_dyn_w: float = 1.0        # 11-04 landing L1: weight of the velocity/acc/jerk term inside w_phys (0 = joint limits +
+                                   # self-collision only; the full term made the upper arm ~20% smaller than the human)
+    phys_coll_w: float = 1.0       # weight of the self-collision term inside w_phys
     p_async: float = 0.0           # ADSC: among STREAMING samples, probability that the text also streams (else text final);
                                    # streaming samples never see timing of not-yet-voiced tokens (offline samples do)
     p_async_seg: float = 0.3       # text arrival unit: TTS segment (robot TTS / sentence-level engines) vs X2Streaming-TTS
@@ -481,7 +484,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         loss = loss + sc.w_cont * (rl['rec'] + 0.3 * rl['vel'] + 0.1 * rl['acc'])
         if sc.w_phys > 0:
             out.update(phys_reg(y, fv * w_inst[:, None], qm, qs, sc))
-            loss = loss + sc.w_phys * (out['phys_joint'] + out['phys_dyn'] + out['phys_coll'])
+            loss = loss + sc.w_phys * (out['phys_joint'] + sc.phys_dyn_w * out['phys_dyn'] + sc.phys_coll_w * out['phys_coll'])
         if sc.w_rhy > 0:
             yt = y[:, CHUNK_FRAMES:].reshape(B, K * CHUNK_FRAMES, Jn)
             gt = gt_frames[:, CHUNK_FRAMES:].reshape(B, K * CHUNK_FRAMES, Jn)
