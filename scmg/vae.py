@@ -47,8 +47,20 @@ class MotionVAE(nn.Module):
     """Plain causal conv VAE (r3). The first design (residual stacks + stride-2 pairs) got stuck outputting the global
     mean pose even when over-fitting one batch (debug_vae*.py); this flat design fits it (L1 0.11 in 300 steps)."""
 
-    def __init__(self, z=16, c=384, stride=STRIDE, beta=1e-3, w_vel=0.3, w_acc=0.1, w_accmag=0.0, dim_mask=(), j=None, ch_w=()):
+    def __init__(self, z=16, c=384, stride=STRIDE, beta=1e-3, w_vel=0.3, w_acc=0.1, w_accmag=0.0, dim_mask=(), j=None, ch_w=(),
+                 identity=False):
         super().__init__()
+        # 11-04 'identity' codec (ECHO-G generates in the raw robot space; our VAE alone doubles contact sliding and removes a
+        # quarter of the jerk): a latent is the STRIDE consecutive normalised frames concatenated, z = STRIDE * J, lossless and
+        # strictly causal (latent i = frames S*i .. S*i+S-1; the conv VAE decoder looks one latent ahead). No parameters.
+        self.identity = bool(identity)
+        if self.identity:
+            if j is not None and j != J: raise ValueError(f'codec built for {j} motion channels, environment has SCMG_J={J}')
+            if stride != STRIDE: raise ValueError(f'codec built for SCMG_STRIDE={stride}, environment has {STRIDE}')
+            if z != STRIDE * J: raise ValueError(f'identity codec needs z = STRIDE * J = {STRIDE * J}, got {z}')
+            if dim_mask or ch_w: raise ValueError('identity codec: dim_mask / ch_w do not apply')
+            self.z, self.stride, self.c, self.dim_mask, self.ch_w = z, stride, c, (), ()
+            return
         if j is not None and j != J: raise ValueError(f'VAE built for {j} motion channels, environment has SCMG_J={J}')
         if stride != STRIDE: raise ValueError(f'VAE built for SCMG_STRIDE={stride}, environment has {STRIDE}')
         self.z, self.stride, self.c = z, stride, c
@@ -80,18 +92,25 @@ class MotionVAE(nn.Module):
 
     def encode(self, x):
         """x [B, T, J] (T multiple of 4) -> mu, logvar [B, T/4, Z]."""
+        if self.identity:
+            B, T, _ = x.shape
+            if T % STRIDE: raise ValueError(f'identity codec: {T} frames not a multiple of {STRIDE}')
+            mu = x.reshape(B, T // STRIDE, STRIDE * J)
+            return mu, torch.full_like(mu, -12.)
         if self.dim_mask: x = x * self.dim_keep
         mu, lv = self.enc(x.transpose(1, 2)).chunk(2, 1)
         return mu.transpose(1, 2), lv.clamp(-12, 6).transpose(1, 2)
 
     def decode(self, z):
         """z [B, N, Z] -> x [B, 4N, J]."""
+        if self.identity: return z.reshape(z.shape[0], z.shape[1] * STRIDE, J)
         y = self.dec(z.transpose(1, 2)).transpose(1, 2)
         return y * self.dim_keep if self.dim_mask else y
 
     def forward(self, x, mask=None, beta=None, w=None, deriv=1.0):
         """deriv in [0, 1]: weight ramp of the velocity/acceleration terms. At full weight from step 0 they dominate the
         noisy initial output and the net escapes them by emitting a constant pose (stuck at the mean, KL collapses)."""
+        if self.identity: raise RuntimeError('the identity codec has nothing to train')
         mu, lv = self.encode(x)
         z = mu + deriv * torch.randn_like(mu) * (0.5 * lv).exp()      # sampling noise ramps in with the same schedule
         y = self.decode(z)
