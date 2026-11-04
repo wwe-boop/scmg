@@ -72,6 +72,9 @@ class StageCfg:
     self_force_cfg: float = 0.0   # >0: joint audio/text CFG; local null-audio visibility matches Streamer(cfg_null_fix=True)
     self_force_mix: float = 0.0   # per round, independently replace each generated chunk with GT with this probability
     self_force_noise: float = 0.0 # Gaussian std in normalised latent space; applied before GT mixing / padding restore
+    dim_mask: tuple = ()           # 11-04 ECHO-G G1 'leg masking' report lane (default off): motion channels with ZERO weight in
+                                   # the decoded-motion losses (w_cont / rhythm unaffected: arms only); pair with the VAE's
+                                   # dim_mask so the latents do not carry them at all (view META.json lists legs / root indices)
 
 
 def logit_normal(n, device, generator=None):
@@ -458,7 +461,10 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         fv = fv * (kk.view(M) >= 4).float()[:, None]                                  # needs 4 chunks of history
         if supervise is not None: fv = fv * supervise.reshape(M, 1)
         w_inst = t[:, -1]                                                             # trust low-noise estimates more
-        rl = recon_losses(y[:, CHUNK_FRAMES - 4:], gt_frames[:, CHUNK_FRAMES - 4:], fv[:, CHUNK_FRAMES - 4:] * w_inst[:, None])
+        dw = None
+        if sc.dim_mask:
+            dw = torch.ones(Jn, device=dev); dw[list(sc.dim_mask)] = 0.
+        rl = recon_losses(y[:, CHUNK_FRAMES - 4:], gt_frames[:, CHUNK_FRAMES - 4:], fv[:, CHUNK_FRAMES - 4:] * w_inst[:, None], dw)
         out.update({f'cont_{k}': v_ for k, v_ in rl.items()})
         loss = loss + sc.w_cont * (rl['rec'] + 0.3 * rl['vel'] + 0.1 * rl['acc'])
         if sc.w_phys > 0:
@@ -493,7 +499,8 @@ def phys_reg(y, fw, qm, qs, sc):
     Returns phys_joint (hardware-limit hinge^2), phys_dyn (|v|,|a|,|j| beyond the robot's limits, relative, hinge^2),
     phys_coll (self-penetration^2 in cm^2 over a random frame / pair subset)."""
     import json, os
-    from .common import CPFS
+    from .common import CPFS, require_ex002
+    require_ex002('StageCfg.w_phys (EX002 limits + FK collision proxy)')
     from .data import VIEW
     from .kinematics import Kinematics
     from .safety import limits34

@@ -22,7 +22,21 @@ if STRIDE not in (2, 4): raise ValueError('SCMG_STRIDE must be 2 or 4')
 CHUNK_FRAMES = 16          # a motion chunk is always 320 ms
 CHUNK = CHUNK_FRAMES // STRIDE   # latents per chunk (4 at 12.5 Hz, 8 at 25 Hz)
 U80 = 4 // STRIDE          # latents per 80 ms: audio horizons / CLI horizons are given in 80 ms units
-J = 34                     # EX002 joints in the training view (waist 2, head 2, arms 2x7, three-finger hands 2x8)
+J = int(os.environ.get('SCMG_J', '34'))   # motion channels per frame. 34 = EX002 joints in the training view (waist 2,
+                           # head 2, arms 2x7, three-finger hands 2x8; default, unchanged); 39 = ECHO-G Unitree G1 robot_repr
+                           # (scmg/g1.py: root 10 + 29 joints, view echog-g1-v1). Set SCMG_J before importing scmg.
+EMBODIMENT = {34: 'ex002', 39: 'g1'}.get(J)
+if EMBODIMENT is None: raise ValueError(f'SCMG_J={J}: supported are 34 (EX002) and 39 (ECHO-G G1)')
+# arm joints (rhythm loss, speed / trajectory metrics, execution-deviation simulator)
+ARMS = list(range(4, 18)) if EMBODIMENT == 'ex002' else list(range(25, 39))
+
+
+def require_ex002(what):
+    """EX002-only code (kinematics / collision proxy / MuJoCo sim / hardware limits / phys losses) must never run on
+    another embodiment's channels: refuse instead of silently interpreting G1 channels as EX002 joints."""
+    if EMBODIMENT != 'ex002':
+        raise RuntimeError(f'{what} is defined for the EX002 34-joint layout only (SCMG_J={J}, embodiment {EMBODIMENT}); '
+                           'switch it off for this view')
 FEAT = 89                  # 80 mel + 8 prosody (onset, prominence, energy, logf0, voiced, beat, beat_left, beat_right) + valid
 SPK = 192                  # CAM++ speaker embedding
 TEXT_DIM = 768             # multilingual-e5-base token features (frozen semantic encoder)

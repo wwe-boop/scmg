@@ -15,7 +15,7 @@ import numpy as np
 import torch
 import torch.distributed as dist
 
-from .common import CHUNK_FRAMES, STRIDE
+from .common import CHUNK_FRAMES, STRIDE, J
 from .data import View, WindowDataset, collate, fixed_windows, VIEW
 from .model import SCMG, Config
 from .losses import step_losses, StageCfg
@@ -238,7 +238,9 @@ def main():
     def save(path, final=False):
         if rank: return
         if a.stage == 'vae':
-            d = dict(cfg=dict(z=model.z, stride=model.stride, **({'c': model.c} if model.c != 384 else {})), model=model.state_dict(),
+            d = dict(cfg=dict(z=model.z, stride=model.stride, **({'c': model.c} if model.c != 384 else {}),
+                              **({'dim_mask': list(model.dim_mask)} if model.dim_mask else {}),
+                              **({'j': J} if J != 34 else {})), model=model.state_dict(),
                      ema=ema.state_dict(), step=step, vae_cfg=json.loads(a.vae_cfg))
             if final: d.update(latent_stats(ema))
         else:

@@ -7,6 +7,8 @@ Used by the stage-1 physical regularisation loss (losses.py, StageCfg.w_phys) an
 import numpy as np
 import torch
 
+from .common import require_ex002
+
 
 def _quat_mat(q):
     w, x, y, z = q
@@ -18,6 +20,7 @@ def _quat_mat(q):
 class Kinematics(torch.nn.Module):
     def __init__(self, npz, device='cpu'):
         super().__init__()
+        require_ex002('Kinematics (EX002+RM003 FK / sphere proxy)')
         z = np.load(npz)
         self.nb = len(z['parent'])
         self.parent = [int(x) for x in z['parent']]

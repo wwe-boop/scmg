@@ -13,7 +13,7 @@ All quantities in radians; frames at 50 Hz.
 """
 import torch
 
-ARMS = list(range(4, 18))                    # left/right arm joints 1-7 in the 34-joint layout
+from .common import ARMS                      # arm joints of the embodiment (EX002: 4..17 of 34; G1: 25..38 of 39)
 KINDS = ('none', 'lag', 'push', 'pose', 'clamp')
 DT = 1 / 50.
 

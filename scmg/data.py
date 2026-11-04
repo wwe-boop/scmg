@@ -24,12 +24,14 @@ SEMSYNTH = ('semsynth_r7p1',)
 STD_FLOOR = 0.03            # rad; two finger joints are near-constant (std .007/.013) -> avoid z-score blow-up
 
 
-def compute_stats(view, n=400000, seed=0):
+def compute_stats(view, n=400000, seed=0, rows=None, std_floor=STD_FLOOR):
+    """rows: optional array of row indices to sample from (e.g. train-split rows only); default every row (as before)."""
     q = np.load(Path(view) / 'train_q.npy', mmap_mode='r'); f = np.load(Path(view) / 'train_feat.npy', mmap_mode='r')
-    idx = np.sort(np.random.default_rng(seed).choice(len(q), min(n, len(q)), replace=False))
+    pool = np.arange(len(q)) if rows is None else np.asarray(rows)
+    idx = np.sort(pool[np.random.default_rng(seed).choice(len(pool), min(n, len(pool)), replace=False)])   # rows=None: as before
     qs, fs = np.asarray(q[idx], np.float32), np.asarray(f[idx], np.float32)
     fstd = fs.std(0); fstd[-1] = 1.; fmean = fs.mean(0); fmean[-1] = 0.        # keep the valid bit raw
-    return dict(q_mean=qs.mean(0).tolist(), q_std=np.maximum(qs.std(0), STD_FLOOR).tolist(),
+    return dict(q_mean=qs.mean(0).tolist(), q_std=np.maximum(qs.std(0), std_floor).tolist(),
                 f_mean=fmean.tolist(), f_std=np.maximum(fstd, 1e-3).tolist())
 
 
@@ -89,13 +91,18 @@ class View:
         v = Path(P(view)); self.root = v
         items = json.loads((v / 'train.json').read_text())
         sp = json.loads((v / 'SPLIT.json').read_text())
-        keep = set(sp['train_ids'] if split == 'train' else sp['val_ids'])
+        if split == 'test' and 'test_ids' not in sp: raise ValueError(f'{v}/SPLIT.json has no test_ids')
+        keep = set(sp['train_ids'] if split == 'train' else sp['test_ids'] if split == 'test' else sp['val_ids'])
         self.items = [it for it in items if it['id'] in keep]
         mode = 'r' if mmap else None
         self.q = np.load(v / 'train_q.npy', mmap_mode=mode)
         # frames inside retargeting jumps (BEAT2 only, scripts/glitch_audit.py; jump frame +-1) are excluded from losses
         gm = Path(P('/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/glitch-audit/GLITCH_MASK.npy'))
         self.glitch = np.load(gm, mmap_mode='r') if (gm.exists() and os.environ.get('SCMG_NO_GLITCH') != '1') else None   # data ablation switch
+        if self.glitch is not None and len(self.glitch) != len(self.q):
+            # the mask is row-aligned with data-v36_1 only: another view (e.g. echog-g1-v1) must not index it (11-04)
+            print(f'View {v.name}: GLITCH_MASK rows {len(self.glitch)} != {len(self.q)} view rows -> not used', flush=True)
+            self.glitch = None
         self.f = np.load(v / 'train_feat.npy', mmap_mode=mode)
         cond = json.loads((v / 'cond' / 'COND.json').read_text())
         self.cond = cond['items']; self.spk_emb = np.load(v / 'cond' / 'SPK_EMB.npy').astype(np.float32)

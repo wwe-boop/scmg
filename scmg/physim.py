@@ -12,6 +12,8 @@ import json
 import numpy as np
 import mujoco
 
+from .common import require_ex002
+
 MODEL = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/ex002-rm003-v4-20261020/model-r1/scene.xml'
 META = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/train-v1-20261101/views/data-v36_1/META.json'
 SUB = 10                     # 0.002 s x 10 = 20 ms per command frame
@@ -33,6 +35,7 @@ def group(name):
 
 class EX002Sim:
     def __init__(self, model_path=MODEL, joints=None, kp_scale=1.0, dampratio=1.0, lift=0.32, seed=0, cache=CACHE):
+        require_ex002('EX002Sim (MuJoCo EX002 physics)')
         self.joints = joints or json.load(open(META))['joints']
         import os, hashlib
         key = hashlib.sha256(open(model_path, 'rb').read() + repr((kp_scale, dampratio, lift, GROUP_KP, ARMATURE)).encode()).hexdigest()[:16]

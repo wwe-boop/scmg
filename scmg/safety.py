@@ -18,10 +18,13 @@ RM003 fingers 4/60/1500); waist/head are not in the table -> conservative 1.0/8/
 """
 import numpy as np
 
+from .common import require_ex002
+
 DT = 1 / 50.
 
 
 def limits34(meta_lower, meta_upper, margin=0.03):
+    require_ex002('limits34 (EX002 hardware limits)')
     v = np.r_[[1.0] * 4, ([2.0] * 3 + [2.5] + [2.51] * 3) * 2, [4.0] * 16]
     a = np.r_[[8.0] * 4, ([12.] * 3 + [16.] + [20.] * 3) * 2, [60.] * 16]
     j = np.r_[[200.] * 4, ([300.] * 3 + [400.] + [500.] * 3) * 2, [1500.] * 16]
