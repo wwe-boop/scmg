@@ -92,8 +92,8 @@ def main():
         for opt, ch in ((a.smooth, g1.JOINTS), (a.smooth_legs, g1.LEGS)):
             if opt:
                 from scipy.signal import savgol_filter
-                w, o = (int(x) for x in opt.split(','))
-                if len(q50) > w: q50[:, ch] = savgol_filter(q50[:, ch], w, o, axis=0, mode='interp')
+                sg_w, sg_o = (int(x) for x in opt.split(','))       # not w/o: `o` is the output path
+                if len(q50) > sg_w: q50[:, ch] = savgol_filter(q50[:, ch], sg_w, sg_o, axis=0, mode='interp')
         r30 = g1.to30(q50, n30).astype(np.float32)
         torch.save(dict(robot_repr=torch.from_numpy(r30), real_num_frames=n30, fps=30.0, representation_units='physical',
                         representation_schema='projecthermes-g1-39d-standard-v2', source=stem,
