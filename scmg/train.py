@@ -9,7 +9,7 @@
 
     torchrun --nproc_per_node=G -m scmg.train --stage base --out <dir> --vae <vae.pt> --text-cache <dir> --stats <json>
 """
-import argparse, copy, json, math, os, time
+import argparse, contextlib, copy, json, math, os, time
 from pathlib import Path
 import numpy as np
 import torch
@@ -143,6 +143,7 @@ def main():
     ap.add_argument('--stats', required=True); ap.add_argument('--text-cache', default=None)
     ap.add_argument('--vae', default=None); ap.add_argument('--init', default=None, help='previous stage checkpoint')
     ap.add_argument('--steps', type=int, default=100000); ap.add_argument('--batch', type=int, default=64)
+    ap.add_argument('--accum', type=int, default=1, help='gradient accumulation micro-batches per step (1 = the original loop)')
     ap.add_argument('--lr', type=float, default=2e-4); ap.add_argument('--warmup', type=int, default=2000)
     ap.add_argument('--frames', type=int, default=256); ap.add_argument('--workers', type=int, default=8)
     ap.add_argument('--ema', type=float, default=0.999); ap.add_argument('--seed', type=int, default=0)
@@ -311,17 +312,37 @@ def main():
     best = json.loads((out / 'BEST.json').read_text()) if (out / 'BEST.json').exists() else dict(value=1e9, step=0)
     model.train()
     while step < a.steps:
-        b = {k: v.to(dev, non_blocking=True) for k, v in next(dl).items()}
         for gp in opt.param_groups: gp['lr'] = a.lr * gp.get('scale', 1.0) * sched(step)
-        with torch.autocast('cuda', torch.bfloat16):
-            l = losses(net, b)
-        loss = l['loss']
-        opt.zero_grad(set_to_none=True)
-        fin = torch.isfinite(loss.detach()).float()
-        if world > 1: dist.all_reduce(fin, op=dist.ReduceOp.MIN)     # all ranks skip together (no allreduce hang)
-        if fin.item() < 1:
-            skipped += 1; step += 1; continue
-        loss.backward()
+        if a.accum == 1:
+            b = {k: v.to(dev, non_blocking=True) for k, v in next(dl).items()}
+            with torch.autocast('cuda', torch.bfloat16):
+                l = losses(net, b)
+            loss = l['loss']
+            opt.zero_grad(set_to_none=True)
+            fin = torch.isfinite(loss.detach()).float()
+            if world > 1: dist.all_reduce(fin, op=dist.ReduceOp.MIN)     # all ranks skip together (no allreduce hang)
+            if fin.item() < 1:
+                skipped += 1; step += 1; continue
+            loss.backward()
+        else:
+            # 11-04: gradient accumulation (e.g. 2 x 5090: batch 256 x accum 2 x 2 GPUs = the 1024 of the A800 recipe). Losses
+            # are averaged over the micro-batches; DDP syncs gradients only on the last one; a non-finite micro-batch on any
+            # rank skips the whole step on all ranks.
+            opt.zero_grad(set_to_none=True); lsum = {}; ok = True
+            for ai in range(a.accum):
+                b = {k: v.to(dev, non_blocking=True) for k, v in next(dl).items()}
+                sync = (ai == a.accum - 1) or world == 1
+                with (contextlib.nullcontext() if sync else net.no_sync()):
+                    with torch.autocast('cuda', torch.bfloat16):
+                        l = losses(net, b)
+                    fin = torch.isfinite(l['loss'].detach()).float()
+                    if world > 1: dist.all_reduce(fin, op=dist.ReduceOp.MIN)
+                    if fin.item() < 1: ok = False; break
+                    (l['loss'] / a.accum).backward()
+                for k, v in l.items(): lsum[k] = lsum.get(k, 0.) + float(v) / a.accum
+            if not ok:
+                opt.zero_grad(set_to_none=True); skipped += 1; step += 1; continue
+            l = lsum
         gn = float(torch.nn.utils.clip_grad_norm_(params, 1e9))
         med = float(np.median(gn_hist[-200:])) if len(gn_hist) >= 50 else None
         if not math.isfinite(gn) or (med is not None and gn > 20 * med):
