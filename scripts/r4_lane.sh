@@ -16,7 +16,7 @@ PY=${PY:-python}
 source $CODE/scripts/lane_profile.sh
 mkdir -p $R/$o; log(){ echo "$(date -Is) $*" >> $R/$o/lane.log; }
 if [ ! -f $R/$o/DONE.json ]; then
-  $PY -m scmg.train --out $R/$o --init $INIT "${DATA_ARGS[@]}" --vae $VAE --workers ${WORKERS:-6} \
+  SCMG_EXTRA_MASK=${EXTRA_MASK_TRAIN:-} $PY -m scmg.train --out $R/$o --init $INIT "${DATA_ARGS[@]}" --vae $VAE --workers ${WORKERS:-6} \
     --semsynth-share ${SEMSHARE:-0.4} --batch ${BATCH:-64} --stage base --steps $ST --lr ${LR:-1e-4} \
     --warmup 200 --eval-every 1000 --snap-every $SNAP --seed ${TRAIN_SEED:-0} --cfg "$cf" --sc "$scj" ${ANCHOR:+--anchor-share "$ANCHOR"} ${BAGGER_DIR:+--bagger-dir $BAGGER_DIR --bagger-share ${BAGGER_SHARE:-0.33}} >> $R/$o/log.txt 2>&1 &
   TP=$!; log "TRAIN_START pid $TP"

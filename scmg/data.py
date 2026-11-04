@@ -104,6 +104,14 @@ class View:
             # the mask is row-aligned with data-v36_1 only: another view (e.g. echog-g1-v1) must not index it (11-04)
             print(f'View {v.name}: GLITCH_MASK rows {len(self.glitch)} != {len(self.q)} view rows -> not used', flush=True)
             self.glitch = None
+        # SCMG_EXTRA_MASK=<uint8 npy, bad=1, row-aligned with this view>: more frames excluded from losses (11-04: pose-audit
+        # ARM_MASK, arm/palm/self-contact/outlier frames). Explicit request -> a length mismatch is an error, not a skip.
+        em = os.environ.get('SCMG_EXTRA_MASK')
+        self.extra_mask = np.load(P(em), mmap_mode='r') if em else None
+        if self.extra_mask is not None and len(self.extra_mask) != len(self.q):
+            raise ValueError(f'SCMG_EXTRA_MASK rows {len(self.extra_mask)} != {len(self.q)} rows of view {v.name}')
+        if self.extra_mask is not None:
+            print(f'View {v.name} ({split}): SCMG_EXTRA_MASK {em} masks {float(np.asarray(self.extra_mask).mean()):.4f} of all rows', flush=True)
         self.f = np.load(v / 'train_feat.npy', mmap_mode=mode)
         cond = json.loads((v / 'cond' / 'COND.json').read_text())
         self.cond = cond['items']; self.spk_emb = np.load(v / 'cond' / 'SPK_EMB.npy').astype(np.float32)
@@ -264,6 +272,7 @@ class WindowDataset(torch.utils.data.IterableDataset):
         q = np.zeros((T, J), np.float32); m = np.zeros(T, np.float32)
         q[:n] = (np.asarray(self.v.q[a:a + n], np.float32) - self.v.qm) / self.v.qs; m[:n] = 1
         if self.v.glitch is not None and n > 0: m[:n] *= 1 - np.asarray(self.v.glitch[a:a + n], np.float32)
+        if self.v.extra_mask is not None and n > 0: m[:n] *= 1 - np.asarray(self.v.extra_mask[a:a + n], np.float32)
         if n < T and n > 0: q[n:] = q[n - 1]                         # hold last pose (masked anyway)
         return q, m, a, n
 
