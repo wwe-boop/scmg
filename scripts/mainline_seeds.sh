@@ -25,6 +25,7 @@ for k in ${SEEDS:-0 1 2}; do for l in ${LANES:-sbag sibag}; do
     sibag-arm) EXTRA_MASK_TRAIN=$ARM_MASK TRAIN_SEED=$k SEMSHARE=0.6 bash scripts/r4_lane.sh $g $R sibag-arm-s$k '{"adsc": true, "intent_aux": true}' "{$S, \"w_int\": 0.3, \"sem_w\": 2.0}" ${STEPS:-2000} > $R/lane-sibag-arm-s$k.log 2>&1 & ;;
     sibag-phys03) TRAIN_SEED=$k SEMSHARE=0.6 bash scripts/r4_lane.sh $g $R sibag-phys03-s$k '{"adsc": true, "intent_aux": true}' "{$S, \"w_int\": 0.3, \"sem_w\": 2.0, \"w_phys\": 0.03}" ${STEPS:-2000} > $R/lane-sibag-phys03-s$k.log 2>&1 & ;;
     sibag-coll) TRAIN_SEED=$k SEMSHARE=0.6 bash scripts/r4_lane.sh $g $R sibag-coll-s$k '{"adsc": true, "intent_aux": true}' "{$S, \"w_int\": 0.3, \"sem_w\": 2.0, \"w_phys\": 0.03, \"phys_dyn_w\": 0.0}" ${STEPS:-2000} > $R/lane-sibag-coll-s$k.log 2>&1 & ;;   # limits + self-collision only
+    sbag-coll) TRAIN_SEED=$k bash scripts/r4_lane.sh $g $R sbag-coll-s$k '{"adsc": true}' "{$S, \"w_phys\": 0.03, \"phys_dyn_w\": 0.0}" ${STEPS:-2000} > $R/lane-sbag-coll-s$k.log 2>&1 & ;;   # limits + self-collision only
     s6bag) TRAIN_SEED=$k SEMSHARE=0.6 bash scripts/r4_lane.sh $g $R s6bag-s$k '{"adsc": true}' "{$S}" ${STEPS:-2000} > $R/lane-s6bag-s$k.log 2>&1 & ;;   # intent control: sibag data mix without intent
     *) echo "unknown lane $l"; exit 2 ;;
   esac
