@@ -16,6 +16,9 @@ for k in ${SEEDS:-0 1 2}; do for l in ${LANES:-sbag sibag}; do
   case $l in
     sbag)  TRAIN_SEED=$k bash scripts/r4_lane.sh $g $R sbag-s$k '{"adsc": true}' "{$S}" ${STEPS:-2000} > $R/lane-sbag-s$k.log 2>&1 & ;;
     sibag) TRAIN_SEED=$k SEMSHARE=0.6 bash scripts/r4_lane.sh $g $R sibag-s$k '{"adsc": true, "intent_aux": true}' "{$S, \"w_int\": 0.3, \"sem_w\": 2.0}" ${STEPS:-2000} > $R/lane-sibag-s$k.log 2>&1 & ;;
+    sibag-tf)   TRAIN_SEED=$k SEMSHARE=0.6 bash scripts/r4_lane.sh $g $R sibag-tf-s$k '{"adsc": true, "intent_aux": true}' "{$S, \"w_int\": 0.3, \"sem_w\": 2.0, \"text_focus_p\": 0.2}" ${STEPS:-2000} > $R/lane-sibag-tf-s$k.log 2>&1 & ;;
+    sibag-int6) TRAIN_SEED=$k SEMSHARE=0.6 bash scripts/r4_lane.sh $g $R sibag-int6-s$k '{"adsc": true, "intent_aux": true}' "{$S, \"w_int\": 0.6, \"sem_w\": 2.0}" ${STEPS:-2000} > $R/lane-sibag-int6-s$k.log 2>&1 & ;;
+    sbag-phys03) TRAIN_SEED=$k bash scripts/r4_lane.sh $g $R sbag-phys03-s$k '{"adsc": true}' "{$S, \"w_phys\": 0.03}" ${STEPS:-2000} > $R/lane-sbag-phys03-s$k.log 2>&1 & ;;
     *) echo "unknown lane $l"; exit 2 ;;
   esac
 done; done
