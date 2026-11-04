@@ -4,7 +4,8 @@
     python scripts/tests/test_flow_text_xattn.py --j 34          # one embodiment in this process
     python scripts/tests/test_flow_text_xattn.py dump <ckpt> <vae> <out.npz> [--n 3]
           inference (offline CFG 2.5 + engine x2/H=2) on the first n val clips + one ADSC training step, fixed seeds;
-          run once with PYTHONPATH=<code before the change> and once with this code, then
+          run once with PYTHONPATH=<code before the change> and once with this code (DUMP_ADD='{"flow_text_xattn": true}':
+          the checkpoint + the freshly added module, as a fine-tune starts), then
     python scripts/tests/test_flow_text_xattn.py compare a.npz b.npz        # bit-for-bit
 Synthetic checks (random weights, synthetic batch, GPU):
   1 zero-init equivalence: flow_text_xattn on (fresh, gate 0) vs off, same weights / seed -> training-step losses (ADSC,
@@ -237,6 +238,8 @@ def dump(ck, vae_path, out, n):
     txt = os.environ.get('DUMP_TEXT', D + '/text-e5-v36_1')
     st = json.load(open(stp))
     m, vae = load(ck, vae_path, dev); m.eval()
+    for k_, v_ in json.loads(os.environ.get('DUMP_ADD', '{}')).items():   # e.g. '{"flow_text_xattn": true}': fresh zero-gated module
+        setattr(m.cfg, k_, v_); m.add_modules(); m.to(dev).eval(); print('added', k_, flush=True)
     v = View(view, split='val', stats=st, mmap=True, text_cache=txt)
     res = {}
     picked = []

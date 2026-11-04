@@ -149,6 +149,25 @@ class WordTimeXAttn(nn.Module):
         em = p['mix'][None, :, None, None] * support
         return (1 - em) * glob + em * loc
 
+    def attend(self, q, k, v, keep, dt):
+        """weights(...) @ v with two fused attention kernels (same function; the explicit weights() is the reference):
+        (1 - m s) SDPA(tau q^, k^, v | keep) + m s SDPA(tau q^, k^, v | keep, + log prior). Rows without a visible key -> 0."""
+        p = self.params(); keep = keep[:, None]                                      # [B, 1, Q, K]
+        has = keep.any(-1, keepdim=True)
+        km = keep | ~has                                                             # avoid empty rows (zeroed by the caller)
+        qn = F.normalize(q.float(), dim=-1, eps=WT['eps']) * p['temp'][None, :, None, None]
+        kn = F.normalize(k.float(), dim=-1, eps=WT['eps'])
+        timed = torch.isfinite(dt)[:, None]
+        z = (torch.nan_to_num(dt, 0.)[:, None].float() - p['lag'][None, :, None, None]) / p['sigma'][None, :, None, None]
+        lp = torch.where(timed, -0.5 * z.square(), torch.full_like(z, -WT['max_log_penalty'])).clamp_min(-WT['max_log_penalty'])
+        em = p['mix'][None, :, None, None] * torch.where(keep & timed, lp.exp(), torch.zeros_like(lp)).amax(-1, keepdim=True)
+        dtype = torch.get_autocast_dtype('cuda') if torch.is_autocast_enabled() else q.dtype
+        qn, kn, v = qn.to(dtype), kn.to(dtype), v.to(dtype)
+        og = F.scaled_dot_product_attention(qn, kn, v, attn_mask=km, scale=1.0)
+        bias = torch.where(km, lp, torch.full_like(lp, -torch.inf)).to(dtype)
+        ol = F.scaled_dot_product_attention(qn, kn, v, attn_mask=bias, scale=1.0)
+        return (1 - em) * og.float() + em * ol.float()
+
     def forward(self, x, c, kv, keep, tsec, qsec):
         """x [M, L, d] flow tokens, c [M, L, d] or [M, d] AdaLN condition; kv [Bt, Kt, d] text tokens, keep [M, Kt] tokens
         visible to instance m, tsec [Bt, Kt] token time (s, NaN unknown), qsec [M, L] time of every flow position (s, same
@@ -164,8 +183,7 @@ class WordTimeXAttn(nn.Module):
         H = self.h
         q = self.q(y).view(Bt, G * L, H, -1).transpose(1, 2)
         k = self.k(kv).view(Bt, Kt, H, -1).transpose(1, 2); v = self.v(kv).view(Bt, Kt, H, -1).transpose(1, 2)
-        w = self.weights(q, k, keep_q, dt)
-        o = (w @ v.float()).to(x.dtype).transpose(1, 2).reshape(Bt, G * L, D)
+        o = self.attend(q, k, v, keep_q, dt).to(x.dtype).transpose(1, 2).reshape(Bt, G * L, D)
         o = self.o(o) * keep_q.any(-1, keepdim=True).to(x.dtype)                     # no visible text -> exactly 0
         return x + gt * o.view(M, L, D)
 
@@ -495,6 +513,14 @@ class SCMG(nn.Module):
         if state_ada is not None: c = c + state_ada[:, None]
         am = aw_mask[:, None, :].expand(-1, x.shape[1], -1)
         ftx = self.f_text if (ftext is not None and hasattr(self, 'f_text')) else None
+        if ftx is not None:
+            # keep only token columns visible to SOME instance (masked keys contribute exactly 0; most of the 128 / 256
+            # slots are padding or not-yet-arrived) -- one host sync per call; no visible token at all = no text route
+            text_, keep_, tsec_, qsec_ = ftext
+            cols = keep_.any(0).nonzero().squeeze(1)
+            if cols.numel() == 0: ftx = None
+            elif cols.numel() < keep_.shape[1]:
+                ftext = (text_.index_select(1, cols), keep_.index_select(1, cols), tsec_.index_select(1, cols), qsec_)
         for i, blk in enumerate(self.flow):
             if isinstance(blk, GatedXBlock): x = blk(x, c, None, aw, am, mt, mt_mask)
             else: x = blk(x, c, None, aw, am)
