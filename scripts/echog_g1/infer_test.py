@@ -31,6 +31,7 @@ def main():
     ap.add_argument('--view', required=True); ap.add_argument('--text-cache', required=True); ap.add_argument('--out', required=True)
     ap.add_argument('--stems', default=None); ap.add_argument('--n', type=int, default=0)
     ap.add_argument('--seed', type=int, default=0); ap.add_argument('--steps', type=int, default=10); ap.add_argument('--cfg-w', type=float, default=1.0)
+    ap.add_argument('--split', default='test', help="view split: 'test' (val_common view) | 'val' (held-out dev, for choosing inference settings)")
     ap.add_argument('--shard', default='0/1', help='i/n: this process handles clips i, i+n, ...')
     ap.add_argument('--save50', action='store_true', help='also keep the 50 Hz output (<stem>.q50.npy)')
     ap.add_argument('--protocol', default='offline', choices=['offline', 'engine'])
@@ -56,7 +57,7 @@ def main():
     dev = 'cuda'; out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     stats = json.loads(Path(a.stats).read_text())
     m, vae = load(a.ckpt, a.vae, dev)
-    view = View(a.view, 'test', a.text_cache, stats)
+    view = View(a.view, a.split, a.text_cache, stats)
     qm, qs = np.asarray(stats['q_mean'], np.float32), np.asarray(stats['q_std'], np.float32)
     want = Path(a.stems).read_text().split() if a.stems else None
     idx = {c['items'][0]['id']: i for i, c in enumerate(view.clips)}
