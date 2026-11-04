@@ -12,7 +12,7 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-from .common import CHUNK, CHUNK_FRAMES, STRIDE, PROSODY_COLS, U80
+from .common import CHUNK, CHUNK_FRAMES, STRIDE, PROSODY_COLS, U80, J
 from .model import INF, arrival_mask, stream_state, x2_arrival
 from .sim import simulate, state_vector, ARMS
 from .vae import recon_losses
@@ -43,6 +43,9 @@ class StageCfg:
     text_focus_p: float = 0.0      # 11-03 P(batch is TEXT-FOCUSED): mel (and TTS rows) hidden, prosody kept, no text dropout
     sel_audio_premask: bool = False  # remove hidden chunks from encoder input as well as direct audio routes
     p_sel_audio: float = 0.0       # P(per text-bearing sample) that the audio of every gesture chunk is hidden (planner + flow)
+    w_tdelta: float = 0.0          # 11-04 ECHO-G temporal loss (temporal_loss_weight 0.5 there): squared error of the change of
+                                   # the velocity-field error between adjacent steps; with the identity codec (z = STRIDE*J)
+                                   # also between adjacent FRAMES inside / across latents (raw-space temporal coherence)
     w_cont: float = 0.0
     w_rhy: float = 0.0
     w_kl: float = 0.05
@@ -399,11 +402,20 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     else:
         flow = (err * sup).sum() / sup.sum().clamp(min=1)
     out = dict(flow=flow, self_forced=torch.tensor(out_sf, device=dev))
+    if sc.w_tdelta > 0:
+        d = v - (x1i - noise)                                                        # [M, L, z] velocity error
+        pair = sup[:, 1:] & sup[:, :-1]
+        td = ((d[:, 1:] - d[:, :-1]).square().mean(-1) * pair).sum() / pair.sum().clamp(min=1)
+        if d.shape[-1] == STRIDE * J:                                                # identity codec: frame-level deltas
+            df = d.reshape(d.shape[0], -1, J); sf = sup.repeat_interleave(STRIDE, 1)
+            pf = sf[:, 1:] & sf[:, :-1]
+            td = ((df[:, 1:] - df[:, :-1]).square().mean(-1) * pf).sum() / pf.sum().clamp(min=1)
+        out['tdelta'] = td
     aux = (model.p_aux(h) - lat_k.flatten(-2)).square().mean(-1)
     cm = lmask.view(B, K, CHUNK).all(-1).float()
     if supervise is not None: cm = cm * supervise
     out['aux'] = (aux * cm).sum() / cm.sum().clamp(min=1)
-    loss = out['flow'] + sc.w_aux * out['aux']
+    loss = out['flow'] + sc.w_aux * out['aux'] + (sc.w_tdelta * out['tdelta'] if sc.w_tdelta > 0 else 0.)
     vaux = getattr(getattr(model, 'vox', None), '_aux', None) or {}
     if sc.w_word > 0 and 'word_logits' in vaux and 'tilab' in batch:
         wl = vaux['word_logits']; tl = batch['tilab'].long()[:, :wl.shape[1]]
