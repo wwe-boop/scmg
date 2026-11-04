@@ -24,6 +24,11 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+
+def autocast_dtype():
+    """Current CUDA autocast dtype on every torch the project runs (DLC image torch 2.3 has no get_autocast_dtype)."""
+    return torch.get_autocast_dtype('cuda') if hasattr(torch, 'get_autocast_dtype') else torch.get_autocast_gpu_dtype()
+
 from .common import J, FEAT, SPK, TEXT_DIM, N_SOURCE, STRIDE, CHUNK, CHUNK_FRAMES, PROSODY_COLS, FPS, U80
 from .nn import Block, Encoder, MLP, sincos, apply_lora
 
@@ -161,7 +166,7 @@ class WordTimeXAttn(nn.Module):
         z = (torch.nan_to_num(dt, 0.)[:, None].float() - p['lag'][None, :, None, None]) / p['sigma'][None, :, None, None]
         lp = torch.where(timed, -0.5 * z.square(), torch.full_like(z, -WT['max_log_penalty'])).clamp_min(-WT['max_log_penalty'])
         em = p['mix'][None, :, None, None] * torch.where(keep & timed, lp.exp(), torch.zeros_like(lp)).amax(-1, keepdim=True)
-        dtype = torch.get_autocast_dtype('cuda') if torch.is_autocast_enabled() else q.dtype
+        dtype = autocast_dtype() if torch.is_autocast_enabled() else q.dtype
         qn, kn, v = qn.to(dtype), kn.to(dtype), v.to(dtype)
         og = F.scaled_dot_product_attention(qn, kn, v, attn_mask=km, scale=1.0)
         bias = torch.where(km, lp, torch.full_like(lp, -torch.inf)).to(dtype)

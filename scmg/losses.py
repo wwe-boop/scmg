@@ -277,9 +277,8 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         # 11-04 fix: the no-grad generation pass must NOT fill autocast's weight cache -- with cache_enabled the bf16
         # weight copies made here (no grad_fn) were reused by the gradient pass below, so on self-forced batches the
         # planner and the Local Flow got NO gradient (324 of 406 tensors None).  Same autocast dtype, cache off.
-        _ac = torch.autocast('cuda', dtype=(torch.get_autocast_dtype('cuda') if hasattr(torch, 'get_autocast_dtype')
-                                            else torch.get_autocast_gpu_dtype()),
-                             enabled=torch.is_autocast_enabled(), cache_enabled=False)
+        from .model import autocast_dtype
+        _ac = torch.autocast('cuda', dtype=autocast_dtype(), enabled=torch.is_autocast_enabled(), cache_enabled=False)
         with torch.no_grad(), _ac:
             src = lat_k
             for _round in range(max(1, sc.self_force_rounds)):
