@@ -253,6 +253,35 @@ def main():
                     sm.tick()
                 sm.flush()
                 return torch.stack(sm.frames).cpu().numpy(), np.array(sm.timing)
+            def setf(sm, feat_full, per_tick, k):
+                if per_tick is not None:
+                    f = np.zeros_like(feat_full); f[:ticks[k]] = per_tick[k]
+                    sm.feat = torch.as_tensor(norm(f), device='cuda').float()
+
+            def run_tf(fa, pa, fb, pb, seed_b=None):
+                """Teacher-forced per-tick effect (no chaotic accumulation): B gets A's committed history (and, unless seed_b,
+                A's noise state) before every tick; the frames each emits for that tick are compared."""
+                A = Streamer(model, vae, norm(fa), cond, stats, seed=0, **kw)
+                B = Streamer(model, vae, norm(fb), cond, stats, seed=0 if seed_b is None else seed_b, **kw)
+                d = []
+                for k in range(nch):
+                    setf(A, fa, pa, k); setf(B, fb, pb, k)
+                    B.lat = [x.clone() for x in A.lat]; B.frames = list(A.frames); B.n_emitted = A.n_emitted; B.k = A.k
+                    if seed_b is None: B.g.set_state(A.g.get_state())
+                    xb = B.tick(); xa = A.tick()
+                    if len(xa): d.append(np.abs((xa - xb).cpu().numpy()))
+                d = np.concatenate(d)
+                return dict(arms_mean=float(d[:, ARMS].mean()), arms_p95=float(np.percentile(d[:, ARMS], 95)), arms_max=float(d[:, ARMS].max()),
+                            all34_mean=float(d.mean()), frac_frames_arm_gt_0p05=float((d[:, ARMS].max(1) > .05).mean()))
+            crow['teacher_forced_rad'] = {
+                'v0_online_vs_full': run_tf(full['v0'], None, full['v0'], pref['v0']),
+                'v1_online_vs_full': run_tf(full['v1'], None, full['v1'], pref['v1']),
+                'v2_online_vs_full': run_tf(full['v2'], None, full['v2'], pref['v2']),
+                'v0_full_vs_view': run_tf(viewf, None, full['v0'], None),
+                'v2_online_vs_view': run_tf(viewf, None, full['v2'], pref['v2']),
+                'noise_floor_view_seed0_vs_seed1': run_tf(viewf, None, viewf, None, seed_b=1),
+            }
+            print(json.dumps(dict(ci=ci, tf={k: round(v['arms_mean'], 4) for k, v in crow['teacher_forced_rad'].items()})), flush=True)
             gens = {}
             gens['view_s0'], tm = run(viewf); gens['view_s1'], _ = run(viewf, seed=1)
             for v in full:
@@ -275,6 +304,7 @@ def main():
                 'noise_floor_view_s0_vs_s1': dq(gens['view_s0'], gens['view_s1']),
                 'noise_floor_v0full_s0_vs_s1': dq(gens['v0_full'], gens['v0_full_s1']),
             }
+            crow['arm_speed_rad_s'] = {k: float(np.abs(np.diff(g[:, ARMS], axis=0)).mean() * 50) for k, g in gens.items()}
             crow['tick_ms_p50'] = float(np.percentile(tm[1:], 50) * 1000)
             print(json.dumps(dict(ci=ci, motion={k: round(v['arms_mean'], 4) for k, v in crow['motion_rad'].items()})), flush=True)
         report['clips'].append(crow)
