@@ -58,7 +58,7 @@ if [ "${PROFILE:-ex002}" = g1 ]; then
   evalq $R/$o/final.pt final
   if [ "${G1_BENCH:-0}" = 1 ]; then
     for P in offline engine; do for sd in ${G1_BENCH_SEEDS:-0 1}; do
-      GPUS=$gpu CFGW=${CFGW:-2.5} bash $CODE/scripts/echog_g1/bench.sh scmg $R/$o/final.pt $VAE $R/$o/bench/$P/seed_$(printf %03d $sd) $P $sd ${G1_BENCH_STEMS:-} \
+      GPUS="$(for r in $(seq ${SPG:-1}); do printf "%s " $gpu; done)" CFGW=${CFGW:-2.5} bash $CODE/scripts/echog_g1/bench.sh scmg $R/$o/final.pt $VAE $R/$o/bench/$P/seed_$(printf %03d $sd) $P $sd ${G1_BENCH_STEMS:-} \
         >> $R/$o/bench.log 2>&1 && log "BENCH_DONE $P s$sd" || log "BENCH_FAILED $P s$sd"
     done; done
   fi
