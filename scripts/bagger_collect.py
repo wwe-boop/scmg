@@ -22,6 +22,16 @@ COND_KEYS = ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref
              'tids', 'tidm', 'titime', 'tseg', 'tiseg', 'tiend', 'text_c')
 
 
+def read_json_retry(path, tries=20):
+    # 11-05: several shards share COLLECTION.json on CPFS; a concurrent atomic replace can make a read fail with ESTALE
+    import errno
+    for k in range(tries):
+        try: return json.loads(Path(path).read_text())
+        except OSError as e:
+            if e.errno != errno.ESTALE or k == tries - 1: raise
+            time.sleep(0.5)
+
+
 def atomic_json(path, data):
     tmp = Path(str(path) + f'.{os.getpid()}.tmp'); tmp.write_text(json.dumps(data, indent=2)); tmp.replace(path)
 
@@ -83,9 +93,10 @@ def main(a):
     if a.dry_run: return
     a.out.mkdir(parents=True, exist_ok=True)
     spec_path = a.out / 'COLLECTION.json'
-    if spec_path.exists() and json.loads(spec_path.read_text()) != spec:
-        raise ValueError('output belongs to a different collection; use a new directory')
-    atomic_json(spec_path, spec)
+    if spec_path.exists():
+        if read_json_retry(spec_path) != spec: raise ValueError('output belongs to a different collection; use a new directory')
+    else:
+        atomic_json(spec_path, spec)                     # shards starting together may both write the same content
     torch.cuda.set_per_process_memory_fraction(float(os.environ.get('BAGGER_MEMORY_FRACTION', '.48')))
     model, vae = load(a.ckpt, a.vae, 'cuda')
     qmean, qstd = v.qm, v.qs
@@ -154,7 +165,7 @@ def main(a):
     for i in range(a.count):
         p = a.out/f'{i:06d}.json'
         if not p.exists(): break
-        row = json.loads(p.read_text()); f = a.out/row['file']
+        row = read_json_retry(p); f = a.out/row['file']
         if hashlib.sha256(f.read_bytes()).hexdigest() != row['sha256']: raise ValueError(f'bad hash {f}')
         rows.append(row)
     if len(rows) == a.count:
