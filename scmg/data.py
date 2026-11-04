@@ -180,7 +180,13 @@ class View:
         syn = np.array([c['source'] in SEMSYNTH for c in self.clips])
         w = np.zeros_like(fr)
         if syn.any(): w[syn] = semsynth_share * fr[syn] / fr[syn].sum()
-        w[~syn] = (1 - semsynth_share if syn.any() else 1.) * fr[~syn] / fr[~syn].sum()
+        hum = 1 - semsynth_share if syn.any() else 1.
+        anc = getattr(self, 'anchor', None)   # {'sources': [...], 'share': x}: measured-motion "action anchor" share of the human mass
+        if anc:
+            a_ = np.array([c['source'] in anc['sources'] for c in self.clips]) & ~syn; o_ = ~syn & ~a_
+            if a_.any(): w[a_] = hum * anc['share'] * fr[a_] / fr[a_].sum()
+            if o_.any(): w[o_] = hum * (1 - anc['share']) * fr[o_] / fr[o_].sum()
+        else: w[~syn] = hum * fr[~syn] / fr[~syn].sum()
         if getattr(self, 'holdout', None) is not None: w = np.where(self.holdout, 0., w)
         return w / w.sum()
 
