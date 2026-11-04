@@ -4,6 +4,7 @@ Encoder is strictly causal (latent i sees frames < 4(i+1)). Decoder sees latents
 (one-latent = 80 ms lookahead), so in streaming a chunk's last latent is finalised when the next chunk's first latent
 is committed. Pretrained once (stage 0) and frozen afterwards ("pretrained Motion Decoder").
 """
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -48,7 +49,7 @@ class MotionVAE(nn.Module):
     mean pose even when over-fitting one batch (debug_vae*.py); this flat design fits it (L1 0.11 in 300 steps)."""
 
     def __init__(self, z=16, c=384, stride=STRIDE, beta=1e-3, w_vel=0.3, w_acc=0.1, w_accmag=0.0, dim_mask=(), j=None, ch_w=(),
-                 identity=False):
+                 identity=False, transform='none'):
         super().__init__()
         # 11-04 'identity' codec (ECHO-G generates in the raw robot space; our VAE alone doubles contact sliding and removes a
         # quarter of the jerk): a latent is the STRIDE consecutive normalised frames concatenated, z = STRIDE * J, lossless and
@@ -60,7 +61,19 @@ class MotionVAE(nn.Module):
             if z != STRIDE * J: raise ValueError(f'identity codec needs z = STRIDE * J = {STRIDE * J}, got {z}')
             if dim_mask or ch_w: raise ValueError('identity codec: dim_mask / ch_w do not apply')
             self.z, self.stride, self.c, self.dim_mask, self.ch_w = z, stride, c, (), ()
+            # 11-05 transform='dct': orthonormal DCT-II over the STRIDE frames of each token (per channel), still lossless.
+            # With per-dimension latent statistics the small high-frequency coefficients are normalised up, so residual
+            # sampling noise is mapped back with the DATA spectrum instead of as white per-frame noise (the plain identity
+            # codec gave 30-60x the GT second-difference energy after a 2000-step warm start).
+            if transform not in ('none', 'dct'): raise ValueError(f'transform {transform!r}')
+            self.transform = transform
+            if transform == 'dct':
+                n = torch.arange(STRIDE, dtype=torch.float64); k = n[:, None]
+                Dm = torch.cos(math.pi / STRIDE * (n[None] + 0.5) * k) * math.sqrt(2. / STRIDE); Dm[0] /= math.sqrt(2.)
+                self.register_buffer('dct', Dm.float(), persistent=False)                 # [freq, frame], orthonormal
             return
+        if transform != 'none': raise ValueError('transform applies to the identity codec only')
+        self.transform = 'none'
         if j is not None and j != J: raise ValueError(f'VAE built for {j} motion channels, environment has SCMG_J={J}')
         if stride != STRIDE: raise ValueError(f'VAE built for SCMG_STRIDE={stride}, environment has {STRIDE}')
         self.z, self.stride, self.c = z, stride, c
@@ -95,7 +108,9 @@ class MotionVAE(nn.Module):
         if self.identity:
             B, T, _ = x.shape
             if T % STRIDE: raise ValueError(f'identity codec: {T} frames not a multiple of {STRIDE}')
-            mu = x.reshape(B, T // STRIDE, STRIDE * J)
+            x4 = x.reshape(B, T // STRIDE, STRIDE, J)
+            if self.transform == 'dct': x4 = torch.einsum('fs,bnsj->bnfj', self.dct.to(x.dtype), x4)
+            mu = x4.reshape(B, T // STRIDE, STRIDE * J)
             return mu, torch.full_like(mu, -12.)
         if self.dim_mask: x = x * self.dim_keep
         mu, lv = self.enc(x.transpose(1, 2)).chunk(2, 1)
@@ -103,7 +118,10 @@ class MotionVAE(nn.Module):
 
     def decode(self, z):
         """z [B, N, Z] -> x [B, 4N, J]."""
-        if self.identity: return z.reshape(z.shape[0], z.shape[1] * STRIDE, J)
+        if self.identity:
+            z4 = z.reshape(z.shape[0], z.shape[1], STRIDE, J)
+            if self.transform == 'dct': z4 = torch.einsum('fs,bnfj->bnsj', self.dct.to(z.dtype), z4)
+            return z4.reshape(z.shape[0], z.shape[1] * STRIDE, J)
         y = self.dec(z.transpose(1, 2)).transpose(1, 2)
         return y * self.dim_keep if self.dim_mask else y
 

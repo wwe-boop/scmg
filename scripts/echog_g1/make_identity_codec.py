@@ -11,9 +11,9 @@ from scmg.common import J, STRIDE
 from scmg.data import View, WindowDataset
 from scmg.vae import MotionVAE
 ap = argparse.ArgumentParser(); ap.add_argument('out'); ap.add_argument('--view', required=True); ap.add_argument('--stats', required=True)
-ap.add_argument('--windows', type=int, default=4000)
+ap.add_argument('--windows', type=int, default=4000); ap.add_argument('--transform', default='none', choices=['none', 'dct'])
 a = ap.parse_args()
-cfg = dict(z=STRIDE * J, stride=STRIDE, j=J, identity=True)
+cfg = dict(z=STRIDE * J, stride=STRIDE, j=J, identity=True, **({'transform': a.transform} if a.transform != 'none' else {}))
 v = MotionVAE(**cfg)
 view = View(a.view, 'train', None, json.loads(Path(a.stats).read_text()), mmap=True)
 ds = WindowDataset(view, 256); rng = np.random.default_rng(0); mus = []
