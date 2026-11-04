@@ -1,6 +1,6 @@
 #!/bin/bash
 # 11-04 module screen on the ECHO-G same-data benchmark (user: ablations on the ECHO-G dataset first): the G1 base recipe
-# (= train_full.sh base: r4 recipe, 8-GPU DDP, batch 128 per GPU, 8000 steps, training seed 0, shared G1 VAE) with ONE
+# (= train_full.sh base: r4 recipe, global batch 1024 = 128 x 8 GPUs, kept on fewer GPUs by a larger per-GPU batch, 8000 steps, training seed 0, shared G1 VAE) with ONE
 # architecture change, then the official benchmark of best.pt in the SAME job (val_common 3242, offline + engine x inference
 # seeds 0/1, CFG 2.5).  Control = <train root>/base-s0 (benchmarked by g1_round.sh).
 #   arch_g1.sh <G1 train root (vae/)> <out root> <label> <cfg-json>     env SPG=3 + bench.sh paths, BENCH_PY
@@ -14,7 +14,7 @@ if [ ! -f $O/DONE.json ]; then
   log "TRAIN_START $cf on $NGPU GPUs"
   $PY -m torch.distributed.run --standalone --nproc_per_node=$NGPU -m scmg.train --stage base --view $C/echog-g1-v1 \
     --stats $C/scmg/STATS_echog_g1_v1.json --text-cache $C/scmg/text-e5-echog-g1-v1 --vae $R/vae/final.pt --out $O --seed 0 \
-    --cfg "$cf" --batch 128 --steps 8000 --lr 3e-4 --warmup 1000 --frames 256 --workers ${WORKERS:-6} --eval-every 500 --snap-every 2000 >> $O/log.txt 2>&1
+    --cfg "$cf" --batch $((1024 / NGPU)) --steps 8000 --lr 3e-4 --warmup 1000 --frames 256 --workers ${WORKERS:-6} --eval-every 500 --snap-every 2000 >> $O/log.txt 2>&1
 fi
 [ -f $O/DONE.json ] || { log "TRAIN_FAILED"; exit 1; }
 log "TRAIN_DONE"
