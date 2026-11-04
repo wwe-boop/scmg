@@ -47,7 +47,7 @@ class MotionVAE(nn.Module):
     """Plain causal conv VAE (r3). The first design (residual stacks + stride-2 pairs) got stuck outputting the global
     mean pose even when over-fitting one batch (debug_vae*.py); this flat design fits it (L1 0.11 in 300 steps)."""
 
-    def __init__(self, z=16, c=384, stride=STRIDE, beta=1e-3, w_vel=0.3, w_acc=0.1, w_accmag=0.0, dim_mask=(), j=None):
+    def __init__(self, z=16, c=384, stride=STRIDE, beta=1e-3, w_vel=0.3, w_acc=0.1, w_accmag=0.0, dim_mask=(), j=None, ch_w=()):
         super().__init__()
         if j is not None and j != J: raise ValueError(f'VAE built for {j} motion channels, environment has SCMG_J={J}')
         if stride != STRIDE: raise ValueError(f'VAE built for SCMG_STRIDE={stride}, environment has {STRIDE}')
@@ -61,6 +61,15 @@ class MotionVAE(nn.Module):
             keep = torch.ones(J); keep[list(self.dim_mask)] = 0.
             self.register_buffer('dim_keep', keep, persistent=False)
         self.beta, self.w_vel, self.w_acc, self.w_accmag = beta, w_vel, w_acc, w_accmag     # training-loss weights (11-03 variants)
+        # 11-04 G1 contact sliding: per-channel loss weights [[channel, weight], ...] (default none = bit-identical), e.g.
+        # legs 10..21 and root velocity 7..9 up-weighted -- the VAE alone doubles contact sliding (0.043 -> 0.086)
+        self.ch_w = tuple((int(c_), float(w_)) for c_, w_ in ch_w)
+        if self.ch_w:
+            cw = torch.ones(J)
+            for c_, w_ in self.ch_w:
+                if not 0 <= c_ < J or w_ < 0: raise ValueError(f'ch_w entry {(c_, w_)}')
+                cw[c_] = w_
+            self.register_buffer('ch_weight', cw / cw.mean(), persistent=False)   # mean 1: the total loss scale is unchanged
         self.enc = nn.Sequential(CConv(J, c, 3), nn.SiLU(), CConv(c, c, 3), nn.SiLU(),
                                  nn.Conv1d(c, c, STRIDE, stride=STRIDE),          # latent i <- frames 4i..4i+3
                                  nn.SiLU(), CConv(c, c, 3), nn.SiLU(), CConv(c, c, 3), nn.SiLU(), nn.Conv1d(c, 2 * z, 1))
@@ -87,6 +96,7 @@ class MotionVAE(nn.Module):
         z = mu + deriv * torch.randn_like(mu) * (0.5 * lv).exp()      # sampling noise ramps in with the same schedule
         y = self.decode(z)
         if self.dim_mask and w is None: w = self.dim_keep
+        if self.ch_w: w = self.ch_weight if w is None else w * self.ch_weight
         losses = recon_losses(y, x, mask, w)
         kl = 0.5 * (mu.square() + lv.exp() - 1 - lv).sum(-1).mean()
         losses['kl'] = kl
