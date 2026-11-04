@@ -43,6 +43,8 @@ class StageCfg:
     text_focus_p: float = 0.0      # 11-03 P(batch is TEXT-FOCUSED): mel (and TTS rows) hidden, prosody kept, no text dropout
     sel_audio_premask: bool = False  # remove hidden chunks from encoder input as well as direct audio routes
     p_sel_audio: float = 0.0       # P(per text-bearing sample) that the audio of every gesture chunk is hidden (planner + flow)
+    w_foot: float = 0.0            # 11-05 G1 only: foot-contact consistency on the decoded [ctx | target] frames (scmg/g1_contact.py:
+                                   # sole xy velocity + lowest-sole height vs ground truth on GT-contact frames, official geometry)
     w_tdelta: float = 0.0          # 11-04 ECHO-G temporal loss (temporal_loss_weight 0.5 there): squared error of the change of
                                    # the velocity-field error between adjacent steps; with the identity codec (z = STRIDE*J)
                                    # also between adjacent FRAMES inside / across latents (raw-space temporal coherence)
@@ -465,7 +467,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         loss = loss + sc.w_int * out['intent']
 
     # ---- decoded continuity / rhythm
-    if sc.w_cont > 0 or sc.w_rhy > 0 or sc.w_phys > 0:
+    if sc.w_cont > 0 or sc.w_rhy > 0 or sc.w_phys > 0 or sc.w_foot > 0:
         x1hat = torch.where(known[..., None], x1i, xt + (1 - t[..., None]) * v)
         # decode with the context the streamer has: 3 more history chunks before the known context (the decoder looks
         # ~7 latents back) and the next chunk's first latent as look-ahead (inference emits a frame only once the latent
@@ -494,6 +496,12 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         rl = recon_losses(y[:, CHUNK_FRAMES - 4:], gt_frames[:, CHUNK_FRAMES - 4:], fv[:, CHUNK_FRAMES - 4:] * w_inst[:, None], dw)
         out.update({f'cont_{k}': v_ for k, v_ in rl.items()})
         loss = loss + sc.w_cont * (rl['rec'] + 0.3 * rl['vel'] + 0.1 * rl['acc'])
+        if sc.w_foot > 0:
+            from .common import EMBODIMENT
+            if EMBODIMENT != 'g1': raise ValueError('StageCfg.w_foot is the G1 foot-contact term (SCMG_J=39)')
+            from .g1_contact import foot_contact_loss
+            fc = foot_contact_loss(y.float() * qs + qm, gt_frames.float() * qs + qm, fv * w_inst[:, None], 50.)
+            out.update(fc); loss = loss + sc.w_foot * (fc['foot_slide'] + 10. * fc['foot_height'])   # m/s and m -> comparable scale
         if sc.w_phys > 0:
             out.update(phys_reg(y, fv * w_inst[:, None], qm, qs, sc))
             loss = loss + sc.w_phys * (out['phys_joint'] + sc.phys_dyn_w * out['phys_dyn'] + sc.phys_coll_w * out['phys_coll'])
