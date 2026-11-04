@@ -20,7 +20,8 @@ D = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg'; dev = 'cuda'
 st = json.load(open(D + '/STATS_v36_1.json')); qm, qs = np.array(st['q_mean'], np.float32), np.array(st['q_std'], np.float32)
 ap = argparse.ArgumentParser(); ap.add_argument('vae'); ap.add_argument('models', nargs='+')
 ap.add_argument('--tok-cache'); args = ap.parse_args()
-VAE = args.vae; NCLIP = 20
+VAE = args.vae; NCLIP = int(os.environ.get('ROLLOUT_NCLIP', '20'))
+TEXT_CACHE = os.environ.get('ROLLOUT_TEXT_CACHE', D + '/text-e5-v36_1')   # LLM caches: point at prep_text_llm output
 WIN = os.environ.get('ROLLOUT_WINDOW_LM_TEXT') == '1'   # 11-03 review: windowed LM text (training protocol) for VoxCPM
 TM = os.environ.get('ROLLOUT_TEXT_MODE', 'final')      # 11-03 user: deployment text streams word by word -> x2 (+ deploy timing, windowed LM)
 X2_LAG = float(os.environ.get('ROLLOUT_X2_LAG', '0.15'))
@@ -32,7 +33,7 @@ if TM != 'final': WIN = True
 
 
 def clips(tok):
-    v = View(split='val', stats=st, mmap=True, text_cache=D + '/text-e5-v36_1', tok_cache=tok); out = []
+    v = View(split='val', stats=st, mmap=True, text_cache=TEXT_CACHE, tok_cache=tok); out = []
     for ci in range(43):
         nch = min(v.clips[ci]['frames'] // CHUNK_FRAMES, 40)
         if nch < 8: continue

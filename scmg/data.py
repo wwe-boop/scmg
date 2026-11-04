@@ -131,23 +131,36 @@ class View:
                 il = np.load(Path(P(tok_intent)) / 'INTENT_LABEL.npy')
                 if len(il) != len(self.tok['ids']): raise ValueError('INTENT_LABEL rows != TOK_IDS rows')
                 self.tok['ilab'] = il
-        self.text = None; self.text_c = None
+        self.text = None; self.text_c = None; self.text_dim = TEXT_DIM; self.text_native_causal = False
         if text_cache:
             tc = Path(P(text_cache))
-            self.text = dict(feat=np.load(tc / 'TEXT_FEAT.npy', mmap_mode=mode), time=np.load(tc / 'TEXT_TIME.npy'),
+            feat = np.load(tc / 'TEXT_FEAT.npy', mmap_mode=mode)
+            prep = json.loads((tc / 'PREP.json').read_text())
+            self.text_dim = int(feat.shape[1])
+            if 'hidden_size' in prep and int(prep['hidden_size']) != self.text_dim:
+                raise ValueError(f'text cache PREP.hidden_size={prep["hidden_size"]} but TEXT_FEAT has {self.text_dim} dims')
+            self.text = dict(feat=feat, time=np.load(tc / 'TEXT_TIME.npy'),
                              index=json.loads((tc / 'TEXT_INDEX.json').read_text()))
-            # prefix-causal features of the same rows (prep_text --causal): ADSC token streaming must not see later words
-            import os as _os
-            cc = _os.environ.get('SCMG_TEXT_CAUSAL')
-            self.text_c = np.load(Path(P(cc)) / 'TEXT_FEAT.npy', mmap_mode='r') if cc else None
-            if cc:
-                cr = Path(P(cc))
-                if not json.loads((cr / 'PREP.json').read_text()).get('causal', False):
-                    raise ValueError('SCMG_TEXT_CAUSAL must be a prefix-causal E5 cache')
-                if (self.text_c.shape != self.text['feat'].shape or
-                    json.loads((cr / 'TEXT_INDEX.json').read_text()) != self.text['index'] or
-                    not np.array_equal(np.load(cr / 'TEXT_TIME.npy'), self.text['time'], equal_nan=True)):
-                    raise ValueError('causal E5 rows / TEXT_INDEX / TEXT_TIME do not match the text cache')
+            # A decoder LLM (prep_text_llm.py) is prefix-causal by construction: the full-sentence feature at token j is
+            # exactly what a prefix ending at j produces, so the same cache serves ADSC token streaming.  Flagged in
+            # PREP.json; e5 caches keep the old SCMG_TEXT_CAUSAL path below unchanged.
+            native = bool(prep.get('causal') and (prep.get('native_causal') or prep.get('encoder') == 'llm'))
+            if native:
+                self.text_native_causal = True
+                self.text_c = feat
+            else:
+                # prefix-causal features of the same rows (prep_text --causal): ADSC token streaming must not see later words
+                import os as _os
+                cc = _os.environ.get('SCMG_TEXT_CAUSAL')
+                self.text_c = np.load(Path(P(cc)) / 'TEXT_FEAT.npy', mmap_mode='r') if cc else None
+                if cc:
+                    cr = Path(P(cc))
+                    if not json.loads((cr / 'PREP.json').read_text()).get('causal', False):
+                        raise ValueError('SCMG_TEXT_CAUSAL must be a prefix-causal E5 cache')
+                    if (self.text_c.shape != self.text['feat'].shape or
+                        json.loads((cr / 'TEXT_INDEX.json').read_text()) != self.text['index'] or
+                        not np.array_equal(np.load(cr / 'TEXT_TIME.npy'), self.text['time'], equal_nan=True)):
+                        raise ValueError('causal E5 rows / TEXT_INDEX / TEXT_TIME do not match the text cache')
         self.holdout = None                             # semantic-eval clips (+ their rhythm variants) never sampled (11-03)
         if holdout:
             pairs = {e['clip_id'].split('__')[0] for e in json.loads(Path(P(holdout)).read_text())['entries']}
@@ -234,6 +247,7 @@ class WindowDataset(torch.utils.data.IterableDataset):
         f[:n] = (np.asarray(v.f[a:a + n], np.float32) - v.fm) / v.fs
         # text tokens of every utterance overlapping [s, s+n)
         toks, times, segs, toks_c = [], [], [], []      # segs: start time of the TTS segment (utterance) of each token
+        native_c = v.text_c is not None and v.text_c is v.text['feat']   # LLM cache: text_c IS text
         if v.text is not None:
             off = c['start']
             for it in c['items']:
@@ -243,13 +257,14 @@ class WindowDataset(torch.utils.data.IterableDataset):
                 if not e: continue
                 k0, kn = e
                 toks.append(np.asarray(v.text['feat'][k0:k0 + kn], np.float32))
-                if v.text_c is not None: toks_c.append(np.asarray(v.text_c[k0:k0 + kn], np.float32))
+                if v.text_c is not None and not native_c:
+                    toks_c.append(np.asarray(v.text_c[k0:k0 + kn], np.float32))
                 times.append(v.text['time'][k0:k0 + kn] + (i0 - s) / 50.)
                 segs.append(np.full(kn, (i0 - s) / 50., np.float32))
-        K = self.K
-        text = np.zeros((K, TEXT_DIM), np.float32); ttime = np.full(K, np.nan, np.float32); tmask = np.zeros(K, bool)
+        K = self.K; TD = v.text_dim
+        text = np.zeros((K, TD), np.float32); ttime = np.full(K, np.nan, np.float32); tmask = np.zeros(K, bool)
         tseg = np.full(K, np.nan, np.float32)
-        text_c = np.zeros((K, TEXT_DIM), np.float32) if v.text_c is not None else None
+        text_c = np.zeros((K, TD), np.float32) if (v.text_c is not None and not native_c) else None
         if toks:
             tk, tt, ts_ = np.concatenate(toks), np.concatenate(times), np.concatenate(segs)
             tkc = np.concatenate(toks_c) if toks_c else None
@@ -259,6 +274,7 @@ class WindowDataset(torch.utils.data.IterableDataset):
                 if tkc is not None: tkc = tkc[order]
             text[:len(tk)] = tk; ttime[:len(tk)] = tt; tmask[:len(tk)] = True; tseg[:len(tk)] = ts_
             if tkc is not None: text_c[:len(tk)] = tkc
+        if native_c: text_c = text
         # LM token ids of the utterances overlapping the window, in order (VoxCPM-style planner)
         tids = np.zeros(self.KI, np.int64); tidm = np.zeros(self.KI, bool); titime = np.full(self.KI, np.nan, np.float32); tiseg = np.full(self.KI, np.nan, np.float32)
         tiend = np.full(self.KI, np.nan, np.float32)
