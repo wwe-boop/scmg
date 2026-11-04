@@ -111,6 +111,10 @@ def extract_one(args):
     if W.get('schema') != 'echo-g-word-token-annotations-v1' or W.get('clip_id') != stem: raise ValueError(f'{stem}: words schema')
     words = [dict(text=str(w['text']).strip(), start_time=float(w['start']), end_time=float(w['end'])) for w in W['words']]
     words = [w for w in words if w['text'] and np.isfinite(w['start_time']) and np.isfinite(w['end_time']) and w['end_time'] >= w['start_time']]
+    # word times past the motion prefix (n50 / 50 s; audio may be <= 1 frame longer or shorter): clamp the end, drop words that
+    # start after it (5 release clips have one word ending 10-50 ms past the prefix, feat89 would drop the clip's text)
+    dur = T / 50.
+    words = [dict(w, end_time=min(w['end_time'], dur)) for w in words if w['start_time'] < dur - 1e-3]
     lang = lang_of(stem)
     feat, al, speech, text, null = None, [], [0., 0.], '', True
     err = None
