@@ -27,9 +27,23 @@ _M = {}
 def _mods():
     if not _M:
         if OFFICIAL_SRC not in sys.path: sys.path.insert(0, OFFICIAL_SRC)
-        from echo_g.evaluation import g1_kinematics as G1K
-        from echo_g.evaluation.rotation import extract_yaw_from_rotation, rotation_6d_to_matrix, rotation_matrix_from_yaw
-        _M.update(G1K=G1K, yaw_of=extract_yaw_from_rotation, r6=rotation_6d_to_matrix, ryaw=rotation_matrix_from_yaw)
+        try:
+            from echo_g.evaluation import g1_kinematics as G1K
+            from echo_g.evaluation import rotation as ROT
+        except ImportError:
+            # the echo_g package __init__ pulls in config/model (PyYAML); the two geometry files need torch only ->
+            # load them standalone under their real module names (the DLC training image may lack PyYAML)
+            import importlib.util, types
+            for pkg in ('echo_g', 'echo_g.evaluation'):
+                if pkg not in sys.modules:
+                    mod = types.ModuleType(pkg); mod.__path__ = []; sys.modules[pkg] = mod
+
+            def load(name, fname):
+                spec = importlib.util.spec_from_file_location(name, os.path.join(OFFICIAL_SRC, 'echo_g', 'evaluation', fname))
+                mod = importlib.util.module_from_spec(spec); sys.modules[name] = mod; spec.loader.exec_module(mod); return mod
+            ROT = load('echo_g.evaluation.rotation', 'rotation.py')
+            G1K = load('echo_g.evaluation.g1_kinematics', 'g1_kinematics.py')
+        _M.update(G1K=G1K, yaw_of=ROT.extract_yaw_from_rotation, r6=ROT.rotation_6d_to_matrix, ryaw=ROT.rotation_matrix_from_yaw)
     return _M
 
 
