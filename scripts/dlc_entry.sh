@@ -43,6 +43,21 @@ case $PHASE in
     mkdir -p $OUT; echo "$DLC_JOB_ID $(hostname) $(date -Is)" >> $OUT/JOBS.txt
     NGPU=$(echo $CUDA_VISIBLE_DEVICES | tr ',' '\n' | wc -l) PY=/usr/local/bin/python \
       exec bash $P/scripts/pipeline_dlc.sh $P $OUT $VAE ;;
+  echog_g1)                                            # ECHO-G same-data benchmark (11-04): G1 39-d view, VAE + base x SEEDS, training only
+    : "${DLC_JOB_ID:?real DLC job required}"
+    case $(hostname) in dsw*) echo "refusing to run the full phase on DSW"; exit 78;; esac
+    unset SCMG_TEXT_CAUSAL                             # EX002 causal cache: rows do not match the G1 view
+    [ -z "${CUDA_VISIBLE_DEVICES:-}" ] && export CUDA_VISIBLE_DEVICES=$(nvidia-smi --query-gpu=index --format=csv,noheader | paste -sd, -)
+    OUT=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/echog-g1-$(cat $P/RUN_NAME)
+    mkdir -p $OUT; echo "$DLC_JOB_ID $(hostname) $(date -Is)" >> $OUT/JOBS.txt
+    NGPU=$(echo $CUDA_VISIBLE_DEVICES | tr ',' '\n' | wc -l) R=$OUT PY=/usr/local/bin/python SEEDS="${SEEDS:-0 1 2}" TRAIN_ONLY=1 \
+      exec bash $P/scripts/echog_g1/train_full.sh ;;
+  echog_g1_selftest)                                   # DSW self-test of the phase above: tiny steps, 1 GPU, output on CPFS
+    : "${SCMG_DSW_RUNID:?explicit DSW run id required}"
+    unset SCMG_TEXT_CAUSAL
+    OUT=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/selftest/$SCMG_DSW_RUNID; rm -rf $OUT
+    NGPU=1 R=$OUT PY=${PY:-/usr/local/bin/python} SEEDS="0 1" TRAIN_ONLY=1 VAE_STEPS=60 BASE_STEPS=60 \
+      bash $P/scripts/echog_g1/train_full.sh && ls $OUT/vae/final.pt $OUT/base-s0/best.pt $OUT/base-s1/best.pt && echo SELFTEST_PASS ;;
   selftest)
     : "${SCMG_DSW_RUNID:?explicit DSW run id required}"
     OUT=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/selftest/$SCMG_DSW_RUNID; rm -rf $OUT   # CPFS, never the shared /tmp
