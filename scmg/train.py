@@ -77,7 +77,10 @@ def validate_additions(old, changes):
                              'only false->true, 0->positive slots, text_dim>0, or unchanged values are allowed')
 
 
-def build_model(base_cfg, prev_extra, new_extra, prev_state=None):
+Z_IO = ('post.', 'p_in.', 'p_aux.', 'f_in.', 'f_out.', 'mt_hist.', 'lat_mean', 'lat_std')   # the only z-shaped tensors
+
+
+def build_model(base_cfg, prev_extra, new_extra, prev_state=None, resize_z=False):
     """Base-config model -> remember base parameter ids -> rebuild the previous stage's modules -> load its weights
     -> add this stage's modules. LoRA keeps the wrapped Linear parameters, so base ids stay valid through surgery.
 
@@ -98,7 +101,19 @@ def build_model(base_cfg, prev_extra, new_extra, prev_state=None):
             state = {k: v for k, v in prev_state.items() if not k.startswith('text_in.')}
             print(f'text_dim {prev_dim} -> {m.cfg.text_dim}: re-initialised text_in (LayerNorm + Linear); '
                   f'all other weights load from the checkpoint', flush=True)
+        dropped = []
+        if resize_z:
+            # 11-04 codec change (VAE latents z=16 -> identity codec z=156): latent input/output layers are re-initialised,
+            # everything else loads; any OTHER shape mismatch is an error
+            own = m.state_dict()
+            dropped = [k for k, v in state.items() if k in own and own[k].shape != v.shape]
+            bad = [k for k in dropped if not k.startswith(Z_IO)]
+            if bad: raise RuntimeError(f'z resize: unexpected shape mismatch outside the latent I/O layers: {bad[:5]}')
+            state = {k: v for k, v in state.items() if k not in dropped}
+            print(f'z {int(prev_state["lat_mean"].shape[0])} -> {m.cfg.z}: re-initialised {sorted(dropped)}; all other weights '
+                  f'load from the checkpoint', flush=True)
         missing, unexpected = m.load_state_dict(state, strict=False)
+        missing = [k for k in missing if k not in dropped]
         if prev_dim != m.cfg.text_dim:
             missing = [k for k in missing if not k.startswith('text_in.')]
             unexpected = [k for k in unexpected if not k.startswith('text_in.')]
@@ -202,6 +217,10 @@ def main():
         prev = torch.load(a.init, map_location='cpu') if a.init else None
         if prev is not None: base_cfg = dict(prev['base_cfg'])            # copy: never mutate the checkpoint's own config
         base_cfg.update(json.loads(a.cfg) if a.stage == 'base' else {})
+        resize_z = prev is not None and int(prev['base_cfg']['z']) != int(vae.z)
+        if resize_z:
+            if a.stage != 'base': raise SystemExit(f'codec z {prev["base_cfg"]["z"]} -> {vae.z} is only supported on a base-stage fine-tune')
+            base_cfg['z'] = int(vae.z)
         extra = dict(prev['extra_cfg']) if prev is not None else {}
         extra.update(spec['cfg']); extra.update(json.loads(a.cfg) if a.stage != 'base' else {})
         prev_extra = dict(prev['extra_cfg']) if prev is not None else {}
@@ -214,13 +233,14 @@ def main():
             # text_dim is special: it must be set while building, so text_in is re-initialised before loading.
             build_cfg = dict(prev['base_cfg'])
             if 'text_dim' in base_cfg: build_cfg['text_dim'] = base_cfg['text_dim']
-            model, base_ids = build_model(build_cfg, prev_extra, extra, prev['ema'])
+            if resize_z: build_cfg['z'] = int(vae.z)
+            model, base_ids = build_model(build_cfg, prev_extra, extra, prev['ema'], resize_z=resize_z)
             for k, v in json.loads(a.cfg).items(): setattr(model.cfg, k, v)
             model.add_modules(); base_ids = set()
             extra.update({k: v for k, v in json.loads(a.cfg).items() if k in extra})
         else:
-            model, base_ids = build_model(base_cfg, prev_extra, extra, prev['ema'] if prev is not None else None)
-        if prev is None:
+            model, base_ids = build_model(base_cfg, prev_extra, extra, prev['ema'] if prev is not None else None, resize_z=resize_z)
+        if prev is None or resize_z:
             model.lat_mean.copy_(torch.tensor(vck['lat_mean'])); model.lat_std.copy_(torch.tensor(vck['lat_std']))
         elif rank == 0:
             print(f'init from {a.init} (stage {prev.get("stage")}); added modules: {sorted(set(extra) - set(prev_extra))}')
