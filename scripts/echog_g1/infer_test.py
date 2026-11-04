@@ -6,13 +6,18 @@ Conditioning: audio feat89 + e5 word tokens (+ token times) + CAM++ vector of th
 (ref_valid = 0: val_common speakers are absent from train_drop, and test GT must not leak into a condition).
     SCMG_J=39 python scripts/echog_g1/infer_test.py --ckpt base/best.pt --vae vae/final.pt --stats STATS --view VIEW/test
         --text-cache TEXT_TEST --out preds/seed_000 [--stems list.txt] [--n 20] [--seed 0] [--steps 10] [--cfg-w 1]
+Protocols (11-04): --protocol offline (default, unchanged: final text, H = inf) | engine = the EX002 engine protocol of
+scripts/baseline_eval.sh / scmg.evaluate: text streams word by word and EARLY (x2: rate 15 tok/s, lag 0.15 s) with the
+prefix-causal e5 features (--text-causal = the G1 causal cache of the SAME text cache, e.g. text-e5-causal-echog-g1-v1-test),
+deploy timing (token times only once voiced), audio look-ahead H = 2 x 80 ms = 160 ms past the chunk start. Individual
+switches (--text-mode / --horizon / --x2-rate / --x2-lag / --deploy-timing) override the protocol preset.
 """
 import argparse, json, os, sys, time
 from pathlib import Path
 import numpy as np
 import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-from scmg.common import J, CHUNK_FRAMES, EMBODIMENT
+from scmg.common import J, CHUNK_FRAMES, EMBODIMENT, U80
 from scmg.data import View, WindowDataset
 from scmg.evaluate import load
 from scmg.infer import generate
@@ -28,8 +33,26 @@ def main():
     ap.add_argument('--seed', type=int, default=0); ap.add_argument('--steps', type=int, default=10); ap.add_argument('--cfg-w', type=float, default=1.0)
     ap.add_argument('--shard', default='0/1', help='i/n: this process handles clips i, i+n, ...')
     ap.add_argument('--save50', action='store_true', help='also keep the 50 Hz output (<stem>.q50.npy)')
+    ap.add_argument('--protocol', default='offline', choices=['offline', 'engine'])
+    ap.add_argument('--text-mode', default=None, choices=['final', 'x2'], help='override of the protocol preset')
+    ap.add_argument('--horizon', default=None, help="audio look-ahead in 80 ms units past the chunk start, or 'inf'")
+    ap.add_argument('--x2-rate', type=float, default=15.0); ap.add_argument('--x2-lag', type=float, default=0.15)
+    ap.add_argument('--deploy-timing', action=argparse.BooleanOptionalAction, default=None)
+    ap.add_argument('--text-causal', default=None, help='prefix-causal e5 cache row-aligned with --text-cache (needed by x2)')
     a = ap.parse_args()
     if EMBODIMENT != 'g1': raise SystemExit('run with SCMG_J=39')
+    eng = a.protocol == 'engine'
+    tm = a.text_mode or ('x2' if eng else 'final')
+    hz = a.horizon or ('2' if eng else 'inf')
+    H = INF if hz == 'inf' else int(hz) * U80
+    dt = a.deploy_timing if a.deploy_timing is not None else eng
+    # the causal cache comes ONLY from --text-causal: an inherited SCMG_TEXT_CAUSAL (e.g. the EX002 v36_1 cache exported by
+    # bagger_env.sh / r4_lane.sh) must never be picked up silently
+    os.environ.pop('SCMG_TEXT_CAUSAL', None)
+    if a.text_causal: os.environ['SCMG_TEXT_CAUSAL'] = a.text_causal
+    if tm == 'x2' and not a.text_causal: raise SystemExit('--text-mode x2 needs --text-causal (prefix-causal e5 of the same rows)')
+    proto = None if (tm, hz, dt) == ('final', 'inf', False) else dict(protocol=a.protocol, text_mode=tm, horizon_80ms=hz,
+        x2_rate=a.x2_rate, x2_lag=a.x2_lag, deploy_timing=dt, text_causal=a.text_causal)
     dev = 'cuda'; out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     stats = json.loads(Path(a.stats).read_text())
     m, vae = load(a.ckpt, a.vae, dev)
@@ -53,17 +76,19 @@ def main():
         s['ref'] = np.zeros_like(s['ref']); s['ref_valid'] = np.float32(0.)
         cond = {kk: s[kk] for kk in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm',
                                      'titime', 'tseg', 'tiseg', 'tiend', 'text_c') if kk in s}
-        cmd, _, tm = generate(m, vae, s['feat'], cond, stats, nch, H=INF, steps=a.steps, seed=a.seed, standby=qm, ctx_t=m.ctx_t,
-                              cfg_w=a.cfg_w)
+        kw = {} if proto is None else dict(text_mode=tm, x2_rate=a.x2_rate, x2_lag=a.x2_lag, deploy_timing=dt)
+        cmd, _, tk = generate(m, vae, s['feat'], cond, stats, nch, H=H, steps=a.steps, seed=a.seed, standby=qm, ctx_t=m.ctx_t,
+                              cfg_w=a.cfg_w, **kw)
         if cmd.shape[0] < L or cmd.shape[1] != J or not np.isfinite(cmd).all(): raise ValueError(f'{stem}: generated {cmd.shape}')
         q50 = cmd[:L].astype(np.float64)
         r30 = g1.to30(q50, n30).astype(np.float32)
         torch.save(dict(robot_repr=torch.from_numpy(r30), real_num_frames=n30, fps=30.0, representation_units='physical',
                         representation_schema='projecthermes-g1-39d-standard-v2', source=stem,
                         generator=dict(ckpt=str(a.ckpt), seed=a.seed, steps=a.steps, cfg_w=a.cfg_w, frames50=L,
-                                       resample='scmg/g1.py to30 (cubic / heading spline / RotationSpline)')), o)
+                                       resample='scmg/g1.py to30 (cubic / heading spline / RotationSpline)',
+                                       **({} if proto is None else dict(stream=proto)))), o)
         if a.save50: np.save(out / f'{stem}.q50.npy', q50.astype(np.float32))
-        log.append(dict(stem=stem, frames50=L, frames30=n30, tick_ms_p50=float(np.median(tm[1:]) * 1e3) if len(tm) > 1 else None))
+        log.append(dict(stem=stem, frames50=L, frames30=n30, tick_ms_p50=float(np.median(tk[1:]) * 1e3) if len(tk) > 1 else None))
         if k % 20 == 0: print(f'{k + 1}/{len(stems)} {stem} L50={L} n30={n30} {time.time() - t0:.0f}s', flush=True)
     with (out / f'GEN_LOG.{si}of{sn}.jsonl').open('a') as f:
         for r in log: f.write(json.dumps(r) + '\n')
