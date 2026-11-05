@@ -21,6 +21,7 @@ from scmg.data import View, WindowDataset, clip_lm_capacity
 from scmg.token_cache import checkpoint_config, resolve_token_cache
 from scmg.evaluate import load, ARMS
 from scmg.infer import Streamer
+from scmg.landing import apply_cond
 from scmg.common import CHUNK, CHUNK_FRAMES, U80, EMBODIMENT, ARMS as ARMS_EMB
 from scmg.data import VIEW
 D = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg'; dev = 'cuda'
@@ -68,6 +69,7 @@ def run(m, vae, data, w, oracle):
         q = torch.from_numpy(s['q']).float().to(dev)[None]
         mu, _ = vae.encode(q); gl = ((mu - m.lat_mean) / m.lat_std)[0]                 # [N, z] GT latents (normalised)
         cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm', 'titime', 'tseg', 'tiseg', 'tiend', 'text_c') if k in s}
+        cond = apply_cond(cond)                                                         # SCMG_COND (11-05 landing)
         S = Streamer(m, vae, s['feat'], cond, st, H=10 ** 9 if _H == 'inf' else int(_H) * U80, steps=10, seed=SEED, standby=st['q_mean'], ctx_t=m.ctx_t, cfg_w=w,
                      window_lm_text=WIN and m.cfg.planner == 'voxcpm', text_mode=TM, x2_rate=15.0, x2_lag=X2_LAG, deploy_timing=TM != 'final', trim_start=FIX, cfg_null_fix=FIX, still_refresh=RF)
         gen = []

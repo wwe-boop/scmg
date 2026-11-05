@@ -20,6 +20,7 @@ import numpy as np
 import torch
 
 from .common import CHUNK_FRAMES, PROSODY_COLS, J, U80, P
+from .landing import apply_cond, cond_spec
 from .data import View, WindowDataset, VIEW, require_causal_text, clip_lm_capacity
 from .infer import generate
 from .model import INF
@@ -140,6 +141,7 @@ def main():
             ds = WindowDataset(view, nch * CHUNK_FRAMES, max_tokens=256, max_ids=clip_lm_capacity(view, ci) if a.window_lm_text else 160)
             s = ds.sample(ci, 0, np.random.default_rng(ci))
             cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm', 'titime', 'tseg', 'tiseg', 'tiend', 'text_c', 'tts_h', 'tts_hm') if k in s}
+            cond = apply_cond(cond)                      # SCMG_COND (11-05 landing): deployment / persona conditions; unset = unchanged
             gt = s['q'] * qs + qm
             beat = np.clip(s['feat'][:, PROSODY_COLS['onset']] + s['feat'][:, PROSODY_COLS['beat']], 0, None)
             gens = []
@@ -173,6 +175,7 @@ def main():
                 ds = WindowDataset(view, nch * CHUNK_FRAMES, max_tokens=256, max_ids=clip_lm_capacity(view, ci) if a.window_lm_text else 160)
                 s = ds.sample(ci, 0, np.random.default_rng(ci))
                 cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm', 'titime', 'tseg', 'tiseg', 'tiend', 'text_c', 'tts_h', 'tts_hm') if k in s}
+                cond = apply_cond(cond)                      # SCMG_COND (11-05 landing): deployment / persona conditions; unset = unchanged
                 rg = np.random.default_rng(ci)
                 hl = int(rg.integers(20, 51)); h0 = int(rg.integers(2 * CHUNK_FRAMES, max(2 * CHUNK_FRAMES + 1, (nch - 2) * CHUNK_FRAMES - hl)))
                 robot = Robot(standby, hold_start=h0, hold_len=hl, seed=ci)
@@ -200,6 +203,7 @@ def main():
             print('closed-loop', 'state' if use_state else 'no_state', json.dumps(cl), flush=True)
         res['closed_loop'] = cl
     (out / 'RESULTS.json').write_text(json.dumps(res, indent=1))
+    if cond_spec(): (out / 'COND.json').write_text(json.dumps(dict(SCMG_COND=cond_spec())))   # 11-05 provenance
     with open(out / 'per_clip.jsonl', 'w') as f:
         for p in per: f.write(json.dumps({k: (float(v) if isinstance(v, (np.floating, float)) else v) for k, v in p.items()}) + '\n')
 

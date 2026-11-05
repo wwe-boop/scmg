@@ -11,6 +11,7 @@ import numpy as np, torch
 from scmg.common import CHUNK_FRAMES, U80
 from scmg.evaluate import load
 from scmg.infer import generate
+from scmg.landing import apply_cond
 from scmg.model import INF
 from scmg.data import View, WindowDataset, VIEW
 from scmg.token_cache import checkpoint_config, resolve_token_cache, validate_manifest_tokens, validate_manifest_cache
@@ -57,7 +58,7 @@ def variant(ci, v):
             if k in so: c[k] = so[k]
         for k in ('ttime', 'titime', 'tseg', 'tiseg', 'tiend'):        # 11-03 review N6: segment starts too (window text)
             if k in c: c[k] = c[k] * r
-    return c
+    return apply_cond(c)                                                # SCMG_COND (11-05 landing); unset = unchanged
 
 
 for spec in a.models:
@@ -88,6 +89,7 @@ for spec in a.models:
         if v == 'gnull' and not semc: continue          # own text, Local Flow given the null g_k: how much the flow uses g
         gk = dict(g_override=torch.zeros(m.cfg.n_sem, device='cuda')) if v == 'gnull' else {}
         od = Path(a.out) / lab / v; od.mkdir(parents=True, exist_ok=True)
+        if os.environ.get('SCMG_COND', '').strip(): (od / 'COND.json').write_text(json.dumps(dict(SCMG_COND=os.environ['SCMG_COND'].strip())))
         for ci in cis:
             f = od / f'gen_{ci}.npy'
             s = S[ci]; nch = len(s['feat']) // CHUNK_FRAMES
