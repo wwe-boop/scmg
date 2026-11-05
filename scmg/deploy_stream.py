@@ -70,8 +70,13 @@ SOURCE_ID = 5           # semsynth_r7p1 (synthetic speech), closest training sou
 #                                            (scmg/landing.py ArmEnvelope: stateless, zero latency, never adds speed)
 #   SCMG_PERSONA=<dir>/<name>                fixed reference motion <name>_ref.npy ([128, 34] normalised) + speaker
 #                                            embedding <name>_spk.npy ([192]) for every sentence (make_persona.py)
+#   SCMG_SPK_ALPHA=<a in (0,1)>              with SCMG_PERSONA: speaker condition a * speaker + (1 - a) * null speaker
+#                                            (11-05 final setting a = 0.15: keeps the semantic gestures of the null speaker)
 ARM_ENVELOPE = os.environ.get('SCMG_ARM_ENVELOPE', '').strip() or None
 PERSONA = os.environ.get('SCMG_PERSONA', '').strip() or None
+SPK_ALPHA = float(os.environ['SCMG_SPK_ALPHA']) if os.environ.get('SCMG_SPK_ALPHA', '').strip() else None
+if SPK_ALPHA is not None and (PERSONA is None or not 0 < SPK_ALPHA < 1):
+    raise ValueError('SCMG_SPK_ALPHA needs SCMG_PERSONA and 0 < a < 1')
 
 
 def persona_cond(device):
@@ -83,7 +88,7 @@ def persona_cond(device):
     ref = np.load(PERSONA + '_ref.npy').astype(np.float32); spk = np.load(PERSONA + '_spk.npy').astype(np.float32)
     if ref.shape != (128, 34) or spk.shape != (192,) or not (np.isfinite(ref).all() and np.isfinite(spk).all()):
         raise ValueError(f'SCMG_PERSONA {PERSONA}: need finite ref [128, 34] and spk [192], got {ref.shape} / {spk.shape}')
-    return (torch.as_tensor(spk, device=device), torch.tensor(1., device=device),
+    return (torch.as_tensor(spk, device=device), torch.tensor(1. if SPK_ALPHA is None else SPK_ALPHA, device=device),
             torch.as_tensor(ref, device=device), torch.tensor(1., device=device))
 
 
@@ -147,7 +152,8 @@ class Model:
         self.cfg = dict(ckpt=str(CKPT), vae=str(VAE), stats=str(STATS), cfg_w=2.5, steps=10, H=2,
                         trim_start=True, cfg_null_fix=True, text_mode='x2', x2_rate=15.0, x2_lag=0.15,
                         source=SOURCE_ID, speaker='null' if PERSONA is None else 'persona:' + PERSONA,
-                        reference='null' if PERSONA is None else 'persona:' + PERSONA, arm_envelope=ARM_ENVELOPE)
+                        reference='null' if PERSONA is None else 'persona:' + PERSONA, arm_envelope=ARM_ENVELOPE,
+                        spk_alpha=SPK_ALPHA)
         self.envelope = None
         if ARM_ENVELOPE:
             from scmg.landing import ArmEnvelope
