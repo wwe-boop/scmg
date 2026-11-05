@@ -135,7 +135,7 @@ for i in range(4000):
     if not torch.equal(w['known_mask'], torch.arange(ws, fe) < c) or (w['loss_weight'][w['known_mask']] != 0).any() \
             or (w['loss_weight'][~w['known_mask']] <= 0).any(): bad.append((i, 'known/loss'))
     if not torch.equal(w['motion'], base['motion'][ws:fe]): bad.append((i, 'motion'))
-    if W > int(round(scs.ctx_s * fps)) + 11 + int(round(scs.tail_max_s * fps)): bad.append((i, 'length'))
+    if W > int(round(scs.ctx_s * fps)) + int(math.ceil(bs * fps)) + 1 + int(round(scs.tail_max_s * fps)): bad.append((i, 'length'))   # G1 30 FPS: 11
     if i % 8 == 0:                                                              # (b) perturb every future quantity
         p = dict(base); a2 = base['audio'].clone(); a2[frames_before(now + ahead, fps):] = -7.0; p['audio'] = a2
         t2 = base['text'].clone(); hide = np.setdiff1d(np.arange(Nt), vis_all); t2[hide] = -3.0; p['text'] = t2

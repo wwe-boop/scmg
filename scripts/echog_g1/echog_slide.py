@@ -26,7 +26,9 @@ time now_k = k * 0.32 s, using ONLY what has arrived by then:
          every Euler step, so the new block continues the committed motion (RePaint-style; ECHO-G was not trained for it).
 With --ahead inf --text final --audio frozen the last block's window is the whole clip with the official noise and conditions,
 i.e. exactly the official offline sample (sanity check against echo_g.inference output).
-Output: <out>/<stem>.pt in the official prediction format (robot_repr [F, 39] physical, real_num_frames, fps 30, ...).
+Output: <out>/<stem>.pt in the official prediction format (robot_repr [F, D] physical, real_num_frames, fps, ...).
+EX002 (34D, 50 FPS; 11-05): same code; prefix audio repeats the EX002 condition pipeline (official 30 FPS extraction, then the
+30 -> 50 FPS resampling recorded in payload['resampling']); data roots without a frozen condition manifest are accepted.
     PYTHONPATH=<official>/src python scripts/echog_g1/echog_slide.py --checkpoint best.pt --config sgdit_audio_text.yaml
         --cond-dir condition_30fps --meta <official-meta> --wav-dir audio --audio-model wav2vec2-large-xlsr-53-english
         --stems stems.txt --out preds/seed_000 --seed 0
@@ -59,12 +61,25 @@ class PrefixAudio:
         self.model = Wav2Vec2ForCTC.from_pretrained(model_dir).to(device).eval(); self.dev = device
 
     @torch.no_grad()
-    def __call__(self, wav, t_end, fps=30.0):
+    def __call__(self, wav, t_end, fps=30.0, src_fps=None):
+        """src_fps: frame rate the released features were extracted at before a resampling to fps (EX002: the official
+        30 FPS extraction, FP16, then FP32 linear align_corners=True to 50 FPS, FP16 -- payload['resampling']); None or
+        == fps: the official direct extraction (G1)."""
         x = wav[:int(round(min(t_end, len(wav) / 16000.) * 16000))]
         dur = len(x) / 16000.
         iv = self.proc(x, sampling_rate=16_000, return_tensors='pt').input_values.to(self.dev)
         h = self.model(iv, output_hidden_states=True).hidden_states[-1].float()
-        return interpolate_features(h, int(round(dur * fps))).half().float()   # the official cache stores FP16
+        if src_fps is None or float(src_fps) == float(fps):
+            return interpolate_features(h, int(round(dur * fps))).half().float()   # the official cache stores FP16
+        f = interpolate_features(h, int(round(dur * float(src_fps)))).half()         # official 30 FPS cache (FP16)
+        n = max(2, int(round(dur * fps)))                                            # EX002: round(duration x 50) frames
+        return torch.nn.functional.interpolate(f.float().T[None], size=n, mode='linear', align_corners=True)[0].T.half().float()
+
+
+def resample_source_fps(payload):
+    """source frame rate of resampled released features (EX002 condition_50fps: 30), else None"""
+    r = payload.get('resampling')
+    return float(r['source_fps']) if isinstance(r, dict) and 'source_fps' in r else None
 
 
 @torch.no_grad()
@@ -83,7 +98,7 @@ def euler_inpaint(model, batch, steps, noise, known, n_known):
 @torch.no_grad()
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--checkpoint', type=Path, required=True); ap.add_argument('--config', type=Path, required=True)
+    ap.add_argument('--checkpoint', type=Path, required=True); ap.add_argument('--config', type=Path, help='default: the config embedded in the checkpoint')
     ap.add_argument('--cond-dir', type=Path, required=True)
     ap.add_argument('--meta', type=Path, required=True, help='official data root part with audit/condition/ (lengths + frozen manifest)')
     ap.add_argument('--stems', type=Path, required=True); ap.add_argument('--out', type=Path, required=True)
@@ -106,7 +121,8 @@ def main():
     if a.prefix == 'inpaint' and a.guidance_scale != 1: raise SystemExit('--prefix inpaint implements guidance 1 only')
     fps = float(config.data.fps); mean, std = mean.to(dev), std.to(dev)
     lengths = load_aligned_lengths(a.meta / config.data.aligned_lengths_file)
-    man = load_condition_manifest(a.meta / config.data.condition_manifest, config.data.condition_manifest_sha256)
+    man = (load_condition_manifest(a.meta / config.data.condition_manifest, config.data.condition_manifest_sha256)
+           if config.data.condition_manifest else None)                         # EX002 data roots: no frozen manifest
     pa = None
     if a.audio == 'prefix':
         if not (a.wav_dir and a.audio_model): raise SystemExit('--audio prefix needs --wav-dir and --audio-model')
@@ -131,6 +147,7 @@ def main():
         centre = c['token_centers'].to(dev)                                    # official FP32 centres
         arr = x2_arrival(tt[:, 0], a.x2_rate, a.x2_lag)
         wav = librosa.load(a.wav_dir / f'{stem}.wav', sr=16_000, mono=True)[0] if pa is not None else None
+        src_fps = resample_source_fps(payload)
         g = torch.Generator(device=dev); g.manual_seed(stable_seed(stem, a.seed))
         noise = torch.randn(F, model.motion_dim, generator=g, device=dev)    # == echo_g.inference initial noise of this clip
         nT = int(round(a.tail_ms / 1000. * fps))                               # tail frames past the clip end: extra noise
@@ -146,7 +163,7 @@ def main():
             if ws > f0: raise ValueError('window shorter than tail + block')
             na = F if ta == math.inf else min(F, int(math.ceil(ta * fps - 1e-6)))      # frames with f / fps < t_a
             if pa is not None:                                            # re-extracted on the arrived waveform prefix
-                feats = pa(wav, ta, fps).to(dev); na = min(na, len(feats))
+                feats = pa(wav, ta, fps, src_fps).to(dev); na = min(na, len(feats))
             else:
                 feats = audio_full
             au = torch.zeros(W, audio_full.shape[1], device=dev)

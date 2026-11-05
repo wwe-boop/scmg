@@ -7,7 +7,7 @@ exactly the echo_g.inference initial noise, frames past the clip end draw furthe
 committed.  The tail may run past the clip end (no information there: zero audio, no text) so the window never uses the
 clip length.  Conditions at now_k:
   --audio prefix (default, strictly causal): official Wav2Vec2 extraction re-run on the waveform prefix [0, now + ahead)
-          (echog_slide.PrefixAudio); frozen: slices of the released full-utterance features (training uses these; leaks the
+          (echog_slide.PrefixAudio; EX002: official 30 FPS extraction + the recorded 30 -> 50 FPS resampling); frozen: slices of the released full-utterance features (training uses these; leaks the
           future through the bidirectional encoder / utterance normalisation -- measured as a control);
   --text voiced (default) | x2 | final (see stream_core.visible_tokens).
 --offline: whole clip in one window, c = 0, frozen audio, final text (checks that the streaming fine-tune kept the offline
@@ -31,6 +31,7 @@ from echo_g.condition_provenance import load_condition_manifest
 from echo_g.data import decode_condition, load_aligned_lengths, read_stems
 from echo_g.utils import atomic_torch_save, stable_seed
 from stream_core import block_start, load_stream_model, sample_window_euler, window_conditions
+from echog_slide import resample_source_fps          # EX002 condition_50fps: official 30 FPS features resampled to 50
 
 
 def batch1(cond, W, dev):
@@ -50,7 +51,7 @@ def stream_clips(model, sc, clips, fps, steps, *, block_s, ahead, ctx_f, tail_f,
         now = k * block_s; items = []
         for i in act:
             c = clips[i]; f1 = min(c['F'], block_start(k + 1, block_s, fps)); ws = max(0, f0 - ctx_f); fe = f1 + tail_f
-            feats = prefix_audio(c['wav'], now + ahead, fps).to(dev) if prefix_audio is not None else c['audio']
+            feats = prefix_audio(c['wav'], now + ahead, fps, c.get('src_fps')).to(dev) if prefix_audio is not None else c['audio']
             cond = window_conditions(feats, c['text'], c['tt'], c['centres'], ws, fe, now, ahead, fps, text_mode, sc.x2_rate, sc.x2_lag)
             items.append((i, f1, ws, fe, cond)); logs[i].append((cond['n_visible'], cond['audio_frames']))
         B = len(items); Wm = max(fe - ws for _, _, ws, fe, _ in items); Nm = max(it[4]['text'].shape[0] for it in items)
@@ -133,7 +134,7 @@ def main():
         if tail_f and not a.offline: noise = torch.cat([noise, torch.randn(tail_f, model.motion_dim, generator=g, device=dev)])
         wav = librosa.load(a.wav_dir / f'{stem}.wav', sr=16_000, mono=True)[0] if pa is not None else None
         return dict(stem=stem, F=F, audio=c['audio'].to(dev), text=c['text'].to(dev), centres=c['token_centers'].to(dev),
-                    tt=torch.as_tensor(payload['token_times']).double().numpy(), noise=noise, wav=wav)
+                    tt=torch.as_tensor(payload['token_times']).double().numpy(), noise=noise, wav=wav, src_fps=resample_source_fps(payload))
 
     for gi in range(0, len(todo), G):
         tc = time.time(); clips = [load(s_) for s_ in todo[gi:gi + G]]
