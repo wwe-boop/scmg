@@ -46,8 +46,20 @@ def hist(ts):
     return h / max(h.sum(), 1)
 
 
+def pause_stats(J, thr=0.15, min_s=0.5):
+    """frames whose mean mmae-normalized upper-body speed < thr (still), and still runs >= min_s (pauses)"""
+    v = (E.body_speed_central(J, a.fps)[:, ba.upper_bodies] / (mmae[ba.upper_bodies] + 1e-8)).mean(1)
+    still = v < thr; runs, n = 0, 0
+    for x in np.r_[still, False]:
+        if x: n += 1
+        else:
+            runs += n >= min_s * a.fps; n = 0
+    return float(still.sum()), float(runs)
+
+
 cols = [('GT', None)] + [tuple(p.split('=', 1)) for p in a.panels]
 acc = {lab: [] for lab, _ in cols}; dur = 0.0; sp = {lab: np.zeros((2, 10)) for lab, _ in cols}
+ps = {lab: {} for lab, _ in cols}   # speaker -> [still frames, pauses, frames, div sum]
 for s in stems:
     gr = E.load_repr(f'{a.ref_dir}/{s}.pt', a.fps)
     prs = [E.load_repr(f'{d}/{s}.pt', a.fps) for _, d in cols[1:]]
@@ -57,6 +69,8 @@ for s in stems:
     dur += n / a.fps
     for lab, r in [('GT', gr)] + [(l, p) for (l, _), p in zip(cols[1:], prs)]:
         Jp = E.fk_positions_ba(r[:n]); acc[lab].append(beat_times(Jp)); sp[lab] += np.stack(speed_phase(Jp))
+        st_, pa_ = pause_stats(Jp); fl = Jp.reshape(n, -1); dv = float(np.abs(fl - fl.mean(0)).sum())
+        k = '_'.join(s.split('_')[:3]); ps[lab].setdefault(k, np.zeros(4)); ps[lab][k] += [st_, pa_, n, dv]
 print(f'{len(acc["GT"])} clips, {dur / 60:.1f} min; phase bins of the {a.period * 1000:.0f} ms chunk grid (0 = chunk start)')
 for lab, _ in cols:
     ts = np.concatenate(acc[lab]); h = hist(ts)
@@ -64,3 +78,8 @@ for lab, _ in cols:
 print('mean normalized upper-body speed per phase bin (relative to the clip-set mean of that label):')
 for lab, _ in cols:
     m = sp[lab][0] / np.maximum(sp[lab][1], 1); print(f'{lab:16s} mean {m.mean():.3f} | ' + ' '.join(f'{x / m.mean():.3f}' for x in m))
+print('still frames (mean normalized upper-body speed < 0.15) and pauses (still >= 0.5 s) per minute; Div per speaker:')
+for lab, _ in cols:
+    tot = sum(ps[lab].values())
+    per = '  '.join(f"{k.split('_')[2]}: div {v[3] / v[2]:.3f} still {100 * v[0] / v[2]:.1f}%" for k, v in sorted(ps[lab].items()))
+    print(f'{lab:16s} still {100 * tot[0] / tot[2]:.1f}%  pauses/min {tot[1] / (tot[2] / a.fps / 60):.2f} | {per}')
