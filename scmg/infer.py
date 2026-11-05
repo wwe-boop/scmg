@@ -28,7 +28,7 @@ class Streamer:
                  standby=None, device='cuda', hist_measured=False, ctx_t=1.0, cfg_w=1.0, cfg_text=True, cfg_t=None,
                  text_mode='final', x2_rate=15.0, x2_lag=0.15, seg_lead=0.3, deploy_timing=False,
                  elastic=None, window_lm_text=False, g_override=None, trim_start=True, cfg_null_fix=True, still_refresh=None,
-                 audio_off=False, causal_inputs=None, asr_lag=0.5, trace=None):
+                 audio_off=False, causal_inputs=None, asr_lag=0.5, trace=None, cuda_graph=False):
         """feat [T, 89] normalised (whole utterance; access is restricted to what has arrived);
         cond: dict(text [K,768], ttime [K] absolute s, tmask [K], spk [192], spk_valid, source, ref [R,J], ref_valid)
         (+ tts_h [T/4, 2048], tts_hm [T/4] for models with cfg.tts_h: TTS hidden rows aligned to feat frame 0, row r = frames
@@ -68,6 +68,11 @@ class Streamer:
         # deploy_timing: token times exist only once voiced (TTS text_progress anchors) -- automatic for ADSC models.
         self.text_mode, self.deploy_timing = text_mode, deploy_timing
         self.causal, self.trace, self.asr_lag = causal_inputs, trace, asr_lag
+        # 11-06 opt-in (default off = the eager loop below, unchanged): the Local Flow sampling loop (steps x CFG branches) is
+        # captured once as a CUDA graph and replayed every tick (inputs copied into static buffers). Only the configuration
+        # the G1 models use is supported (no style / state / MTC / flow text route / separate text guidance); anything else
+        # falls back to the eager loop. scmg.cuda_graph.FlowGraph.
+        self.cuda_graph = bool(cuda_graph); self._flow_graph = None; self.n_graph_ticks = 0
         self.x2_rate, self.x2_lag = x2_rate, x2_lag
         if text_mode in ('voiced', 'asr'):
             if H >= INF or elastic is not None: raise ValueError(f'text_mode {text_mode} needs a fixed streaming horizon H')
@@ -382,7 +387,17 @@ class Streamer:
                 if self.cfg_w != 1:
                     hk_u = m.sem_h(hk_u, self.g_override)
                     if self.cfg_t is not None: hk_a = m.sem_h(hk_a, self.g_override)
-            for s in range(self.steps):
+            use_graph = (self.cuda_graph and style_tok is None and ada is None and mtk is None and ft is None and self.cfg_t is None)
+            if use_graph:
+                from .cuda_graph import FlowGraph
+                if self._flow_graph is None:                         # one capture per model + sampler setting, reused by every clip
+                    cache = m.__dict__.setdefault('_scmg_flow_graphs', {})
+                    gk = (self.steps, float(self.cfg_w), bool(self.cfg_null_fix))
+                    if gk not in cache: cache[gk] = FlowGraph(m, self.steps, self.cfg_w, self.cfg_null_fix)
+                    self._flow_graph = cache[gk]
+                x = self._flow_graph(x, known, ct, cfg.ctx, hk, hk_u if self.cfg_w != 1 else None, g, aw, awm)
+                self.n_graph_ticks += 1
+            for s in (range(0) if use_graph else range(self.steps)):
                 tval = s / self.steps
                 t = torch.full((1, L), tval, device=self.dev); t[known] = 1.
                 if ct < 1: t[:, :cfg.ctx] = torch.where(known[:, :cfg.ctx], torch.full_like(t[:, :cfg.ctx], ct), t[:, :cfg.ctx])

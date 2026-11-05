@@ -11,7 +11,10 @@ never val_common).
    emitted frame bitwise unchanged (psync and pasr, causal inputs, fixed seed); the whole-clip path (view feat89 / CAM++ of
    the whole perturbed clip, engine x2 text) under the same perturbation must CHANGE (the test detects leakage)
  d causal feat89 vs the view's whole-clip feat89 (normalised units): with the whole clip arrived, and as read at every tick;
-   prefix CAM++ vs whole-clip cosine (1 / 2 / 4 / 8 s)"""
+   prefix CAM++ vs whole-clip cosine (1 / 2 / 4 / 8 s)
+11-06: CUDA_GRAPH=1 runs every NEW-code Streamer with cuda_graph=True (scmg/cuda_graph.py; the base module keeps its eager
+loop), so a / c also check the graph path (bitwise == eager base, future-invariance); BASE_FILE=<path> reads the base
+infer.py from a file instead of `git show BASE` (hosts without the repository)."""
 import ast, json, os, subprocess, sys, types
 from pathlib import Path
 import numpy as np
@@ -48,14 +51,19 @@ view = View(HOSV, 'val', TEXT, stats)
 idx = {c['items'][0]['id']: i for i, c in enumerate(view.clips)}
 m, vae = load(CK, VAE, 'cuda')
 qm = np.asarray(stats['q_mean'], np.float32)
-tokz = CF.e5_tokenizer(); enc = CF.speaker_encoder(); pst = CF.load_pstats(PSTATS)
+tokz = CF.e5_tokenizer(); enc = CF.speaker_encoder(E['CAMPPLUS']) if E.get('CAMPPLUS') else CF.speaker_encoder(); pst = CF.load_pstats(PSTATS)
 print('cuda', torch.cuda.get_device_name(0), 'CUDA_VISIBLE_DEVICES', E.get('CUDA_VISIBLE_DEVICES'), 'pid', os.getpid(), flush=True)
 
 
+OLD_MOD = [None]
+
+
 def old_infer():
-    src = subprocess.run(['git', '-C', str(CODE), 'show', f'{BASE}:scmg/infer.py'], capture_output=True, text=True, check=True).stdout
+    src = (Path(E['BASE_FILE']).read_text() if E.get('BASE_FILE') else
+           subprocess.run(['git', '-C', str(CODE), 'show', f'{BASE}:scmg/infer.py'], capture_output=True, text=True, check=True).stdout)
     mod = types.ModuleType('scmg._infer_base'); mod.__package__ = 'scmg'; mod.__file__ = f'{BASE}:scmg/infer.py'
     exec(compile(src, mod.__file__, 'exec'), mod.__dict__)
+    OLD_MOD[0] = mod
     return mod
 
 
@@ -78,6 +86,7 @@ ENGINE = dict(H=2 * U80, text_mode='x2', x2_rate=15., x2_lag=.15, deploy_timing=
 def run(mod, d, n_ticks=None, feat=None, cond=None, causal=None, trace=None, **kw):
     cond = cond if cond is not None else d['cond']; feat = d['s']['feat'] if feat is None else feat
     extra = {} if causal is None and trace is None else dict(causal_inputs=causal, trace=trace)
+    if E.get('CUDA_GRAPH') == '1' and mod is not OLD_MOD[0]: extra['cuda_graph'] = True
     st = mod.Streamer(m, vae, feat, cond, stats, steps=10, seed=0, standby=qm, ctx_t=m.ctx_t, cfg_w=2.5, **kw, **extra)
     out = []
     for i in range(d['nch'] if n_ticks is None else n_ticks):

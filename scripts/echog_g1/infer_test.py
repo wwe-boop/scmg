@@ -41,6 +41,7 @@ def main():
     ap.add_argument('--shard', default='0/1', help='i/n: this process handles clips i, i+n, ...')
     ap.add_argument('--save50', action='store_true', help='also keep the 50 Hz output (<stem>.q50.npy)')
     ap.add_argument('--protocol', default='offline', choices=['offline', 'engine', 'psync', 'pasr'])
+    ap.add_argument('--cuda-graph', action='store_true', help='11-06: replay the Local Flow loop as a CUDA graph (scmg/cuda_graph.py; default off)')
     ap.add_argument('--text-mode', default=None, choices=['final', 'x2', 'voiced', 'asr'], help='override of the protocol preset')
     ap.add_argument('--causal-inputs', action=argparse.BooleanOptionalAction, default=None,
                     help='feat89 / CAM++ from the arrived PCM prefix every tick (default: on for psync / pasr)')
@@ -156,6 +157,7 @@ def main():
                                                        Tpad=len(s['feat']), spk=not a.no_spk, spk_refresh=a.spk_refresh)
                 if a.diag_whole_spk:                     # diagnostic split of the causal-input cost: causal feat89, whole-clip speaker
                     _sv = (np.asarray(s['spk'], np.float32), float(s['spk_valid'])); mkw['causal_inputs'].spk = lambda Tk, _sv=_sv: _sv
+        if a.cuda_graph: mkw['cuda_graph'] = True
         cmd, _, tk = generate(m, vae, s['feat'], cond, stats, nch, H=H, steps=a.steps, seed=a.seed, standby=qm, ctx_t=m.ctx_t,
                               cfg_w=a.cfg_w, cfg_t=a.cfg_t, noise_scale=a.noise_scale, **kw, **mkw)
         if cmd.shape[0] < L or cmd.shape[1] != J or not np.isfinite(cmd).all(): raise ValueError(f'{stem}: generated {cmd.shape}')
