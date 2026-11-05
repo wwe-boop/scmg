@@ -26,6 +26,7 @@ ap.add_argument('--lr', type=float, default=1e-4); ap.add_argument('--w-foot', t
 ap.add_argument('--vae-w-vel', type=float, default=None, help='override the VAE velocity-L1 weight (default: checkpoint value 0.3)')
 ap.add_argument('--vae-w-acc', type=float, default=None, help='override the VAE acceleration-L1 weight (default 0.1): fidelity of accelerations / jerk')
 ap.add_argument('--vae-w-accmag', type=float, default=None, help='override the VAE acceleration-MAGNITUDE weight (default 0)')
+ap.add_argument('--latent-noise', type=float, default=0.0, help='extra Gaussian latent noise, in units of the per-dim latent std (robustness to generator error; 0 = off)')
 ap.add_argument('--w-jerk', type=float, default=0.0, help='per-channel jerk-energy matching (sign-free, counters decoder over-smoothing)')
 ap.add_argument('--workers', type=int, default=6); ap.add_argument('--seed', type=int, default=0); ap.add_argument('--log-every', type=int, default=50)
 a = ap.parse_args()
@@ -42,6 +43,7 @@ print('decoder FT: w_vel', vae.w_vel, 'w_acc', vae.w_acc, 'w_accmag', vae.w_accm
 dec = [p for p in vae.dec.parameters()]
 ema = copy.deepcopy(vae).eval().requires_grad_(False)
 stats = json.loads(Path(a.stats).read_text())
+lat_std = torch.tensor(vck['lat_std'], dtype=torch.float32, device=dev)
 qm = torch.tensor(stats['q_mean'], dtype=torch.float32, device=dev); qs = torch.tensor(stats['q_std'], dtype=torch.float32, device=dev)
 view = View(a.view, 'train', None, stats, mmap=True)
 ds = WindowDataset(view, a.frames, seed=a.seed * 1000, semsynth_share=0.)
@@ -53,7 +55,17 @@ for step in range(1, a.steps + 1):
     b = next(dl); x = b['q'].to(dev, non_blocking=True); m = b['mask'].to(dev, non_blocking=True)
     for g in opt.param_groups: g['lr'] = a.lr * min(1., step / 200)
     with torch.autocast('cuda', torch.bfloat16):
-        y, l = vae(x, m, deriv=1.0)
+        if a.latent_noise > 0:
+            # 11-05 generator-error robustness: the decoder sees latents perturbed like a generator's output would be
+            from scmg.vae import recon_losses
+            with torch.no_grad():
+                mu, lv = vae.encode(x)
+                z = mu + torch.randn_like(mu) * (0.5 * lv).exp() + a.latent_noise * lat_std * torch.randn_like(mu)
+            y = vae.decode(z)
+            l = recon_losses(y, x, m, None)
+            l['loss'] = l['rec'] + vae.w_vel * l['vel'] + vae.w_acc * l['acc'] + vae.w_accmag * l['accmag']
+        else:
+            y, l = vae(x, m, deriv=1.0)
     fc = foot_contact_loss(y.float() * qs + qm, x.float() * qs + qm, m.float(), 50.)
     loss = l['loss'] + a.w_foot * (fc['foot_slide'] + 10. * fc['foot_height'])
     if a.w_jerk > 0:
@@ -75,5 +87,5 @@ for step in range(1, a.steps + 1):
 # the encoder is untouched: its weights in the EMA copy are the original ones; latent statistics are copied
 assert all(torch.equal(pe, pm) for pe, pm in zip(ema.enc.parameters(), vae.enc.parameters()))
 d = dict(cfg=vck['cfg'], model=vae.state_dict(), ema=ema.state_dict(), step=a.steps, vae_cfg=vck.get('vae_cfg', vck['cfg']),
-         lat_mean=vck['lat_mean'], lat_std=vck['lat_std'], decoder_ft=dict(source=a.vae, w_foot=a.w_foot, w_jerk=a.w_jerk, w_vel=vae.w_vel, w_acc=vae.w_acc, w_accmag=vae.w_accmag, steps=a.steps, lr=a.lr))
+         lat_mean=vck['lat_mean'], lat_std=vck['lat_std'], decoder_ft=dict(source=a.vae, w_foot=a.w_foot, w_jerk=a.w_jerk, w_vel=vae.w_vel, w_acc=vae.w_acc, w_accmag=vae.w_accmag, latent_noise=a.latent_noise, steps=a.steps, lr=a.lr))
 tmp = out / 'final.pt.tmp'; torch.save(d, tmp); tmp.replace(out / 'final.pt'); print('wrote', out / 'final.pt')
