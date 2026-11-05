@@ -2,6 +2,7 @@
 # DLC entry: G1 main-table efficiency on ONE dedicated A800 (1 Pod x 1 GPU), every method in sequence, batch 1.
 #   dlc_entry.sh check   path / env / import check (any host, no GPU work)
 #   dlc_entry.sh full    real DLC job only (DLC_JOB_ID set, hostname not dsw*): all methods + memory breakdowns
+#   dlc_entry.sh methods <m...>   real DLC job only: just these run_latency.sh rows
 # Outputs: $OUT_ROOT/$DLC_JOB_ID/ (per-method JSON + logs, MONITOR.log = nvidia-smi + /proc/loadavg every 15 s).
 set -uo pipefail
 PHASE=${1:?phase}
@@ -26,7 +27,7 @@ case $PHASE in
   full)
     : "${DLC_JOB_ID:?real DLC job required}"
     case $(hostname) in dsw*) echo "refusing to run the full phase on DSW"; exit 78;; esac
-    O=$OUT_ROOT/$DLC_JOB_ID; mkdir -p $O
+    O=$OUT_ROOT/$DLC_JOB_ID; mkdir -p $O; cd $O
     { echo "host $(hostname) nproc $(nproc) job $DLC_JOB_ID"; nvidia-smi; cat /proc/cpuinfo | grep "model name" | head -1; } > $O/HOST.txt 2>&1
     ( while true; do echo "$(date -Is) load=$(cut -d' ' -f1-3 /proc/loadavg) gpu=$(nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader | paste -sd';')"; sleep 15; done ) > $O/MONITOR.log 2>&1 &
     MON=$!
@@ -38,6 +39,15 @@ case $PHASE in
     for p in offline engine; do SCMG_J=39 $ECHOG $P/lat_kernel_time.py --protocol $p --n 6 --out $O/kernel > $O/logs/kernel_$p.log 2>&1; done && echo "$(date -Is) DONE kernel_time" >> $O/run.log
     $ECHOG $P/lat_table.py $O > $O/TABLE.md 2>$O/logs/table.err
     kill $MON; nvidia-smi >> $O/HOST.txt 2>&1
+    echo "$(date -Is) JOB_DONE" >> $O/run.log ;;
+  methods)                                   # dlc_entry.sh methods <m1> [<m2> ...]: only these rows (follow-up job)
+    : "${DLC_JOB_ID:?real DLC job required}"
+    case $(hostname) in dsw*) echo "refusing to run on DSW"; exit 78;; esac
+    shift; O=$OUT_ROOT/$DLC_JOB_ID; mkdir -p $O
+    { echo "host $(hostname) nproc $(nproc) job $DLC_JOB_ID"; nvidia-smi; cat /proc/cpuinfo | grep "model name" | head -1; } > $O/HOST.txt 2>&1
+    ( while true; do echo "$(date -Is) load=$(cut -d' ' -f1-3 /proc/loadavg) gpu=$(nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader | paste -sd';')"; sleep 15; done ) > $O/MONITOR.log 2>&1 &
+    MON=$!; cd $O; GPU=0 bash $P/run_latency.sh $O "$@"
+    $ECHOG $P/lat_table.py $O > $O/TABLE.md 2>$O/logs/table.err; kill $MON; nvidia-smi >> $O/HOST.txt 2>&1
     echo "$(date -Is) JOB_DONE" >> $O/run.log ;;
   *) echo "phase $PHASE"; exit 2 ;;
 esac
