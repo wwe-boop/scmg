@@ -21,6 +21,7 @@ W = Path('/mnt/cpfs/zbl-cpfs-new/USERS/zehan/baselines/echog-official')
 CK = Path('/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/echog-stream-1105/g1-confirm/train/final.pt')
 DR = Path('/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/echog-stream-1105/data_root')
 WORDS = Path('/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/baseline-repro-1104/gmr-repro/data/echog/annotations/words')
+NOCUDNN = os.environ.get('ECHOG_W2V_NOCUDNN') == '1'   # variant: Wav2Vec2 prefix without cuDNN (no transient workspace)
 
 
 def main():
@@ -54,14 +55,17 @@ def main():
         text, centres = c['text'].to(dev), c['token_centers'].to(dev); tt = torch.as_tensor(payload['token_times']).double().numpy()
         wav = librosa.load(DR / 'audio' / f'{stem}.wav', sr=16_000, mono=True)[0]; dur = len(wav) / 16000.
         ids = tok(json.load(open(WORDS / f'{stem}.json'))['canonical_transcript'], return_tensors='pt')['input_ids'].to(dev)
-        st = dict(audio_feat=0., text_enc=0., generate=0., decode=0.); sched = []
+        st = dict(audio_feat=0., text_enc=0., generate=0., decode=0.); sched = []; ticks = []
         D = model.motion_dim; out = torch.zeros(F, D, device=dev); k = 0; pkv = None; nvis_done = 0
         with torch.no_grad():
             while True:
                 f0 = block_start(k, block_s, fps)
                 if f0 >= F: break
                 now = k * block_s; f1 = min(F, block_start(k + 1, block_s, fps)); ws = max(0, f0 - ctx_f); fe = f1 + tail_f
-                t0 = clk.now(); feats = pa(wav, now + ahead, fps, None).to(dev); ta = clk.now() - t0
+                t0 = clk.now()
+                with torch.backends.cudnn.flags(enabled=not NOCUDNN):      # see w2v_prefix_mem.py: cuDNN workspace spike at 0.16 s
+                    feats = pa(wav, now + ahead, fps, None).to(dev)
+                ta = clk.now() - t0
                 t0 = clk.now()
                 nv = int(visible_tokens(tt, now, ahead, 'voiced', sc.x2_rate, sc.x2_lag).sum()); nv = min(nv, ids.shape[1])
                 if nv > nvis_done:
@@ -80,15 +84,17 @@ def main():
                 t0 = clk.now(); (out[f0:f1].float() * std + mean).cpu(); td = clk.now() - t0
                 st['audio_feat'] += ta; st['text_enc'] += tx; st['generate'] += tg; st['decode'] += td
                 sched.append((min(dur, now + ahead), ta + tx + tg + td, f0 / fps, f1 - f0, fps))
+                ticks.append(dict(t=now, len=block_s, audio_feat=ta, text_enc=tx, generate=tg, decode=td))
                 k += 1
         comp = sum(st.values())
-        rows.append(dict(stem=stem, dur=dur, frames30=F, blocks=k, stages=st, compute=comp, schedule=sched))
+        rows.append(dict(stem=stem, dur=dur, frames30=F, blocks=k, stages=st, compute=comp, schedule=sched, ticks=ticks))
         print(f'{kk + 1}/{len(stems)} {stem} dur={dur:.2f} blocks={k} comp={comp:.3f} {st}', flush=True)
     extra = dict(ckpt=str(CK), stream=dict(block_ms=sc.block_ms, ahead_s=ahead, ctx_frames=ctx_f, tail_frames=tail_f, steps=steps,
                  audio='prefix Wav2Vec2 per block', text='voiced'), frame_fps=fps, code=str(ES),
                  host_start=host0, host_end=LC.host_snapshot(), torch=torch.__version__)
     extra.update(LC.cuda_mem()); extra.update(mon.stop())
-    LC.write(a.out, 'echog_stream', rows, extra)
+    extra['w2v_cudnn'] = not NOCUDNN
+    LC.write(a.out, 'echog_stream_nocudnn' if NOCUDNN else 'echog_stream', rows, extra)
 
 
 if __name__ == '__main__':

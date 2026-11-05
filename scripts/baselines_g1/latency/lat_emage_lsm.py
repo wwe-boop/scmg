@@ -18,13 +18,14 @@ import lat_common as LC  # noqa: E402
 R = Path('/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/baseline-repro-1104/gmr-repro')
 DR = Path('/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/baseline-repro-1104/echog/data_root')
 WORDS = R / 'data/echog/annotations/words'
+WT = Path(os.environ.get('GMR_WEIGHTS', str(R / 'weights')))   # CPFS copy for DLC: baselines-g1-1105/assets/gmr_weights
 
 
 def run_emage(stems, clk, dev):
     sys.argv = ['x']; sys.path.insert(0, str(R / 'scripts'))
     import emage_infer as E
     import torch.nn.functional as F
-    W = R / 'weights/emage_audio'
+    W = WT / 'emage_audio'
     face = E.load_pretrained(E.EmageVQVAEConv, W / 'emage_vq/face').to(dev).eval()
     upper = E.load_pretrained(E.EmageVQVAEConv, W / 'emage_vq/upper').to(dev).eval()
     lower = E.load_pretrained(E.EmageVQVAEConv, W / 'emage_vq/lower').to(dev).eval()
@@ -68,7 +69,7 @@ def run_lsm(stems, clk, dev):
     from utils.joints import upper_body_mask, hands_body_mask, lower_body_mask
     from utils import rotation_conversions as rc
     REPO = Lm.REPO
-    cfg_path = str(REPO / 'configs_new/shortcut_rvqvae_128.yaml'); ckpt = str(R / 'weights/gesturelsm/shortcut_reflow.bin')
+    cfg_path = str(REPO / 'configs_new/shortcut_rvqvae_128.yaml'); ckpt = str(WT / 'gesturelsm/shortcut_reflow.bin')
     cwd = os.getcwd(); os.chdir(REPO)
     cfg = OmegaConf.load(cfg_path); cfg.model.modality_encoder.params.data_path = str(REPO) + '/'; cfg.exp_name = Path(cfg_path).stem
     flat = Path(f'/tmp/_flat_lsm_{os.getpid()}.yaml'); flat.write_text(f'cfg: {cfg_path}\n')
@@ -77,8 +78,8 @@ def run_lsm(stems, clk, dev):
         if kk in ('model', 'data', 'solver', 'validation'): continue
         if not hasattr(v, 'items'): setattr(args, kk, v)
     for kk, v in cfg.data.items(): setattr(args, kk, v)
-    args.vqvae_upper_path = str(R / 'weights/gesturelsm/net_300000_upper.pth'); args.vqvae_hands_path = str(R / 'weights/gesturelsm/net_300000_hands.pth')
-    args.vqvae_lower_path = str(R / 'weights/gesturelsm/net_300000_lower.pth')
+    args.vqvae_upper_path = str(WT / 'gesturelsm/net_300000_upper.pth'); args.vqvae_hands_path = str(WT / 'gesturelsm/net_300000_hands.pth')
+    args.vqvae_lower_path = str(WT / 'gesturelsm/net_300000_lower.pth')
     args.mean_pose_path = str(REPO / 'mean_std/beatx_2_330_mean.npy'); args.std_pose_path = str(REPO / 'mean_std/beatx_2_330_std.npy')
     args.mean_trans_path = str(REPO / 'mean_std/beatx_2_trans_mean.npy'); args.std_trans_path = str(REPO / 'mean_std/beatx_2_trans_std.npy')
     args.use_trans = True

@@ -39,7 +39,7 @@ def main():
     for k, stem in enumerate(stems):
         pcm = read_wav(AUD / f'{stem}.wav'); total = len(pcm) // 2; dur = total / 24000.
         torch.manual_seed(0); torch.cuda.manual_seed_all(0)
-        st = dict(audio_enc=0., generate=0., decode=0.); sched = []
+        st = dict(audio_enc=0., generate=0., decode=0.); sched = []; ticks = []
         with torch.inference_mode():
             mimi_cache = None
             audio_cache = torch.zeros(1, 25, 2, dtype=torch.long, device=dv)
@@ -79,6 +79,7 @@ def main():
                 else:
                     ready = min(consumed - sum(gen.CHUNK_SAMPLES), total) / 24000.
                     sched.append((ready, ta + tg + td, (index - 2) * 1.0, 30, 30.))
+                    ticks.append(dict(t=(consumed - sc - sum(gen.CHUNK_SAMPLES)) / 24000., len=sc / 24000., audio_enc=ta, generate=tg, decode=td))
                 index += 1
         raw41 = np.concatenate(chunks).astype(np.float32)
         if k < 5:
@@ -90,7 +91,7 @@ def main():
         n = int(round(dur * 30))
         sched = [(r, c, t0_, min(nn, max(0, n - int(round(t0_ * 30)))), f) for r, c, t0_, nn, f in sched]   # frames past the audio = block padding
         comp = sum(st.values())
-        rows.append(dict(stem=stem, dur=dur, blocks=index, stages=st, filter_s=tf, compute=comp, schedule=sched,
+        rows.append(dict(stem=stem, dur=dur, blocks=index, stages=st, filter_s=tf, compute=comp, schedule=sched, ticks=ticks,
                          deploy_schedule=[(dur, comp + tf, 0.0, n, 30.)]))
         print(f'{k + 1}/{len(stems)} {stem} dur={dur:.2f} comp={comp:.3f} filter={tf:.2f} {st}', flush=True)
     use = rows[LC.N_WARM:]

@@ -135,7 +135,7 @@ def main():
                 arr = np.maximum(arr, te_ - H_s)
         st = dict(audio_feat=0., text_enc=0., generate=0., decode=0., to30=0.)
         if ps: st.update(causal_feat89=0., causal_campplus=0.)
-        sched = []; pf = PrefixFeatures(P, taps); done_tok = 0
+        sched = []; ticks = []; pf = PrefixFeatures(P, taps); done_tok = 0
         t0 = clk.now(); p24 = resample_poly(x, 24000, sr).astype(np.float32); t_rs = clk.now() - t0
         for kk in range(nch):
             avail = dur if not eng else min(dur, kk * CH + H_s)
@@ -168,10 +168,11 @@ def main():
             if ps: st['causal_feat89'] += cf; st['causal_campplus'] += cs
             e0 = (S.n_emitted - len(fr)) / 50.
             sched.append((avail, fa + te + tg, e0, int(len(fr)), 50.))
+            ticks.append(dict(t=kk * CH, len=CH, audio_feat=fa, text_enc=te, generate=tg - dd - cf - cs, decode=dd, causal_feat89=cf, causal_campplus=cs))
         cmd = torch.stack(S.frames).cpu().numpy()[:L].astype(np.float64)
         t0 = clk.now(); g1.to30(cmd, n30); st['to30'] = clk.now() - t0
         comp = st['audio_feat'] + st['text_enc'] + st['generate'] + st['decode'] + st.get('causal_feat89', 0.) + st.get('causal_campplus', 0.)
-        rows.append(dict(stem=stem, dur=dur, frames50=L, ticks=nch, stages=st, compute=comp, schedule=sched))
+        rows.append(dict(stem=stem, dur=dur, frames50=L, n_ticks=nch, stages=st, compute=comp, schedule=sched, ticks=ticks))
         print(f'{k + 1}/{len(stems)} {stem} dur={dur:.2f} comp={comp:.3f} {st}', flush=True)
     extra = dict(protocol=a.protocol, ckpt=CKPT, vae=VAE, steps=10, cfg_w=2.5, dtype='fp32', release=str(REL),
                  frame_fps=50, note_to30='to30 is reported but excluded from compute / e2e (benchmark format only)',

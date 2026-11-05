@@ -124,6 +124,18 @@ def summarize(rows, extra):
                         aggregate=float(comp.sum() / dur.sum())),
                compute_s_per_clip_p50=float(np.median(comp)), stages=st,
                cpu_rss_peak_mib=resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024.)
+    tk = [t for r in use for t in r.get('ticks', [])]
+    if tk:
+        st_keys = [k for k in tk[0] if k not in ('t', 'len')]
+        ratio = np.array([sum(t[k] for k in st_keys) / t['len'] for t in tk])
+        out['per_tick_rtf'] = dict(n=int(len(ratio)), mean=float(ratio.mean()), p50=float(np.median(ratio)),
+                                   p95=float(np.percentile(ratio, 95)), max=float(ratio.max()), frac_over_1=float((ratio > 1).mean()),
+                                   tick_len_s=float(np.median([t['len'] for t in tk])))
+        b = {}
+        for t in tk: b.setdefault(int(t['t'] // 2) * 2, []).append(t)
+        out['per_tick_by_2s'] = [dict(t0_s=k0, n=len(v), **{f'{k}_ms_mean': float(np.mean([x[k] for x in v]) * 1e3) for k in st_keys},
+                                      rtf_mean=float(np.mean([sum(x[k] for k in st_keys) / x['len'] for x in v])),
+                                      rtf_max=float(np.max([sum(x[k] for k in st_keys) / x['len'] for x in v]))) for k0, v in sorted(b.items())]
     out.update(extra)
     return out
 
