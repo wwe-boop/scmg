@@ -74,7 +74,7 @@ def add_sem(r, t, k):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--infer', nargs='*', default=[], help='modality_ablation.sh out roots (with dev/ and / or test/)')
-    ap.add_argument('--train', default=None, help='modality_train.sh out root'); ap.add_argument('--textuse', default=None)
+    ap.add_argument('--train', default=None, help='modality_train.sh out root'); ap.add_argument('--textuse', nargs='*', default=[])
     ap.add_argument('--out', required=True); ap.add_argument('--md', default=None)
     a = ap.parse_args(); rows = []
     for O in map(Path, a.infer):
@@ -103,16 +103,17 @@ def main():
                     if f.exists():
                         r = dict(group='input modality (training)', label=lab, side=side, protocol=p, seed=0, source=str(f), **metrics(f))
                         add_sem(r, sem, f'{lab}-{p}'); rows.append(r)
-    if a.textuse:
-        U = Path(a.textuse); sem = sem_table(U / 'sem' / 'REPORT.json')
+    for U in map(Path, a.textuse):
+        sem = sem_table(U / 'sem' / 'REPORT.json')
         ts = json.loads((U / 'TEXT_SENS.json').read_text()) if (U / 'TEXT_SENS.json').exists() else {}
         for f in sorted(U.glob('benchmark_*.json')):
             m, mode, _, sd = f.stem[len('benchmark_'):].split('_')
             r = dict(group='text use, val_common 300 subset', label=f'{m} {mode}', side='test', protocol='offline', seed=int(sd), source=str(f), **metrics(f))
             if sd == '000': add_sem(r, sem, f'{m}-{mode}')
-            if f'{m}_{mode}' in ts: r['ts_' + mode] = ts[f'{m}_{mode}']['upper']['ratio_of_means']
+            for key in (f'{m}_{mode}', f'scmg_{mode}' if m.startswith('scmg') else None):
+                if key in ts: r['ts_' + mode] = ts[key]['upper']['ratio_of_means']; break
             rows.append(r)
-        if 'gt' in sem: rows.append(dict(group='text use, val_common 300 subset', label='ground truth', side='test', protocol='-',
+        if 'gt' in sem and U == Path(a.textuse[0]): rows.append(dict(group='text use, val_common 300 subset', label='ground truth', side='test', protocol='-',
                                          **{mm: sem['gt'][mm]['mean'] for mm in ('pair_win', 'det_auc')}))
     for g, lab, side, p, f in MODULE:
         if Path(f).exists(): rows.append(dict(group=g, label=lab, side=side, protocol=p, seed=0, source=str(f), existing=True, **metrics(f)))
