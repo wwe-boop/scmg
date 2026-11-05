@@ -1,0 +1,15 @@
+{
+ "written": "2026-11-06, before the lane is launched (user rule 11-06: quick ~5-minute validation with pass criteria fixed beforehand)",
+ "lane": "tail05w2",
+ "training": {"init": "echog-g1-sf-1105/dev/sf0/final.pt", "view": "interrupt-baseline-1105/views/echog-g1-v1-tail-yld-hos (floor track used for aend / tail sampling only)",
+              "cfg": {"adsc": true}, "sc": {"p_stream": 0.67, "p_async": 1.0, "p_async_seg": 0.0, "self_force_p": 0, "w_tail": 2.0},
+              "tail_share": 0.5, "steps": 2000, "batch": 64, "lr": 1e-4, "seed": 0, "host": "zehan-server GPU with free memory (coordinator 11-06)"},
+ "evaluation": {"interruptions": "dev subset: every 3rd sorted dev stem (100 clips x 30/50/70 % = 300), audio end at t_i, chunk restart, text truncated, interruption-causal prefix feat89 / CAM++, floor off, no post-processing; eval_interrupt.py --every 3 vs the lane's own uninterrupted output",
+                "quality": "official evaluator on the 400 dev stems (hos), offline and engine, seed 0"},
+ "pass": {"self_yield_rate_min": 0.60, "abrupt_rate_max": 0.30,
+          "dev_fgd_max_vs_ctrl": "<= 1.05 x ctrl lane (echog-g1-floor-1106/dev/ctrl: offline 1.6376, engine 1.6746)",
+          "div_drop_max_vs_ctrl": "Div >= ctrl - 0.1 (ctrl offline 1.6015, engine 1.6124)"},
+ "if_pass": "long training on DLC (6000 steps, several seeds, test side); main-table bar: yield >= 90 %, abrupt <= 10 %, RKD clearly below B2_p (bootstrap interval of the difference excludes 0), unsafe <= 1 %",
+ "reference_numbers_known_before_launch": {"yld lane (tail share 0.3, no w_tail) dev subset": {"yield_rate": 0.417, "abrupt": 0.457, "RKD": 0.43},
+                                           "ctrl": {"yield_rate": 0.062, "abrupt": 0.477}}
+}

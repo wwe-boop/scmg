@@ -72,6 +72,18 @@ Ld = run(m1, vae, dict(bf, floor=fl))
 check('d floor 1 / 2 changes the losses', Ld != L0, f"loss {L0['loss']:.6f} -> {Ld['loss']:.6f}")
 ae = full.clone(); ae[:] = 150
 check('d aend < T changes the losses', run(m1, vae, dict(bf, aend=ae)) != L0)
+# 11-06 tail-weighted flow loss (StageCfg.w_tail): no effect without tail frames, live with them
+def run_sc(m, vae, b, seed=5, **kw):
+    fields = {f.name for f in dataclasses.fields(StageCfg)}
+    sc = StageCfg(**{k: v for k, v in {**SC, **kw}.items() if k in fields})
+    st = dict(qm=torch.zeros(b['q'].shape[-1], device=dev), qs=torch.ones(b['q'].shape[-1], device=dev))
+    m.zero_grad(set_to_none=True); torch.manual_seed(seed); out = step_losses(m, vae, b, sc, st)
+    return {k: float(v.detach()) for k, v in out.items() if torch.is_tensor(v) and v.numel() == 1}
+check('e w_tail 0 (default), aend = T: losses equal to (a)', run_sc(m0, vae, dict(b, aend=full)) == {k: v for k, v in L0.items() if k in run_sc(m0, vae, dict(b, aend=full))})
+La = run_sc(m0, vae, dict(b, aend=full)); Lw = run_sc(m0, vae, dict(b, aend=full), w_tail=2.0)
+check('e w_tail > 0 without tail frames (aend = T): flow loss unchanged', La['flow'] == Lw['flow'])
+ae2 = full.clone(); ae2[:] = 150
+check('e w_tail > 0 with tail frames: flow loss changes', run_sc(m0, vae, dict(b, aend=ae2), w_tail=2.0)['flow'] != run_sc(m0, vae, dict(b, aend=ae2))['flow'])
 # planner directly: stream states < 6 -> identical output with and without the module
 m0.eval(); m1.eval()
 with torch.no_grad():

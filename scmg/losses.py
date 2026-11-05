@@ -44,6 +44,7 @@ class StageCfg:
     text_focus_p: float = 0.0      # 11-03 P(batch is TEXT-FOCUSED): mel (and TTS rows) hidden, prosody kept, no text dropout
     sel_audio_premask: bool = False  # remove hidden chunks from encoder input as well as direct audio routes
     p_sel_audio: float = 0.0       # P(per text-bearing sample) that the audio of every gesture chunk is hidden (planner + flow)
+    w_tail: float = 0.0            # 11-06 post-speech tails: flow-loss weight 1 + w_tail on target latents after the audio end (aend)
     w_foot: float = 0.0            # 11-05 G1 only: foot-contact consistency on the decoded [ctx | target] frames (scmg/g1_contact.py:
     w_safe: float = 0.0            # 11-05 G1 only: executable-contract loss on the decoded [ctx | target] frames (scmg/g1_safety.py:
                                    # URDF joint limits + calibrated left-right / arm-torso self-collision proxies); 0 = off
@@ -417,6 +418,11 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     if ilab is not None and sc.sem_w > 0:
         wi = (1 + sc.sem_w * has.float()).flatten()[:, None]                   # [M, 1]
         flow = (err * sup * wi).sum() / (sup * wi).sum().clamp(min=1)
+    elif sc.w_tail > 0 and 'aend' in batch:
+        fr = (kk[:, None] * CHUNK + torch.arange(CHUNK, device=dev)[None]) * STRIDE                    # [M, CHUNK] window frame
+        ae = batch['aend'].to(dev).repeat_interleave(K)[:, None]
+        wt = torch.ones_like(err); wt[:, cfg.ctx:] = 1 + sc.w_tail * (fr >= ae).float()
+        flow = (err * sup * wt).sum() / (sup * wt).sum().clamp(min=1)
     else:
         flow = (err * sup).sum() / sup.sum().clamp(min=1)
     out = dict(flow=flow, self_forced=torch.tensor(out_sf, device=dev))

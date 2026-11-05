@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from scmg.common import J, CHUNK, CHUNK_FRAMES, STRIDE, EMBODIMENT, U80
 from scmg.data import View, WindowDataset
 from scmg.evaluate import load
-from scmg.infer import Streamer
+from scmg.infer import Streamer, LOOK
 from scmg.model import INF
 from scmg import g1
 from infer_interrupt import SIL_RAW, spoken_tokens
@@ -45,7 +45,7 @@ UPPER = list(range(10 + 12, 10 + 29))          # waist + arms channels of the 39
 
 class RetractStreamer(Streamer):
     def __init__(self, *args, t_int=None, keep_tok=None, audio='end', fm=None, fs=None, n_total=None, restart='chunk',
-                 react_delay=0.04, retract=None, rest=None, tr=1.0, w=1.0, splice=0, w0=0., prefix=None, floor=0, **kw):
+                 react_delay=0.04, retract=None, rest=None, tr=1.0, w=1.0, splice=0, w0=0., prefix=None, floor=0, guide=0., **kw):
         super().__init__(*args, **kw)
         self.t_int, self.keep_tok, self.audio, self.n_total = t_int, keep_tok, audio, n_total
         self.sil = None if fm is None else torch.as_tensor((SIL_RAW - fm) / fs, device=self.dev).float()
@@ -54,7 +54,9 @@ class RetractStreamer(Streamer):
         self.tgt = None; self._eps = {}; self._flow = None
         self.splice = splice; self._sp = None; self.w0 = w0
         if floor and not hasattr(self.m, 'floor_emb'): raise ValueError('--floor needs a model trained with cfg.floor')
-        self.prefix_npz = prefix; self.floor = floor; self.fm_, self.fs_ = fm, fs   # 11-06: causal prefix conditions, floor token     # latent restart: frames over which the jump at the splice is blended out
+        self.prefix_npz = prefix; self.floor = floor; self.fm_, self.fs_ = fm, fs
+        self.guide = float(guide)          # 11-06 yield guidance (post-interruption only; 0 = off)
+        if self.guide and self.cfg_t is not None: raise ValueError('--yield-guide supports the joint CFG only (cfg_t None)')   # 11-06: causal prefix conditions, floor token     # latent restart: frames over which the jump at the splice is blended out
         if t_int is not None:
             self.l_r = int(np.ceil((t_int + react_delay) * 50 / STRIDE - 1e-9)) if restart == 'latent' else \
                 int(np.ceil(t_int / (CHUNK_FRAMES / 50.) - 1e-9)) * CHUNK
@@ -172,8 +174,36 @@ class RetractStreamer(Streamer):
 
     _pend = None
 
+    def _guided(self):
+        """11-06 yield guidance: the planner runs a second time with the audio-stream bit of every window chunk set to
+        'still streaming' (stream state - audio bit); on every flow step the CONDITIONAL velocity becomes
+        v(audio ended) + s * (v(audio ended) - v(still streaming)) (the unconditional CFG branch is unchanged), i.e. CFG
+        on the audio-end state. Called only for post-interruption ticks."""
+        m, s = self.m, self.guide
+        real_plan, real_fv = m.plan, m.flow_velocity; st = dict(n_plan=0, n_fv=0, h_spk=None)
+        per_step = 2 if self.cfg_w != 1 else 1
+        def plan(*a, **kw):
+            h = real_plan(*a, **kw)
+            st['n_plan'] += 1
+            if st['n_plan'] == 1 and kw.get('sstate') is not None:            # the conditional planner call of the tick
+                ss = kw['sstate']; st['h_spk'] = real_plan(*a, **dict(kw, sstate=ss - (ss % 2)))
+            return h
+        def fv(xt, t, known, h, *a, **kw):
+            v = real_fv(xt, t, known, h, *a, **kw)
+            cond = st['n_fv'] % per_step == 0; st['n_fv'] += 1
+            if not cond or st['h_spk'] is None: return v
+            hs = st['h_spk'][:, self._W - 1 - LOOK]
+            v_spk = real_fv(xt, t, known, hs, *a, **kw)
+            return v + s * (v - v_spk)
+        return plan, fv
+
     def tick(self, *a, **kw):
         if self.due(): self._apply()
+        if self.applied and self.guide:
+            if self.retract: raise ValueError('--yield-guide and --retract are exclusive')
+            self.m.plan, self.m.flow_velocity = self._guided()
+            try: return super().tick(*a, **kw)
+            finally: del self.m.plan; del self.m.flow_velocity
         if self.applied and self.retract and self.tgt:
             pos = self._positions()
             if pos:
@@ -200,6 +230,7 @@ def main():
     ap.add_argument('--tr', type=float, default=1.0); ap.add_argument('--w', type=float, default=1.0)
     ap.add_argument('--w0', type=float, default=0., help='ramp: weight at t_i (rises to --w at t_i + T_r)')
     ap.add_argument('--prefix-feats', default=None, help='prefix_feats.py dir: causal feat89 / CAM++ of the audio before t_i')
+    ap.add_argument('--yield-guide', type=float, default=0., help='yield guidance scale s after the interruption (0 = off)')
     ap.add_argument('--floor', type=int, default=0, help='floor state after the interruption (models with cfg.floor; 0 = off)')
     ap.add_argument('--splice', type=int, default=0, help='latent restart: blend the jump at the splice out over n 50 Hz frames (0 = off)')
     ap.add_argument('--seed', type=int, default=0); ap.add_argument('--steps', type=int, default=10); ap.add_argument('--cfg-w', type=float, default=2.5)
@@ -251,7 +282,7 @@ def main():
             n_run = -(-int(np.ceil((n30o - 1) / 30. * 50 + 2)) // CHUNK_FRAMES)
             keep = spoken_tokens(s['ttime'], s['tmask'], words[stem], t_i)
             ikw = dict(t_int=t_i, keep_tok=keep, audio=a.audio, fm=fm, fs=fs, n_total=n_run * CHUNK_FRAMES, restart=a.restart,
-                       react_delay=a.react_delay, retract=a.retract, rest=rest39, tr=a.tr, w=a.w, w0=a.w0, splice=a.splice, floor=a.floor,
+                       react_delay=a.react_delay, retract=a.retract, rest=rest39, tr=a.tr, w=a.w, w0=a.w0, splice=a.splice, floor=a.floor, guide=a.yield_guide,
                        prefix=(f"{a.prefix_feats}/{stem}@{r['frac']:.1f}.npz" if a.prefix_feats else None))
         else:
             n_run = nch
@@ -276,7 +307,7 @@ def main():
             q50 = cmd.astype(np.float64); r30 = g1.to30(q50, n30o).astype(np.float32)
             gen = dict(ckpt=str(a.ckpt), seed=a.seed, steps=a.steps, cfg_w=a.cfg_w, stream=proto, interrupt=dict(
                 t_i=t_i, f_i=r['f_i'], frac=r['frac'], audio=a.audio, restart=a.restart, react_delay=a.react_delay, l_r=st.l_r,
-                o=st.o, k_int=st.k_int, retract=a.retract, rest=a.rest, tr=a.tr, w=a.w, w0=a.w0, splice=a.splice, floor=a.floor, prefix_feats=a.prefix_feats, n_targets=len(st.tgt or {}),
+                o=st.o, k_int=st.k_int, retract=a.retract, rest=a.rest, tr=a.tr, w=a.w, w0=a.w0, splice=a.splice, floor=a.floor, prefix_feats=a.prefix_feats, yield_guide=a.yield_guide, n_targets=len(st.tgt or {}),
                 tokens_kept=int(keep.sum()), tokens_total=int(np.asarray(s['tmask']).sum())))
             meta = dict(real_num_frames=n30o, clip_frames30=n30)
             np.save(o.with_suffix('.q50.npy'), cmd.astype(np.float32))
