@@ -1,10 +1,9 @@
-"""Markdown tables from the lat_*.py JSONs.   lat_table.py <res dir>"""
+"""Markdown tables from the lat_*.py JSONs.   lat_table.py <res dir> [<res dir> ...]"""
 import json, sys
 from pathlib import Path
 
-R = Path(sys.argv[1])
-ORDER = ['scmg_offline', 'scmg_engine', 'echog', 'robogesture', 'semtalk', 'emage', 'lsm', 'gmr_semtalk', 'gmr_lsm', 'gmr_emage']
-S = {p.stem: json.load(open(p))['summary'] for p in R.glob('*.json')}
+ORDER = ['scmg_offline', 'scmg_psync', 'scmg_engine', 'echog', 'echog_stream', 'robogesture', 'semtalk', 'emage', 'lsm', 'gmr_semtalk', 'gmr_lsm', 'gmr_emage']
+S = {p.stem: json.load(open(p))['summary'] for R in sys.argv[1:] for p in Path(R).glob('*.json')}
 f = lambda x, d=2: '-' if x is None else f'{x:.{d}f}'
 print('| method | algorithmic s (p50) | e2e p50 / p95 s | first frame s (p50) | RTF agg (clip p50) | GPU torch peak / nvsmi MiB | CPU RSS MiB |')
 print('|---|---|---|---|---|---|---|')
