@@ -8,7 +8,8 @@
 #   CFGT_LANES : cfg_t sweep (separate text guidance, inference only) offline: CFGT values
 #   TS_LANES   : text sensitivity (scripts/echog_g1/text_sensitivity.py: text-swap and no-text vs inference seed 1)
 #   every official-benchmark output: semantic recognition pair_win (3 recognisers rec-sem-hos-seed*, trained on the train split)
-# 'ctrl' = the existing sf0 dev model (no training, INIT_CTRL). Lanes (LANES, label:cfg-json-fragment:sc-json-fragment:data):
+# 'ctrl' = the existing sf0 dev model (no training, INIT_CTRL). Lanes (LANES, space-separated label|cfg|sc-fragment|data, cfg:
+#   CT = adsc + ctl + ctl_flow, CP = adsc + ctl (planner text-stream route only), empty = adsc; sc fragment = comma-joined JSON members):
 #   data flags: c = control tokens (G1_CTL), g = BEAT2 g_k track (G1_GEST, for p_sel_audio), f = ctl_focus CTL_FOCUS
 #   ctl_g1.sh <out root>     env GPUS (one per lane), PY, BENCH_PY, EG/OFF/... as bench.sh, STEPS, LANES, CFGT_LANES, TS_LANES
 set -uo pipefail
@@ -87,8 +88,8 @@ import json,sys; r=json.load(open(sys.argv[1]+'/CTL.json'))
 print('\n'.join(sorted(s for s,ts in r.items() if ts and ts[0]['split']=='dev' and any(t['type']<=4 for t in ts))))" $CTL > $CTL/dev_ann_stems.txt
 i=0
 CT='{"adsc": true, "ctl": true, "ctl_flow": true}'
-for spec in ${LANES:-ctrl:: ctl:CT:\"ctl_w\":1.0,\"ctl_field_drop\":0.2:c}; do
-  IFS=: read -r lab cfr scr dt <<< "$spec"
+for spec in ${LANES:-'ctrl||' 'ctl|CT|"ctl_w":1.0,"ctl_field_drop":0.2|c'}; do   # label|cfg (CT / CP / empty)|sc fragment|data flags
+  IFS='|' read -r lab cfr scr dt <<< "$spec"
   case $cfr in CT) cf=$CT;; CP) cf='{"adsc": true, "ctl": true}';; *) cf='{"adsc": true}';; esac
   sc="{$S}"; [ -n "$scr" ] && sc="{$S, ${scr//,/, }}"
   g=${GL[$((i % ${#GL[@]}))]}; i=$((i + 1))
