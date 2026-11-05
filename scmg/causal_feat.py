@@ -258,6 +258,60 @@ class CausalFeat89:
         return self.cache[Tk]
 
 
+class IncFeat89:
+    """Incremental prefix feat89 (11-06; same values as CausalFeat89 / prefix_feat89 -- scripts/tests/test_causal_inc.py
+    checks it bitwise at every tick): per tick only
+      mel   the rows not final yet: logmel of the PCM window [r0 - margin, Tk) (margin MARGIN frames of real audio before the
+            first recomputed row; the last EDGE rows, computed with the zero padding past Tk, are recomputed next tick)
+      units the syllables of the words that ENDED since the last tick (prefix_feat89's admission rule end <= Tk / 50; all
+            words once final), measured by a feat89.Recording over those words alone -- a unit's energy / f0 / prominence
+            depend only on its own audio under the fixed prosody statistics -- appended to a unit table,
+            then the prosody block 80-88 = front_prosody(table, Tk, final) (committed beats re-picked over the table).
+    Only pcm[:Tk] and the words ended by Tk are read (causal by construction)."""
+    MARGIN, EDGE = 25, 2
+
+    def __init__(self, pcm16, words, lang, T, pstats):
+        self.pcm, self.words, self.lang, self.T, self.ps = pcm16, words, lang, int(T), list(pstats)
+        self.mel = np.zeros((0, 80), np.float32); self.mel_ok = 0
+        self.rows = []; self.done = 0                    # words processed (prefix of the word list in end-time order)
+        self.order = sorted(range(len(words)), key=lambda i: (words[i]['end_time'], i))
+        self.cache = {}
+
+    def _mel(self, Tk):
+        from scipy.signal import resample_poly
+        F = F89(); a = max(0, self.mel_ok - self.MARGIN)
+        p = pad_pcm(self.pcm, Tk)[a * HOP:Tk * HOP]
+        m = F.gl_build.logmel(resample_poly(p.astype(np.float32) / 32768., F.gl_build.FS, SR), Tk - a, F.mel())
+        out = np.zeros((Tk, 80), np.float32); out[:self.mel_ok] = self.mel[:self.mel_ok]; out[self.mel_ok:] = m[self.mel_ok - a:]
+        self.mel = out; self.mel_ok = max(self.mel_ok, Tk - self.EDGE)
+        return out
+
+    def _units(self, Tk, final):
+        new = []
+        while self.done < len(self.order) and (final or self.words[self.order[self.done]]['end_time'] <= Tk / 50.):
+            new.append(self.order[self.done]); self.done += 1
+        if not new: return
+        ws = [self.words[i] for i in sorted(new)]
+        F = F89(); cap = []
+        with _hooks(self.ps, final, cap):
+            try: rec = F.Recording(None, None, self.lang, Tk, words=ws, pcm_fs=(pad_pcm(self.pcm, Tk), SR))
+            except ValueError: return
+        syl = {int(x.index): x for x in cap}
+        us = [dict(u, onset_s=round(u['onset_s'], 4), offset_s=round(u['offset_s'], 4), syl_onset=float(syl[int(u['index'])].onset_s),
+                   syl_offset=float(syl[int(u['index'])].offset_s), syl_prom=float(syl[int(u['index'])].prominence)) for u in rec.units]
+        if us: self.rows.append(unit_table(us, ws, self.lang))
+
+    def prefix(self, Tk):
+        Tk = int(min(Tk, self.T))
+        if Tk not in self.cache:
+            final = Tk >= self.T
+            mel = self._mel(Tk); self._units(Tk, final)
+            tab = np.concatenate(self.rows) if self.rows else np.zeros((0, len(UNIT_COLS)))
+            tab = tab[np.argsort(tab[:, 0], kind='stable')] if len(tab) else tab
+            self.cache[Tk] = np.concatenate([mel, front_prosody(tab, Tk, final=final)], 1).astype(np.float16)
+        return self.cache[Tk]
+
+
 def load_pstats(path):
     d = json.loads(Path(path).read_text())
     return [d[k] for k in ('E_mean', 'E_std', 'logf0_mean', 'logf0_std', 'dur_mean', 'dur_std')]
@@ -310,8 +364,11 @@ class CausalInputs:
     zeros after (the Streamer zeroes not-arrived rows anyway; rows >= T are zero as in the whole-clip window); spk(Tk) ->
     (spk [192], spk_valid) of the PCM prefix of min(Tk, T) frames (spk=False: always the empty embedding)."""
 
-    def __init__(self, pcm16, wave, words, lang, T, pstats, fm, fs, enc=None, Tpad=None, spk_min_s=1.0, spk=True, spk_refresh='tick'):
-        self.T = int(T); self.Tpad = int(Tpad or T); self.f = CausalFeat89(pcm16, words, lang, T, pstats)
+    def __init__(self, pcm16, wave, words, lang, T, pstats, fm, fs, enc=None, Tpad=None, spk_min_s=1.0, spk=True, spk_refresh='tick',
+                 feat_mode='prefix'):
+        self.T = int(T); self.Tpad = int(Tpad or T)
+        if feat_mode not in ('prefix', 'inc'): raise ValueError(feat_mode)
+        self.f = (IncFeat89 if feat_mode == 'inc' else CausalFeat89)(pcm16, words, lang, T, pstats)
         if self.Tpad < self.T: raise ValueError('Tpad < T')
         self.fm, self.fs = np.asarray(fm, np.float32), np.asarray(fs, np.float32)
         self.sp = SpeakerPrefix(wave, enc, spk_min_s) if spk else None

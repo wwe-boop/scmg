@@ -32,7 +32,7 @@ case $1 in
     # psyncwhole = the same text rule with the whole-clip feat89 / speaker vector (the non-causal reference)
     WD=${WORDS_DIR:-$EG/ds/annotations/words}; PS=${PSTATS:-$CODE/scripts/echog_g1/PROSODY_STATS_echog_g1_hos_train.json}
     case $proto in offline) PA=(--protocol offline);; engine) PA=(--protocol engine --text-causal $TEXT_CAUSAL_TEST);;
-      psync) PA=(--protocol psync --text-causal $TEXT_CAUSAL_TEST --wav-dir ${CAUSAL_WAV:-$WAV_DIR} --words-dir $WD --pstats $PS ${CAMPPLUS:+--campplus $CAMPPLUS} ${SPK_REFRESH:+--spk-refresh $SPK_REFRESH});;
+      psync) PA=(--protocol psync --text-causal $TEXT_CAUSAL_TEST --wav-dir ${CAUSAL_WAV:-$WAV_DIR} --words-dir $WD --pstats $PS ${CAMPPLUS:+--campplus $CAMPPLUS} ${SPK_REFRESH:+--spk-refresh $SPK_REFRESH} ${CAUSAL_FEAT:+--causal-feat $CAUSAL_FEAT});;
       psyncwhole) PA=(--protocol psync --no-causal-inputs --text-causal $TEXT_CAUSAL_TEST --words-dir $WD --pstats $PS);;
       *) echo "protocol $proto"; exit 2;; esac
     GL=(${GPUS:-0}); n=${#GL[@]}; mkdir -p $P
