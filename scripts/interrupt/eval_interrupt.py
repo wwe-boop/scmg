@@ -43,6 +43,7 @@ ap.add_argument('--urdf', required=True); ap.add_argument('--mjcf', required=Tru
 ap.add_argument('--out', required=True); ap.add_argument('--limit', type=int, default=0); ap.add_argument('--collision-stride', type=int, default=2)
 ap.add_argument('--rest', default='R_sil'); ap.add_argument('--tr', type=float, default=None, help='override T_r (s)')
 ap.add_argument('--per-item', default=None, help='jsonl of per-interrupt values')
+ap.add_argument('--every', type=int, default=1, help='every n-th clip of the interrupt list (sorted stems)')
 ap.add_argument('methods', nargs='+')
 a = ap.parse_args()
 H = json.loads(Path(a.human + '.json').read_text()); _hw = np.load(a.human + '_windows.npz')
@@ -52,6 +53,8 @@ H_ret = _hw['retract'].astype(bool); H_kin = H_kin_all[H_ret]          # main re
 T_r = a.tr if a.tr is not None else H['T_r']; P95 = H['peak_jerk']['p95']
 rest_j = {k: np.array(v['joints']) for k, v in H['rest'].items()}; rest_z = {k: np.array(v['hand_z']) for k, v in H['rest'].items()}
 ints = json.loads(Path(a.interrupts).read_text())['interrupts'][: a.limit or None]
+if a.every > 1:                                   # every n-th clip (the dev screening subsets of infer_retract.py --every)
+    _ks = set(sorted({r['stem'] for r in ints})[::a.every]); ints = [r for r in ints if r['stem'] in _ks]
 
 # ---- safety contract (as scripts/echog_g1/executability.py)
 import mujoco
@@ -137,6 +140,11 @@ for spec in a.methods:
         row['jerk'] = I.peak_jerk(P, f - I.PRE, f + I.WIN); row['acc'] = I.peak_acc(P, f - I.PRE, f + I.WIN)
         v = I.hand_speed(P).mean(1); row['energy'] = float(v[f + 32:f + I.WIN].mean() / max(v[max(0, f - 30):f].mean(), 1e-6))
         row.update({f'unsafe_{k}': x for k, x in unsafe(mo, f).items()})
+        # the same contract on the 2.13 s BEFORE t_i (identical motion for B1 / B2 / B3 of one base output): separates the
+        # violations the interruption handling introduces (unsafe_new: post window violates, pre window clean) from the
+        # model's own (unsafe_pre)
+        fp = max(1, f - I.WIN); pre = unsafe(mo[:f], fp) if f - fp >= 4 else dict(any=False)
+        row['unsafe_pre'] = bool(pre['any']); row['unsafe_new'] = bool(row['unsafe_any'] and not pre['any'])
         kf = I.kin_features(P, f); row['kin'] = kf.tolist()
         rows.append(row); lats.append(lat(mo[f:f + I.WIN])); kins.append(kf)
         if per: per.write(json.dumps(dict(row, method=lab)) + '\n')
@@ -153,7 +161,7 @@ for spec in a.methods:
     jk = np.array([x['jerk'] for x in rows]); out.update(jerk_median=float(np.median(jk)), jerk_p95=float(np.percentile(jk, 95)),
                                                        abrupt_rate=float((jk > P95).mean()), acc_median=float(np.median([x['acc'] for x in rows])))
     out['energy_median'] = float(np.median([x['energy'] for x in rows]))
-    for k in ('pos', 'vel', 'coll', 'any'): out[f'unsafe_{k}'] = float(np.mean([x[f'unsafe_{k}'] for x in rows]))
+    for k in ('pos', 'vel', 'coll', 'any', 'pre', 'new'): out[f'unsafe_{k}'] = float(np.mean([x[f'unsafe_{k}'] for x in rows]))
     out['fgd'] = E.FGD.frechet_distance(np.concatenate(lats), H_lat)
     out['rkd'], out['rkd_per_feature'] = I.kin_distance(np.stack(kins), H_kin)
     out['rkd_all'] = I.kin_distance(np.stack(kins), H_kin_all)[0]
@@ -166,7 +174,7 @@ for spec in a.methods:
     print(f"{lab:14s} n {out['n']} | react {out['react_s'] if out['react_s'] is None else round(out['react_s'], 3)} | yield {out['yield_s_R_sil']:.2f}s "
           f"rate {100 * out['yield_rate_R_sil']:.1f}% (R_gt {out['yield_s_R_gt']:.2f}s {100 * out['yield_rate_R_gt']:.1f}%) | jerk med {out['jerk_median']:.0f} "
           f"abrupt {100 * out['abrupt_rate']:.1f}% | RKD {out['rkd']:.3f} (all {out['rkd_all']:.3f}) FGD {out['fgd']:.3f} | unsafe {100 * out['unsafe_any']:.1f}% (vel {100 * out['unsafe_vel']:.1f} coll "
-          f"{100 * out['unsafe_coll']:.1f} pos {100 * out['unsafe_pos']:.1f}) | energy {out['energy_median']:.2f}", flush=True)
+          f"{100 * out['unsafe_coll']:.1f} pos {100 * out['unsafe_pos']:.1f}; pre {100 * out['unsafe_pre']:.1f} new {100 * out['unsafe_new']:.1f}) | energy {out['energy_median']:.2f}", flush=True)
 res['_meta'] = dict(T_r=T_r, human_jerk_p95=P95, structural=[(mujoco.mj_id2name(mm, mujoco.mjtObj.mjOBJ_BODY, x), mujoco.mj_id2name(mm, mujoco.mjtObj.mjOBJ_BODY, y)) for x, y in structural],
                     n_interrupts=len(ints), human_windows=len(HW))
 # FGD noise floor: human windows split in two halves (even / odd index)
