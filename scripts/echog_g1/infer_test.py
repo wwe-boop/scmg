@@ -25,6 +25,60 @@ from scmg.model import INF
 from scmg import g1
 
 
+CTL_MODES = {
+    'none': 'no token (the control-token model without control)',
+    'gt': 'every dev token: BEAT2-annotation tokens (values from the GT motion) + lexical tokens (oracle)',
+    'ann': 'annotation tokens only (oracle)', 'lex': 'lexical tokens only (from text: deployable)',
+    'auto': 'lexical tokens + a semantic-class token (no values) at every lexicon word by scmg.ctl.LEX2SEM (from text: deployable)',
+    'gt_novals': 'gt with every value masked (class + time only)',
+    'point': 'POINT tokens only, target + hand (amplitude masked): the spatial benchmark input',
+    'shuffle': 'gt, POINT target / hand from another dev POINT token (seeded derangement), amplitude bins random',
+    'amp0': 'gt, every amplitude bin forced to 0 (small)', 'amp2': 'gt, every amplitude bin forced to 2 (large)',
+    'shift': 'gt, annotation tokens moved +1.0 s (t, a, b, apex; dropped past the clip end - 0.3 s)'}
+
+
+def ctl_plan(d, mode, stems, dur):
+    """stem -> list of token dicts (scmg/ctl.py token format) for the chosen mode (deterministic, before sharding)."""
+    import copy
+    from scmg import ctl
+    raw = json.loads((Path(d) / 'CTL.json').read_text())
+    if any(t['split'] != 'dev' for x in stems for t in raw.get(x, [])): raise SystemExit('control tokens of a train item requested')
+    ann = lambda t: ctl.group_of(t['type']) == 0
+    out = {}
+    rng = np.random.default_rng(20261105)
+    pts = [(x, i) for x in stems for i, t in enumerate(raw.get(x, [])) if t['type'] == ctl.POINT]
+    perm = rng.permutation(len(pts)); donor = {pts[perm[i]]: pts[perm[(i + 1) % len(pts)]] for i in range(len(pts))}
+    for x in stems:
+        ts = copy.deepcopy(raw.get(x, []))
+        if mode == 'none': ts = []
+        elif mode == 'ann': ts = [t for t in ts if ann(t)]
+        elif mode == 'lex': ts = [t for t in ts if not ann(t)]
+        elif mode == 'auto':
+            ts = [t for t in ts if not ann(t)]
+            ts += [dict(type=ctl.TYPE_ID[ctl.LEX2SEM[t['cls'][4:]]], cls=ctl.LEX2SEM[t['cls'][4:]], t=t['t'], a=t['a'], b=t['b'],
+                        split='dev', auto_from=t['cls']) for t in ts]
+        elif mode == 'gt_novals': ts = [dict(t, target=None, az=None, hand=None, amp_bin=None) for t in ts]
+        elif mode == 'point': ts = [dict(t, amp_bin=None) for t in ts if t['type'] == ctl.POINT]
+        elif mode == 'shuffle':
+            for i, t in enumerate(ts):
+                if t['type'] == ctl.POINT:
+                    dx, di = donor[(x, i)]; dt_ = raw[dx][di]; t.update(target=dt_['target'], hand=dt_['hand'], shuffled_from=f'{dx}:{di}')
+                if ann(t): t['amp_bin'] = int(rng.integers(3))
+        elif mode in ('amp0', 'amp2'):
+            for t in ts:
+                if ann(t): t['amp_bin'] = int(mode[-1])
+        elif mode == 'shift':
+            new = []
+            for t in ts:
+                if ann(t):
+                    if t['t'] + 1.0 >= dur[x] - 0.3: continue
+                    t = dict(t, t=t['t'] + 1.0, a=t['a'] + 1.0, b=min(dur[x], t['b'] + 1.0), apex=t.get('apex', 0) + 1.0, shifted=1.0)
+                new.append(t)
+            ts = new
+        out[x] = sorted(ts, key=lambda t: t['t'])
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--ckpt', required=True); ap.add_argument('--vae', required=True); ap.add_argument('--stats', required=True)
@@ -57,8 +111,13 @@ def main():
                          'length order of the stem list, times rescaled to this clip -- with this clip\'s audio / speaker')
     ap.add_argument('--text-swap-map', default=None, help='with --text-swap: JSON {stem: donor stem} (e.g. shared with the ECHO-G '
                     'probe scripts/echog_g1/echog_textuse.py) instead of the length-order neighbour')
+    # 11-05 explicit control tokens (models trained with cfg ctl; default = no tokens, the unchanged call)
+    ap.add_argument('--ctl-tokens', default=None, help='CTL.json dir of scripts/semantic/g1_ctl_tokens.py (dev split tokens)')
+    ap.add_argument('--ctl-mode', default='gt', choices=list(CTL_MODES), help='which tokens are given (see CTL_MODES)')
+    ap.add_argument('--cfg-ctl', type=float, default=None, help='separate control-token guidance (Streamer cfg_ctl); None = joint CFG')
     a = ap.parse_args()
     if EMBODIMENT != 'g1': raise SystemExit('run with SCMG_J=39')
+    if a.ctl_tokens: a.save50 = True                # the control metrics are measured on the 50 Hz output
     eng = a.protocol == 'engine'
     tm = a.text_mode or ('x2' if eng else 'final')
     hz = a.horizon or ('2' if eng else 'inf')
@@ -86,6 +145,7 @@ def main():
         order = sorted(stems, key=lambda x: (view.clips[idx[x]]['frames'], x))
         donor = {x: order[(i + 1) % len(order)] for i, x in enumerate(order)}
         if a.text_swap_map: donor = {x: json.loads(Path(a.text_swap_map).read_text())[x] for x in stems}
+    ctl_toks = ctl_plan(a.ctl_tokens, a.ctl_mode, stems, {x: view.clips[idx[x]]['frames'] / 50. for x in stems}) if a.ctl_tokens else {}
     si, sn = (int(x) for x in a.shard.split('/'))
     stems = stems[si::sn]
     t0 = time.time(); log = []
@@ -116,6 +176,13 @@ def main():
                                      'titime', 'tseg', 'tiseg', 'tiend', 'text_c') if kk in s}
         kw = {} if proto is None else dict(text_mode=tm, x2_rate=a.x2_rate, x2_lag=a.x2_lag, deploy_timing=dt)
         mkw = dict(audio_off=True) if a.modality == 'text' else {}     # passed only when set (default call unchanged)
+        used = ctl_toks.get(stem, [])
+        if used:
+            from scmg.ctl import token_value
+            tv = [token_value(t) for t in used]
+            cond.update(ctl_t=np.array([t['t'] for t in used], np.float32), ctl_type=np.array([x[0] for x in tv], np.int64),
+                        ctl_v=np.stack([x[1] for x in tv]), ctl_vm=np.stack([x[2] for x in tv]))
+            if a.cfg_ctl is not None: mkw['cfg_ctl'] = a.cfg_ctl
         cmd, _, tk = generate(m, vae, s['feat'], cond, stats, nch, H=H, steps=a.steps, seed=a.seed, standby=qm, ctx_t=m.ctx_t,
                               cfg_w=a.cfg_w, cfg_t=a.cfg_t, noise_scale=a.noise_scale, **kw, **mkw)
         if cmd.shape[0] < L or cmd.shape[1] != J or not np.isfinite(cmd).all(): raise ValueError(f'{stem}: generated {cmd.shape}')
@@ -133,7 +200,8 @@ def main():
                                        **({} if (a.modality, a.text_swap) == ('both', False) else
                                           dict(modality=a.modality, text_swap=donor.get(stem))),
                                        resample='scmg/g1.py to30 (cubic / heading spline / RotationSpline)',
-                                       **({} if proto is None else dict(stream=proto)))), o.with_suffix('.pt.tmp'))
+                                       **({} if proto is None else dict(stream=proto)),
+                                       **({} if not a.ctl_tokens else dict(ctl_mode=a.ctl_mode, cfg_ctl=a.cfg_ctl, ctl=used)))), o.with_suffix('.pt.tmp'))
         os.replace(o.with_suffix('.pt.tmp'), o)      # atomic: an interrupted run never leaves a truncated <stem>.pt that a resume skips
         if a.save50: np.save(out / f'{stem}.q50.npy', q50.astype(np.float32))
         log.append(dict(stem=stem, frames50=L, frames30=n30, tick_ms_p50=float(np.median(tk[1:]) * 1e3) if len(tk) > 1 else None))

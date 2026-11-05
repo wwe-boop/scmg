@@ -44,6 +44,8 @@ class StageCfg:
     text_focus_p: float = 0.0      # 11-03 P(batch is TEXT-FOCUSED): mel (and TTS rows) hidden, prosody kept, no text dropout
     sel_audio_premask: bool = False  # remove hidden chunks from encoder input as well as direct audio routes
     p_sel_audio: float = 0.0       # P(per text-bearing sample) that the audio of every gesture chunk is hidden (planner + flow)
+    sel_audio_max_class: int = 0   # 11-05 G1: >0 = only chunks with 1 <= g_k <= this class are hidden (G1 gest track: 1..3 deictic /
+                                   # iconic / metaphoric, 4 beat on ~88 % of chunks); 0 = every gesture chunk (old behaviour)
     w_foot: float = 0.0            # 11-05 G1 only: foot-contact consistency on the decoded [ctx | target] frames (scmg/g1_contact.py:
     w_safe: float = 0.0            # 11-05 G1 only: executable-contract loss on the decoded [ctx | target] frames (scmg/g1_safety.py:
                                    # URDF joint limits + calibrated left-right / arm-torso self-collision proxies); 0 = off
@@ -92,6 +94,20 @@ class StageCfg:
     # the other modality keeps its independent 10 % dropout, so the joint null (CFG unconditional branch) is still learned
     force_drop_text: bool = False
     force_drop_audio: bool = False
+    # 11-06 modality-balanced gradient modulation (OGM-GE, Peng et al. CVPR 2022; default off): every step the flow loss is also
+    # evaluated (no grad, same noise / times / history) with the audio dropped and with the text dropped; their increase over the
+    # full loss = each modality's contribution. scmg.train scales the GRADIENT of the dominant modality's encoder by
+    # 1 - tanh(alpha (ratio - 1)) (+ Gaussian noise of the gradient's std, 'GE'); see train.ogm_modulate.
+    ogm_alpha: float = 0.0
+    ogm_ge: bool = True
+    ogm_ema: float = 0.9           # EMA of the contribution ratio over steps (single batches are noisy)
+    # 11-05 explicit control tokens (cfg.ctl / ctl_flow + batch ctl_* from View(ctl_tokens=...); without them nothing below runs)
+    ctl_drop: float = 0.5          # P(sample sees no token of a group), annotation / lexical groups independently -> the no-token
+                                   # behaviour stays trained (and CFG-able)
+    ctl_field_drop: float = 0.0    # P(each value field of a kept token is masked): partial tokens (target only / amplitude only)
+    ctl_w: float = 0.0             # flow-loss weight 1 + ctl_w on positions inside [a - 0.3, b + 0.3] of a kept token
+    w_ctl_aux: float = 0.0         # pointing-ray loss on the decoded apex frame of kept POINT tokens: 1 - cos(elbow->wrist ray,
+                                   # wrist->target), official FK (needs the decode path; weighted like w_cont by the noise level)
 
 
 def logit_normal(n, device, generator=None):
@@ -165,6 +181,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
                            torch.where((fg >= 0).all(-1), torch.zeros_like(fg[..., 0]), torch.full_like(fg[..., 0], -1)))
         if sc.p_sel_audio > 0:            # selective audio dropout: gesture chunks of text-bearing samples lose their audio
             hide = (r(sc.p_sel_audio) & ~drop_text & ~drop_audio)[:, None] & (glab >= 1)   # [B, K]
+            if sc.sel_audio_max_class > 0: hide = hide & (glab <= sc.sel_audio_max_class)
             amask_k = amask_k & ~hide[:, :, None]
     if sc.sel_audio_premask:
         th, hm = batch.get('tts_h'), batch.get('tts_hm')
@@ -217,6 +234,32 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         text = torch.cat([text, tu], 1); tmask = torch.cat([tmask, tmask], 1)
         tsec = torch.cat([tsec, torch.full_like(tsec, float('nan'))], 1)              # the untimed copy has no time
         tvis = torch.cat([tvis & voiced, tvis & ~voiced], -1)
+    ctl_c = ctl = None
+    if getattr(cfg, 'ctl', False) and 'ctl_type' in batch:
+        from .ctl import anchor_arrival, visibility
+        ct = batch['ctl_t'].float()
+        gdrop = torch.stack([r(sc.ctl_drop), r(sc.ctl_drop)], 1)                    # annotation / lexical groups dropped independently
+        cm = (batch['ctl_type'] > 0) & torch.isfinite(ct) & ~torch.gather(gdrop, 1, batch['ctl_g'].long().clamp(0, 1))
+        cvm = batch['ctl_vm'].float()
+        if sc.ctl_field_drop > 0: cvm = cvm * (torch.rand(cvm.shape, device=dev) >= sc.ctl_field_drop).float()
+        u = model.ctl_embed(batch['ctl_type'].long() * cm.long(), batch['ctl_v'].float(), cvm)
+        nowk = torch.arange(K, device=dev).float() * CHUNK_FRAMES / 50.
+        if sc.p_async > 0:                # arrives with the word it is attached to; time known once voiced (streaming samples)
+            arr_c = anchor_arrival(arr, batch['ttime'], tvalid, ct)
+            keep, timed = visibility(cm, ct, arr_c, final, nowk, heard, stream)
+        else:
+            keep = cm[:, None, :].expand(B, K, -1); timed = keep
+        tt_c, tu_c = model.ctl_text_tokens(u, ct)
+        ctn = torch.where(cm, ct, torch.full_like(ct, float('nan')))
+        if tvis is not None:
+            text = torch.cat([text, tt_c.to(text.dtype), tu_c.to(text.dtype)], 1); tmask = torch.cat([tmask, cm, cm], 1)
+            tvis = torch.cat([tvis, timed, keep & ~timed], -1); tsec = torch.cat([tsec, ctn, torch.full_like(ctn, float('nan'))], 1)
+        else:
+            text = torch.cat([text, tt_c.to(text.dtype)], 1); tmask = torch.cat([tmask, cm], 1); tsec = torch.cat([tsec, ctn], 1)
+        qsec = model.flow_seconds(torch.arange(K, device=dev), cfg.ctx + CHUNK, cfg.ctx)
+        cc = model.ctl_flow_cond(u, ct, keep, timed, qsec)
+        if cc is not None: ctl_c = cc.flatten(0, 1)
+        ctl = dict(cm=cm, keep=keep, qsec=qsec)
     src = torch.where(r(0.1), torch.zeros_like(batch['source']), batch['source'])
     g = model.global_cond(batch['spk'], batch['spk_valid'] * (~drop_spk), src)
 
@@ -329,7 +372,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
                 for i in range(sc.self_force_steps):
                     tt = torch.full((M, Lf), i / sc.self_force_steps, device=dev); tt[kn0] = 1.
                     v0 = model.flow_velocity(x, tt, kn0, model.sem_h(h0).flatten(0, 1), gi, aw, awm, st0, None, *mt0,
-                                             ftext=ftext)
+                                             ftext=ftext, **({} if ctl_c is None else dict(ctl_c=ctl_c)))
                     if sc.self_force_cfg > 0:
                         v_u = model.flow_velocity(x, tt, kn0, h0_u, gi, aw_u, awm_u, st0, None, *mt0_u, ftext=ftext_u)
                         v0 = v_u + sc.self_force_cfg * (v0 - v_u)
@@ -397,7 +440,8 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             gp = gp * (~r(sc.sem_drop)).float()[:, None, None]                       # null g_k
             h_flow = model.sem_h(h, gp)
     v = model.flow_velocity(xt, t, known, h_flow.flatten(0, 1), gi, aw, awm, style_tok, state_ada,
-                            mtp if cfg.mtc else None, mtpm[:, None].expand(-1, L, -1) if cfg.mtc else None, ftext=ftext)
+                            mtp if cfg.mtc else None, mtpm[:, None].expand(-1, L, -1) if cfg.mtc else None, ftext=ftext,
+                            **({} if ctl_c is None else dict(ctl_c=ctl_c)))
     tgt_valid = lmask.view(B, K, CHUNK).flatten(0, 1)
     if supervise is not None: tgt_valid = tgt_valid & supervise.reshape(M, 1)
     sup = ~known
@@ -412,9 +456,31 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     if ilab is not None and sc.sem_w > 0:
         wi = (1 + sc.sem_w * has.float()).flatten()[:, None]                   # [M, 1]
         flow = (err * sup * wi).sum() / (sup * wi).sum().clamp(min=1)
+    elif ctl is not None and sc.ctl_w > 0:  # positions inside a kept token's segment (+-0.3 s)
+        a_, b_ = batch['ctl_a'].float(), batch['ctl_b'].float()
+        q_ = ctl['qsec'][None, :, :, None]                                          # [1, K, L, 1]
+        ins = (q_ >= (a_ - 0.3)[:, None, None]) & (q_ <= (b_ + 0.3)[:, None, None]) & ctl['cm'][:, None, None]
+        wi = (1 + sc.ctl_w * ins.any(-1).float()).flatten(0, 1)                    # [M, L]
+        flow = (err * sup * wi).sum() / (sup * wi).sum().clamp(min=1)
+        ctl['frac'] = ins.any(-1).float().mean()
     else:
         flow = (err * sup).sum() / sup.sum().clamp(min=1)
     out = dict(flow=flow, self_forced=torch.tensor(out_sf, device=dev))
+    if sc.ogm_alpha > 0:
+        if cfg.mtc or cfg.planner != 'chunk': raise ValueError('ogm_alpha: chunk planner without mtc only')
+        with torch.no_grad():
+            base_l = (err * sup).sum() / sup.sum().clamp(min=1)
+            def drop_loss(a_, am_, aw_, tm_, ctl_on):
+                h_ = model.plan(plan_input, a_, am_, text, tm_, g, tids=batch.get('tids'), tidm=tidm_d, sref=sref, tvis=tvis,
+                                lvis=lvis, sstate=sstate)
+                ft_ = model.flow_text(text, tm_, tvis, tsec, K)
+                v_ = model.flow_velocity(xt, t, known, model.sem_h(h_).flatten(0, 1), gi, aw_, awm, style_tok, state_ada, ftext=ft_,
+                                         **({} if (ctl_c is None or not ctl_on) else dict(ctl_c=ctl_c)))
+                return ((v_ - (x1i - noise)).square().mean(-1) * sup).sum() / sup.sum().clamp(min=1)
+            l_na = drop_loss(model.audio_null.expand_as(a), torch.zeros_like(amask_k), model.audio_null.to(aw.dtype).expand_as(aw), tmask, True)
+            l_nt = drop_loss(a, amask_k, aw, torch.zeros_like(tmask), False)
+        out['ogm_da'] = (l_na - base_l).float(); out['ogm_dt'] = (l_nt - base_l).float()
+    if ctl is not None and 'frac' in ctl: out['ctl_frac'] = ctl['frac']
     if sc.w_tdelta > 0:
         d = v - (x1i - noise)                                                        # [M, L, z] velocity error
         pair = sup[:, 1:] & sup[:, :-1]
@@ -480,7 +546,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         loss = loss + sc.w_int * out['intent']
 
     # ---- decoded continuity / rhythm
-    if sc.w_cont > 0 or sc.w_rhy > 0 or sc.w_phys > 0 or sc.w_foot > 0 or sc.w_safe > 0:
+    if sc.w_cont > 0 or sc.w_rhy > 0 or sc.w_phys > 0 or sc.w_foot > 0 or sc.w_safe > 0 or (sc.w_ctl_aux > 0 and ctl is not None):
         x1hat = torch.where(known[..., None], x1i, xt + (1 - t[..., None]) * v)
         # decode with the context the streamer has: 3 more history chunks before the known context (the decoder looks
         # ~7 latents back) and the next chunk's first latent as look-ahead (inference emits a frame only once the latent
@@ -521,6 +587,9 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             from .g1_safety import contract_loss
             sf = contract_loss(y.float() * qs + qm, fv * w_inst[:, None])
             out.update(sf); loss = loss + sc.w_safe * (sf['safe_lim'] + sf['safe_lr'] + sc.safe_torso_w * sf['safe_torso'])
+        if sc.w_ctl_aux > 0 and ctl is not None:
+            out.update(ctl_ray_loss(y.float() * qs + qm, batch, ctl, fv * w_inst[:, None], B, K))
+            loss = loss + sc.w_ctl_aux * out['ctl_ray']
         if sc.w_phys > 0:
             out.update(phys_reg(y, fv * w_inst[:, None], qm, qs, sc))
             loss = loss + sc.w_phys * (out['phys_joint'] + sc.phys_dyn_w * out['phys_dyn'] + sc.phys_coll_w * out['phys_coll'])
@@ -543,6 +612,32 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         loss = loss + sc.w_kl * out['kl']
     out['loss'] = loss
     return out
+
+
+def ctl_ray_loss(yp, batch, ctl, fw, B, K):
+    """yp [M, 2 * CHUNK_FRAMES, J] decoded [ctx | target] frames (physical), fw [M, F] frame weights. For every kept POINT
+    token visible to the chunk that contains its GT apex frame: 1 - cos(elbow -> wrist ray, wrist -> target) at that frame."""
+    from .common import EMBODIMENT
+    if EMBODIMENT != 'g1': raise ValueError('StageCfg.w_ctl_aux is the G1 pointing term (SCMG_J=39)')
+    from .ctl import POINT, POS_SCALE, arm_points
+    dev = yp.device
+    fap = torch.round(torch.nan_to_num(batch['ctl_apex'].float(), -1e3) * 50.).long()           # [B, Kc] window frame
+    kap = torch.div(fap, CHUNK_FRAMES, rounding_mode='floor')
+    ok = ctl['cm'] & (batch['ctl_type'] == POINT) & (batch['ctl_vm'][..., 0] > 0) & (fap >= 0) & (kap < K)
+    bi, ji = ok.nonzero(as_tuple=True)
+    if len(bi) == 0: return dict(ctl_ray=yp.sum() * 0., ctl_ray_n=torch.zeros((), device=dev))
+    kk = kap[bi, ji]; vis = ctl['keep'][bi, kk, ji]
+    bi, ji, kk = bi[vis], ji[vis], kk[vis]
+    if len(bi) == 0: return dict(ctl_ray=yp.sum() * 0., ctl_ray_n=torch.zeros((), device=dev))
+    m = bi * K + kk; lf = fap[bi, ji] - (kk - 1) * CHUNK_FRAMES                               # local frame in [ctx | target]
+    q = yp[m, lf][:, None, 10:39]                                                              # [n, 1, 29]
+    g = arm_points(q); hand = (batch['ctl_v'][bi, ji, 3] > 0).long()
+    ar = torch.arange(len(bi), device=dev)
+    w_ = g['wrist'][ar, 0, hand]; e_ = g['elbow'][ar, 0, hand]
+    tgt = batch['ctl_v'][bi, ji, :3].float() * POS_SCALE
+    cos = F.cosine_similarity(w_ - e_, tgt - w_, dim=-1)
+    wt = fw[m, lf]
+    return dict(ctl_ray=((1 - cos) * wt).sum() / wt.sum().clamp(min=1e-3), ctl_ray_n=torch.tensor(float(len(bi)), device=dev))
 
 
 _PHYS = {}

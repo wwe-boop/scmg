@@ -86,7 +86,7 @@ class View:
     """Everything loaded once (RAM, ~8 GB) before DataLoader workers fork (shared copy-on-write)."""
 
     def __init__(self, view=VIEW, split='train', text_cache=None, stats=None, mmap=False, tok_cache=None, tts_hidden=None,
-                 intent_frames=None, holdout=None, tok_intent=None, bagger_dir=None, gest_frames=None):
+                 intent_frames=None, holdout=None, tok_intent=None, bagger_dir=None, gest_frames=None, ctl_tokens=None):
         self.bagger_dir = bagger_dir
         v = Path(P(view)); self.root = v
         items = json.loads((v / 'train.json').read_text())
@@ -196,6 +196,9 @@ class View:
         if gest_frames:
             if intent_frames: raise ValueError('gest_frames and intent_frames both define the g_k labels: pass one')
             self.gest = load_gest_frames(gest_frames, v, len(self.q))
+        self.ctl = None                                 # 11-05: explicit control tokens (scripts/semantic/g1_ctl_tokens.py), opt-in
+        if ctl_tokens:
+            self.ctl, self.ctl_index = load_ctl_tokens(ctl_tokens, v, self.items, self.clips, 'train' if split == 'train' else 'dev')
         if EMBODIMENT != 'ex002': self._refuse_foreign_assets(v, holdout, tok_cache, tok_intent, intent_frames)
         self.tts = None
         if tts_hidden:                                  # Qwen3-TTS Talker hidden states (opt-in conditioning, 11-03)
@@ -240,7 +243,7 @@ class View:
 
 class WindowDataset(torch.utils.data.IterableDataset):
     def __init__(self, view: View, frames=256, ref_frames=128, max_tokens=128, seed=0, semsynth_share=0.4,
-                 fixed=None, max_ids=160, bagger_share=0.):
+                 fixed=None, max_ids=160, bagger_share=0., ctl_focus=0.):
         self.v, self.T, self.R, self.K, self.seed = view, frames, ref_frames, max_tokens, seed
         self.w = view.weights(semsynth_share)
         self.fixed = fixed            # list of (clip_idx, start) for deterministic evaluation
@@ -248,6 +251,8 @@ class WindowDataset(torch.utils.data.IterableDataset):
         self.bagger = None
         if not 0 <= bagger_share <= 1: raise ValueError('bagger_share must be in [0,1]')
         self.bagger_share = bagger_share
+        self.ctl_focus = ctl_focus    # 11-05: P(window placed around a random annotation control token); 0 = sampling unchanged
+        if ctl_focus > 0 and not getattr(view, 'ctl_index', None): raise ValueError('ctl_focus needs View(ctl_tokens=...)')
         if bagger_share > 0:
             from .bagger import BaggerPool
             self.bagger = BaggerPool(view.bagger_dir, self)
@@ -261,6 +266,15 @@ class WindowDataset(torch.utils.data.IterableDataset):
         while True:
             if self.bagger is not None and rng.random() < self.bagger_share:
                 yield self.bagger.sample(rng)
+                continue
+            if self.ctl_focus > 0 and rng.random() < self.ctl_focus:
+                ci, f = self.v.ctl_index[int(rng.integers(len(self.v.ctl_index)))]
+                L = self.v.clips[ci]['frames']
+                s = int(np.clip(f - rng.integers(25, max(26, self.T - 75)), 0, max(0, L - self.T))) // STRIDE * STRIDE
+                sample = self.sample(ci, s, rng)
+                if self.bagger is not None:
+                    sample['loss_from_chunk'] = np.int64(-1); sample['bagger_null'] = np.bool_(False)
+                yield sample
                 continue
             ci = int(rng.choice(len(self.w), p=self.w))
             L = self.v.clips[ci]['frames']
@@ -365,6 +379,14 @@ class WindowDataset(torch.utils.data.IterableDataset):
             extra['gest'] = np.where(il >= 0, v.gest_lut[np.clip(il, 0, None)], -1).astype(np.int16)   # coarse g_k frame labels
         if getattr(v, 'gest', None) is not None:      # [T] int16: -1 unknown / 0 none / 1.. coarse class (past the clip end -1)
             gl = np.full(T, -1, np.int16); gl[:n] = v.gest[a:a + n]; extra['gest'] = gl
+        if getattr(v, 'ctl', None) is not None:        # control tokens of the window's items (window-relative s)
+            from .ctl import window_arrays
+            toks = []
+            for it in c['items']:
+                d0 = (it['offset'] - c['start'] - s) / 50.
+                for (t_, a_, b_, ap_, ty_, v_, m_) in v.ctl.get(it['id'], ()):
+                    if 0 <= t_ + d0 < n / 50.: toks.append((t_ + d0, a_ + d0, b_ + d0, ap_ + d0, ty_, v_, m_))
+            extra.update(window_arrays(toks))
         if v.tts is not None:
             if T % 4: raise ValueError(f'tts_hidden needs windows of a multiple of 4 frames (got {T})')
             extra['tts_h'], extra['tts_hm'] = tts_rows(c['items'], c['start'], s, n, T // 4, v.tts_array)
@@ -381,6 +403,31 @@ def load_gest_frames(d, view_dir, n_rows):
     sha = hashlib.sha256((Path(view_dir) / 'SPLIT.json').read_bytes()).hexdigest()
     if prep.get('split_sha256') != sha: raise ValueError(f'GEST_FRAMES built for split {prep.get("split_sha256")}, view {view_dir} has {sha}')
     return np.asarray(g)
+
+
+def load_ctl_tokens(d, view_dir, items, clips, split):
+    """CTL.json of scripts/semantic/g1_ctl_tokens.py -> ({item id: [(t, a, b, apex, type, val, vmask)]} of THIS split only,
+    [(clip index, clip frame of an annotation token)] for View sampling). PREP.json must carry this view's SPLIT.json sha256."""
+    import hashlib
+    from .ctl import token_value, group_of, TYPE_ID
+    d = Path(P(d)); prep = json.loads((d / 'PREP.json').read_text())
+    sha = hashlib.sha256((Path(view_dir) / 'SPLIT.json').read_bytes()).hexdigest()
+    if prep.get('split_sha256') != sha: raise ValueError(f'control tokens built for split {prep.get("split_sha256")}, view {view_dir} has {sha}')
+    raw = json.loads((d / 'CTL.json').read_text()); ids = {it['id'] for it in items}; out = {}
+    for k, ts in raw.items():
+        if k not in ids: continue
+        if any(t['split'] != split for t in ts): raise ValueError(f'{k}: control tokens of split {ts[0]["split"]} in a {split} view')
+        out[k] = []
+        for t in ts:
+            ty, val, vm = token_value(t)
+            ap = t.get('apex', float('nan'))
+            out[k].append((float(t['t']), float(t['a']), float(t['b']), float(ap), ty, val, vm))
+    index = []
+    for ci, c in enumerate(clips):
+        for it in c['items']:
+            for (t_, a_, b_, ap_, ty_, v_, m_) in out.get(it['id'], ()):
+                if group_of(ty_) == 0 and ty_ != TYPE_ID['beat']: index.append((ci, it['offset'] - c['start'] + int(round(t_ * 50))))   # not beat
+    return out, index
 
 
 def collate(batch):
