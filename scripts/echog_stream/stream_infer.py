@@ -121,7 +121,7 @@ def main():
                  known_xt=sc.known_xt, x2_rate=sc.x2_rate, x2_lag=sc.x2_lag, checkpoint=str(a.checkpoint),
                  checkpoint_step=meta.get('global_step'), stream_trained='stream' in meta)
     t0 = time.time(); log = []; done = 0
-    todo = [s_ for s_ in stems if not (a.out / f'{s_}.pt').exists()]
+    todo = sorted((s_ for s_ in stems if not (a.out / f'{s_}.pt').exists()), key=lambda s_: lengths[s_])   # similar lengths per lockstep group
     G = 1 if a.offline else max(1, a.clip_batch)
 
     def load(stem):

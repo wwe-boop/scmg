@@ -47,6 +47,7 @@ class StreamConfig:
     x2_rate: float = 15.0            # SCMG x2 text arrival: tokens / s
     x2_lag: float = 0.15             #                      lag before the token onset, s
     known_xt: str = 'clean'          # x_t on known frames: 'clean' (x1) | 'noise' (official flow path t x1 + (1 - t) eps)
+    known_aug_std: float = 0.0       # training: Gaussian noise (normalised units) on the known prefix (exposure-bias knob; 0 = off)
 
     def validate(self) -> None:
         if self.known_xt not in ('clean', 'noise'): raise ValueError('known_xt must be clean or noise')
@@ -212,16 +213,17 @@ def collate_windows(ws: list[dict[str, Any]]) -> dict[str, Any]:
     return out
 
 
-def stream_flow_loss(model, batch, condition_dropout: float, temporal_weight: float, known_xt: str = 'clean'):
+def stream_flow_loss(model, batch, condition_dropout: float, temporal_weight: float, known_xt: str = 'clean', known_aug_std: float = 0.0):
     """official flow_matching_loss restricted to the generated frames (weighted), with the known prefix as condition."""
     target = batch['motion']; km = batch['known_mask']; w = batch['loss_weight']
+    kc = target if known_aug_std <= 0 else torch.where(km[..., None], target + known_aug_std * torch.randn_like(target), target)
     audio, text, tpm, td = apply_condition_dropout(batch['audio'], batch['text'], batch['text_padding_mask'],
                                                    batch['time_distance'], condition_dropout)
     noise = torch.randn_like(target)
     t = torch.rand(target.shape[0], device=target.device)
     xt = t[:, None, None] * target + (1.0 - t[:, None, None]) * noise
-    if known_xt == 'clean': xt = torch.where(km[..., None], target, xt)
-    v = model(xt, t, audio, text, batch['motion_mask'], tpm, td, known=target, known_mask=km)
+    if known_xt == 'clean': xt = torch.where(km[..., None], kc, xt)
+    v = model(xt, t, audio, text, batch['motion_mask'], tpm, td, known=kc, known_mask=km)
     tv = target - noise
     D = target.shape[-1]
     flow = ((v - tv).square() * w[..., None]).sum() / (w.sum().clamp_min(1e-6) * D)

@@ -157,6 +157,7 @@ def main():
     if resume.exists():
         ck = torch.load(resume, map_location='cpu', weights_only=False)
         model.load_state_dict(ck['model']); step = int(ck['global_step'])
+        if StreamConfig.from_dict(ck['stream']) != sc: raise SystemExit(f"--stream differs from the resumed run: {ck['stream']}")
     else:
         load_official_into(model, init['ema'])
     model.to(dev)
@@ -197,7 +198,7 @@ def main():
         for i in range(a.accum):
             tw = time.perf_counter(); b = to_dev(next(loader), dev); wait += time.perf_counter() - tw
             with (net.no_sync() if world > 1 and i < a.accum - 1 else contextlib.nullcontext()):
-                loss, fl, tl_ = stream_flow_loss(net, b, tc.condition_dropout, tc.temporal_loss_weight, sc.known_xt)
+                loss, fl, tl_ = stream_flow_loss(net, b, tc.condition_dropout, tc.temporal_loss_weight, sc.known_xt, sc.known_aug_std)
                 if not torch.isfinite(loss): raise FloatingPointError(f'non-finite loss at step {step} stems {b["stems"]}')
                 (loss / a.accum).backward()
         g = torch.nn.utils.clip_grad_norm_(model.parameters(), tc.gradient_clip)
