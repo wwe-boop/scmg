@@ -7,7 +7,9 @@ training or the default behaviour of any script (every switch is off unless set 
    with source = 5. SCMG_COND makes the evaluation run under deployment / persona conditions:
        SCMG_COND="spk=null,ref=null,source=5"         deployment conditions
        SCMG_COND="spk=null,ref=<persona.npy>,source=5" persona: one fixed reference motion for every sentence
-   keys: spk=null|<[192] .npy>, ref=null|<[R, 34] .npy, NORMALISED with the training stats>, source=<int>.
+   keys: spk=null|<[192] .npy>, ref=null|<[R, 34] .npy, NORMALISED with the training stats>, source=<int>,
+   spk_alpha=<a in (0,1)> (after spk=<file>: blend a * speaker + (1 - a) * null in global_cond; inference only).
+   NOTE: ref only matters for checkpoints trained with cfg.style=True; sibag / sibag-coll have style=False (ref ignored).
    Unset / empty = conditions untouched (bit-identical).
 
 2. ArmEnvelope (L1 "upper arm within a human range, no wrist eversion")
@@ -63,12 +65,16 @@ def apply_cond(cond, spec=None):
                 if not np.isfinite(val).all():
                     raise ValueError(f'SCMG_COND {k}={v}: non-finite values')
             c[k] = like(c[k], val); c[f'{k}_valid'] = like(c[f'{k}_valid'], ok)
+        elif k == 'spk_alpha':                  # blend a * speaker + (1 - a) * null speaker (scmg/model.py global_cond)
+            al = float(v)
+            if not 0 < al < 1: raise ValueError(f'SCMG_COND spk_alpha={v}: need 0 < a < 1 (0 / 1 = spk=null / spk=<file>)')
+            c['spk_valid'] = like(c['spk_valid'], al)
         elif k == 'source':
             if 'source' not in c:
                 raise KeyError('SCMG_COND source=...: cond has no source')
             c['source'] = like(c['source'], int(v))
         else:
-            raise ValueError(f'SCMG_COND key {k!r}: supported are spk, ref, source')
+            raise ValueError(f'SCMG_COND key {k!r}: supported are spk, ref, source, spk_alpha')
     return c
 
 

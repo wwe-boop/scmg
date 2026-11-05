@@ -472,6 +472,10 @@ class SCMG(nn.Module):
 
     def global_cond(self, spk, spk_valid, source):
         s = torch.where(spk_valid[:, None] > .5, self.spk_in(spk), self.spk_null)
+        frac = (spk_valid > 0) & (spk_valid < 1)          # 11-05 landing (inference only; training uses 0 / 1 -> unchanged):
+        if bool(frac.any()):                              # spk_valid = a in (0, 1) blends a * speaker + (1 - a) * null
+            a = spk_valid[:, None].to(s.dtype)
+            s = torch.where(frac[:, None], a * self.spk_in(spk) + (1 - a) * self.spk_null, s)
         return s + self.source(source)
 
     def chunk_audio_mask(self, K, N, H, device):

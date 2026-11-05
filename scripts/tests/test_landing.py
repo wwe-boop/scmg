@@ -76,4 +76,21 @@ m2 = L.speech_mask(sp2, 0.3)
 res.append(ok(m2[10:40].all() and not m2[45:75].any() and m2[80:].all(), 'speech gaps <= 0.3 s closed, longer kept'))
 res.append(ok(L.runs(np.array([0, 1, 1, 0, 1], bool)) == [(1, 3), (4, 5)], 'runs'))
 
+# ---- fractional speaker condition (model.global_cond): 0 / 1 unchanged, a in (0, 1) blends
+from types import SimpleNamespace
+from scmg.model import SCMG
+torch.manual_seed(0)
+stub = SimpleNamespace(spk_in=torch.nn.Linear(192, 8), spk_null=torch.nn.Parameter(torch.randn(8)), source=torch.nn.Embedding(8, 8))
+spk_t = torch.randn(4, 192); src = torch.tensor([5, 5, 1, 5]); v = torch.tensor([0., 1., 1., 0.])
+with torch.no_grad():
+    old = torch.where(v[:, None] > .5, stub.spk_in(spk_t), stub.spk_null) + stub.source(src)
+    res.append(ok(torch.equal(SCMG.global_cond(stub, spk_t, v, src), old), 'global_cond: 0 / 1 spk_valid bit-identical to the pre-change formula'))
+    v2 = torch.tensor([0., .3, 1., .5]); out = SCMG.global_cond(stub, spk_t, v2, src); ref = stub.spk_in(spk_t)
+    exp1 = .3 * ref[1] + .7 * stub.spk_null + stub.source(src)[1]
+    res.append(ok(torch.equal(out[0], old[0]) and torch.equal(out[2], old[2]) and float((out[1] - exp1).abs().max()) < 1e-6, 'global_cond: fractional rows blend, others unchanged'))
+d = L.apply_cond(c, 'spk_alpha=0.3')
+res.append(ok(abs(float(d['spk_valid']) - .3) < 1e-6, 'spk_alpha sets a fractional spk_valid'))
+try: L.apply_cond(c, 'spk_alpha=1.0'); res.append(ok(False, 'spk_alpha outside (0, 1) rejected'))
+except ValueError: res.append(ok(True, 'spk_alpha outside (0, 1) rejected'))
+
 print('ALL PASS' if all(res) else f'{res.count(False)} FAILED'); sys.exit(0 if all(res) else 1)
