@@ -1,9 +1,12 @@
 """11-05 G1 ablation summary table (paper M13): input-modality rows (modality_ablation.sh) + module rows from EXISTING lanes
-(nothing is re-run here).  python scripts/echog_g1/ablation_table.py <modality out root> <out.json> [<out.md>]
+(nothing is re-run here) + the ECHO-G / SCMG text-use probe.
+    python scripts/echog_g1/ablation_table.py --infer <modality_ablation.sh roots> --train <modality_train.sh root>
+        --textuse <textuse_g1.sh dir> --out table.json --md table.md
 Metrics (official ECHO-G evaluator): FGD, dDiv (|Div - Div_GT|, signed in brackets), dBA, dJerkW (Jerk_length_weighted_gap),
 foot ground error, contact sliding speed (MM needs 20 samples per clip: not part of these single-sample runs); semantic
-pair_win / det_auc (mean of 3 recogniser seeds) where scored; text sensitivity for the modality rows."""
-import json, sys
+pair_win / det_auc (mean of 3 recogniser seeds) where scored; text sensitivity (ratio of means, robot_repr upper-body joint
+angles): ts_swap = d(own, swapped text) / d(seed 0, seed 1), ts_notext = d(own, no text) / d(seed 0, seed 1)."""
+import argparse, json, sys
 from pathlib import Path
 
 B = Path('/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg')
@@ -60,36 +63,69 @@ def metrics(f):
                 foot=m['foot_ground_error']['mean'], slide=m['contact_sliding_speed']['mean'])
 
 
+def sem_table(p):
+    return json.loads(Path(p).read_text()).get('table', {}) if Path(p).exists() else {}
+
+
+def add_sem(r, t, k):
+    if k in t: r.update({mm: t[k][mm]['mean'] for mm in ('pair_win', 'det_auc') if mm in t[k]})
+
+
 def main():
-    O = Path(sys.argv[1]); rows = []
-    for side in ('dev', 'test'):
-        R = O / side
-        sem = {}
-        rp = O / f'sem-{side}' / 'REPORT.json'
-        if rp.exists():
-            sem = json.loads(rp.read_text()).get('table', {})
-        ts = json.loads((O / f'TEXT_SENS-{side}.json').read_text()) if (O / f'TEXT_SENS-{side}.json').exists() else {}
-        for f in sorted(R.glob('benchmark_*.json')) if R.exists() else []:
-            tag = f.stem[len('benchmark_'):]; lab, p, _, sd = tag.rsplit('_', 3)
-            r = dict(group='input modality', label=lab, side=side, protocol=p, seed=int(sd), source=str(f), **metrics(f))
-            k = f'{lab}_{p}'
-            if sd == '000' and k in sem:
-                r.update({mm: sem[k][mm]['mean'] for mm in ('pair_win', 'det_auc') if mm in sem[k]})
-            if f'{lab}_{p}' in ts: r['text_sens_upper'] = ts[f'{lab}_{p}']['upper']['ratio_of_means']; r['d_swap_upper'] = ts[f'{lab}_{p}']['upper']['d_swap']
+    ap = argparse.ArgumentParser()
+    ap.add_argument('--infer', nargs='*', default=[], help='modality_ablation.sh out roots (with dev/ and / or test/)')
+    ap.add_argument('--train', default=None, help='modality_train.sh out root'); ap.add_argument('--textuse', default=None)
+    ap.add_argument('--out', required=True); ap.add_argument('--md', default=None)
+    a = ap.parse_args(); rows = []
+    for O in map(Path, a.infer):
+        for side in ('dev', 'test'):
+            R = O / side
+            if not R.exists(): continue
+            sem = sem_table(O / f'sem-{side}' / 'REPORT.json'); ts = {}
+            for f in (f'TEXT_SENS-{side}.json', f'TEXT_SENS_NOTEXT-{side}.json'):
+                if (O / f).exists(): ts.update(json.loads((O / f).read_text()))
+            for f in sorted(R.glob('benchmark_*.json')):
+                tag = f.stem[len('benchmark_'):]; lab, p, _, sd = tag.rsplit('_', 3)
+                r = dict(group='input modality (inference, sf0)', label=lab, side=side, protocol=p, seed=int(sd), source=str(f), **metrics(f))
+                if sd == '000': add_sem(r, sem, f'{lab}_{p}')
+                for key, col in ((f'{lab}_{p}', 'ts_swap'), (f'{lab}_swap_{p}', 'ts_swap'), (f'{lab}_notext_{p}', 'ts_notext')):
+                    if sd == '000' and key in ts: r[col] = ts[key]['upper']['ratio_of_means']
+                rows.append(r)
+            if 'gt' in sem: rows.append(dict(group='input modality (inference, sf0)', label='ground truth', side=side, protocol='-',
+                                             **{mm: sem['gt'][mm]['mean'] for mm in ('pair_win', 'det_auc')}))
+    if a.train:
+        T = Path(a.train)
+        for side in ('dev', 'test'):
+            sem = sem_table(T / f'sem-{side}' / 'REPORT.json')
+            for lab in ('aonly', 'tonly'):
+                for p in ('offline', 'engine'):
+                    f = T / side / lab / 'bench' / p / 'benchmark_seed_000.json'
+                    if f.exists():
+                        r = dict(group='input modality (training)', label=lab, side=side, protocol=p, seed=0, source=str(f), **metrics(f))
+                        add_sem(r, sem, f'{lab}-{p}'); rows.append(r)
+    if a.textuse:
+        U = Path(a.textuse); sem = sem_table(U / 'sem' / 'REPORT.json')
+        ts = json.loads((U / 'TEXT_SENS.json').read_text()) if (U / 'TEXT_SENS.json').exists() else {}
+        for f in sorted(U.glob('benchmark_*.json')):
+            m, mode, _, sd = f.stem[len('benchmark_'):].split('_')
+            r = dict(group='text use, val_common 300 subset', label=f'{m} {mode}', side='test', protocol='offline', seed=int(sd), source=str(f), **metrics(f))
+            if sd == '000': add_sem(r, sem, f'{m}-{mode}')
+            if f'{m}_{mode}' in ts: r['ts_' + mode] = ts[f'{m}_{mode}']['upper']['ratio_of_means']
             rows.append(r)
-        if 'gt' in sem: rows.append(dict(group='input modality', label='ground truth', side=side, protocol='-', **{mm: sem['gt'][mm]['mean'] for mm in ('pair_win', 'det_auc')}))
+        if 'gt' in sem: rows.append(dict(group='text use, val_common 300 subset', label='ground truth', side='test', protocol='-',
+                                         **{mm: sem['gt'][mm]['mean'] for mm in ('pair_win', 'det_auc')}))
     for g, lab, side, p, f in MODULE:
-        if Path(f).exists(): rows.append(dict(group=g, label=lab, side=side, protocol=p, seed=0, source=str(f), **metrics(f)))
+        if Path(f).exists(): rows.append(dict(group=g, label=lab, side=side, protocol=p, seed=0, source=str(f), existing=True, **metrics(f)))
         else: rows.append(dict(group=g, label=lab, side=side, protocol=p, missing=str(f)))
-    Path(sys.argv[2]).write_text(json.dumps(rows, indent=1))
-    if len(sys.argv) > 3:
-        cols = ('FGD', 'dDiv', 'dBA', 'dJerkW', 'foot', 'slide', 'pair_win', 'det_auc', 'text_sens_upper')
+    Path(a.out).write_text(json.dumps(rows, indent=1))
+    if a.md:
+        cols = ('FGD', 'dDiv', 'dBA', 'dJerkW', 'foot', 'slide', 'pair_win', 'det_auc', 'ts_swap', 'ts_notext')
         fmt = lambda v: '' if v is None else (f'{v:.4f}' if abs(v) < 0.1 else f'{v:.3f}')
         L = ['| group | setting | side | protocol | seed | ' + ' | '.join(cols) + ' |', '|' + '---|' * (5 + len(cols))]
         for r in rows:
             L.append(f"| {r['group']} | {r['label']} | {r['side']} | {r['protocol']} | {r.get('seed', '')} | " +
                      ' | '.join(fmt(r.get(c)) for c in cols) + ' |' + (' MISSING' if 'missing' in r else ''))
-        Path(sys.argv[3]).write_text('\n'.join(L) + '\n')
+        Path(a.md).write_text('\n'.join(L) + '\n')
     print(len(rows), 'rows')
 
 
