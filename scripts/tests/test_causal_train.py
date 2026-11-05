@@ -198,7 +198,7 @@ for stem in stems:
             a1, a2 = ci_.spk(Tk), c2.spk(Tk); dd_spk += int(not (np.array_equal(a1[0], a2[0]) and a1[1] == a2[1]))
         now = k * CHUNK_FRAMES / 50.; Kt = len(x['ttime'])
         inf_vis = (x['cur_vis'][:Kt] | x['cur_vis'][Kt:]).numpy()
-        ended = np.nan_to_num(tend.cpu().numpy(), nan=1e9) <= now + H2 * STRIDE / 50. + 1e-6
+        ended = CF.ended(np.nan_to_num(tend.cpu().numpy(), nan=1e9), now + H2 * STRIDE / 50.)
         vis_bad += int((inf_vis & ~ended).sum()); vis_n += int(inf_vis.sum()); agree.append(float((inf_vis == (ended & sw['tmask'])).mean()))
 ok('d causal_front_feat == Streamer causal feat at tick k (rows < t_k)', n_feat > 0 and dd_feat == 0., f'{n_feat} ticks, max|d| {dd_feat:.3g}')
 ok('d prefix speaker grade available by t_k; == Streamer spk_refresh=grades vector at every tick; grade rule causal (noise after t)',
@@ -240,7 +240,7 @@ for stem in stems[:3]:
         w2 = wave.copy(); w2[tk * CF.HOP:] = g.normal(0, max(1e-3, float(wave.std())), len(w2) - tk * CF.HOP).astype(np.float32)
         sf.write(tmpd / 'audio' / f'{stem}.wav', w2, CF.SR, subtype='FLOAT')
         W = json.loads((DS / 'annotations/words' / f'{stem}.json').read_text())
-        W2 = dict(W, words=[w for w in W['words'] if float(w['end']) <= tk / 50.])
+        W2 = dict(W, words=[w for w in W['words'] if CF.ended(float(w['end']), tk / 50.)])
         (tmpd / 'words' / f'{stem}.json').write_text(json.dumps(W2))
         rp = PC.one(job(stem, tmpd / 'audio', tmpd / 'words'))
         ro = [r for r in res if r[0] == stem][0]
@@ -255,7 +255,7 @@ for stem in stems[:3]:
         for kk in ('feat', 'cz_feat'):
             x = bb[kk].numpy().copy(); x[0, :n_, :80] = melp; bb[kk] = torch.as_tensor(x)
         # text not voiced by t_k: random features, later times (deleted words cannot be voiced yet)
-        now_end = np.nan_to_num(ba['cz_tend'][0].numpy(), nan=1e9) > (k * CHUNK_FRAMES + 2 * U80 * STRIDE) / 50. + 1e-6
+        now_end = ~CF.ended(np.nan_to_num(ba['cz_tend'][0].numpy(), nan=1e9), (k * CHUNK_FRAMES + 2 * U80 * STRIDE) / 50.)
         r2 = np.random.default_rng(5)
         for kk in ('text', 'text_c'):
             x = bb[kk].numpy().copy(); x[0, now_end] = r2.normal(size=x[0, now_end].shape); bb[kk] = torch.as_tensor(x)

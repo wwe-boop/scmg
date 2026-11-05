@@ -34,6 +34,16 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 CAMPPLUS = '/home/xr-25b7/bulk/models-ro/campplus'
 FPS, SR, HOP = 50, 16000, 320
+# 11-06: ONE predicate "word ended by t" for every causal rule (prefix feat89 units, training front_prosody, incremental feat89,
+# voiced / asr text visibility, training causal_text): end <= t + WORD_EPS. Word times sit on a 10 ms grid but carry float noise
+# (2.7200000000000006 for a word ending on the 2.72 s block boundary) and the training side compares window-relative float32
+# times; 0.1 ms is far below the grid step and far above both errors, so all sides decide every boundary word identically.
+WORD_EPS = 1e-4
+
+
+def ended(end_s, t_s):
+    """the shared word-ended predicate (numpy / float)"""
+    return end_s <= t_s + WORD_EPS
 _MODS = {}
 
 
@@ -126,7 +136,7 @@ def prefix_feat89(pcm16, words, lang, T, Tk, pstats, units=False):
     units=True: (feat, segment units) -- the per-unit values the prosody columns are drawn from, each with the beat
     picker's syllable (syl_onset / syl_offset / syl_prom: unrounded, as gesturelab.prosody.Syllable)."""
     Tk = int(min(Tk, T)); final = Tk >= T
-    use = words if final else [w for w in words if w['end_time'] <= Tk / 50.]
+    use = words if final else [w for w in words if ended(w['end_time'], Tk / 50.)]
     cap = [] if units else None
     with _hooks(pstats, final, cap):
         out = _feat(pad_pcm(pcm16, Tk), use, lang, Tk, units=units)
@@ -227,7 +237,7 @@ def front_prosody(table, Tk, final=False):
     Tk = int(Tk); lim = Tk / 50.
     t = np.asarray(table, np.float64).reshape(-1, len(UNIT_COLS))
     rec = t[:, 1] <= lim
-    if not final: rec &= t[:, 5] <= lim
+    if not final: rec &= ended(t[:, 5], lim)
     t = t[rec]
     out = np.zeros((Tk, len(FRONT_COLS)), np.float32)
     seg = t[t[:, 0] < lim - 1e-6]
@@ -288,7 +298,7 @@ class IncFeat89:
 
     def _units(self, Tk, final):
         new = []
-        while self.done < len(self.order) and (final or self.words[self.order[self.done]]['end_time'] <= Tk / 50.):
+        while self.done < len(self.order) and (final or ended(self.words[self.order[self.done]]['end_time'], Tk / 50.)):
             new.append(self.order[self.done]); self.done += 1
         if not new: return
         ws = [self.words[i] for i in sorted(new)]
@@ -414,8 +424,8 @@ def visible_words(token_times, now, ahead, mode, rate, lag, asr_lag=0.5):
     if mode == 'final': return np.ones(len(token_times), bool)
     arr = x2_arrival(token_times[:, 0].astype(np.float64), rate, lag)
     vis = arr <= now + 1e-9
-    if mode == 'voiced': vis &= token_times[:, 1].astype(np.float64) <= now + ahead + 1e-9
-    elif mode == 'asr': vis &= token_times[:, 1].astype(np.float64) + asr_lag <= now + ahead + 1e-9
+    if mode == 'voiced': vis &= ended(token_times[:, 1].astype(np.float64), now + ahead)
+    elif mode == 'asr': vis &= ended(token_times[:, 1].astype(np.float64) + asr_lag, now + ahead)
     elif mode != 'x2': raise ValueError(mode)
     return vis
 

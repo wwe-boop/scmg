@@ -39,7 +39,7 @@ for stem in dev + zh:
     for t in (T // 3, T // 2):
         w2 = wave.copy(); w2[t * CF.HOP:] = np.random.default_rng(t).normal(0, .1, len(w2) - t * CF.HOP).astype(np.float32)
         p2 = np.clip(np.round(w2 * 32768.), -32768, 32767).astype(np.int16)
-        words2 = [w for w in words if w['end_time'] <= t / 50.]
+        words2 = [w for w in words if CF.ended(w['end_time'], t / 50.)]
         i1, i2 = CF.IncFeat89(pcm, words, it['lang'], T, PST), CF.IncFeat89(p2, words2, it['lang'], T, PST)
         same = all(np.array_equal(i1.prefix(tk), i2.prefix(tk)) for tk in ticks if tk <= t)
         ok(f'b causal: {stem} noise after {t / 50:.2f}s, {len(words) - len(words2)} words deleted', same)
