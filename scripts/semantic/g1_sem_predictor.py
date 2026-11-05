@@ -16,6 +16,22 @@ CLS = ['none', 'deictic', 'iconic', 'metaphoric']; TID = {1: 1, 2: 2, 3: 3}; NEA
 
 
 LOOKAHEAD = None    # (bidirectional e5 cache, look-ahead s): 11-06 anticipatory variant (TTS text arrives ahead of the audio)
+PROSODY = None      # (train_feat memmap, items by id, mode 'add' | 'only'): 11-06 audio prosody around the token (causal, H = 160 ms)
+PCOLS = list(range(80, 88)); PBINS = [(-0.66, -0.33), (-0.33, -0.165), (-0.165, 0.0), (0.0, 0.16)]
+
+
+def prosody(stem, tt):
+    F_, items, _ = PROSODY; it = items[stem]; o, n = it['offset'], it['frames']
+    f = np.asarray(F_[o:o + n][:, PCOLS], np.float32); out = np.zeros((len(tt), 2 * len(PCOLS) * len(PBINS)), np.float32)
+    for i, t in enumerate(tt):
+        if not np.isfinite(t): continue
+        row = []
+        for lo, hi in PBINS:
+            a, b = int(max(0, (t + lo) * 50)), int(min(n, (t + hi) * 50))
+            w = f[a:b] if b > a else np.zeros((1, len(PCOLS)), np.float32)
+            row += [w.mean(0), w.max(0)]
+        out[i] = np.concatenate(row)
+    return out
 
 
 def feats(X, k0, kn, tt=None):
@@ -44,7 +60,10 @@ def build(raw, X, T, ix, split):
             if not ok.any(): continue
             d = np.where(ok, np.abs(tt - t['t']), 1e9); i = int(d.argmin())
             if d[i] <= NEAR: y[i] = TID[t['type']]
-        xs.append(feats(X, k0, kn, tt)); ys.append(y); meta.append((s, tt))
+        x = feats(X, k0, kn, tt)
+        if PROSODY is not None:
+            pr = prosody(s, tt); x = pr if PROSODY[2] == 'only' else np.concatenate([x, pr], 1)
+        xs.append(x); ys.append(y); meta.append((s, tt))
     return xs, ys, meta
 
 
@@ -55,9 +74,17 @@ def main():
     ap.add_argument('--lookahead-text', default=None, help='bidirectional e5 cache (row-aligned): add the mean feature of the words of the next '
                     '--lookahead s (anticipatory protocol: the TTS text of upcoming words has arrived)')
     ap.add_argument('--lookahead', type=float, default=1.0)
+    ap.add_argument('--prosody-view', default=None, help='view dir (train_feat.npy, train.json): add audio prosody features (8 prosody columns, '
+                    'mean / max in 4 bins of [t - 0.66, t + 0.16] s: causal with the engine 160 ms audio look-ahead)')
+    ap.add_argument('--prosody-only', action='store_true', help='prosody features only (no text): the audio-only localization baseline')
     a = ap.parse_args(); torch.manual_seed(0); torch.set_num_threads(4)
     global LOOKAHEAD
     if a.lookahead_text: LOOKAHEAD = (np.load(Path(a.lookahead_text) / 'TEXT_FEAT.npy', mmap_mode='r'), a.lookahead)
+    global PROSODY
+    if a.prosody_view:
+        pv = Path(a.prosody_view)
+        PROSODY = (np.load(pv / 'train_feat.npy', mmap_mode='r'), {it['id']: it for it in json.loads((pv / 'train.json').read_text())},
+                   'only' if a.prosody_only else 'add')
     raw = json.loads((Path(a.ctl) / 'CTL.json').read_text())
     X = np.load(Path(a.text) / 'TEXT_FEAT.npy', mmap_mode='r'); T = np.load(Path(a.text) / 'TEXT_TIME.npy')
     ix = json.loads((Path(a.text) / 'TEXT_INDEX.json').read_text())
@@ -103,7 +130,8 @@ def main():
     out = predict(tau); o = Path(a.out); o.mkdir(parents=True, exist_ok=True)
     (o / 'PRED.json').write_text(json.dumps(out))
     # base rate: lexicon rule (every LEX2SEM word) scored the same way
-    (o / 'PRED_INFO.json').write_text(json.dumps(dict(lookahead=(a.lookahead if a.lookahead_text else None), tau=tau, n_dev_annotations=n_ann, sweep={str(k): v for k, v in rep.items()},
+    (o / 'PRED_INFO.json').write_text(json.dumps(dict(lookahead=(a.lookahead if a.lookahead_text else None),
+                                                      prosody=(PROSODY[2] if PROSODY else None), tau=tau, n_dev_annotations=n_ann, sweep={str(k): v for k, v in rep.items()},
                                                       train_tokens=int(len(Ytr)), train_pos=cnt.tolist(), near_s=NEAR, min_gap_s=MIN_GAP), indent=1))
     torch.save(dict(net=net.state_dict(), mu=mu, sd=sd), o / 'predictor.pt')
     print('TAU', tau, rep[tau])
