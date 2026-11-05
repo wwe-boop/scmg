@@ -116,6 +116,7 @@ def main():
     ap.add_argument('--profile', choices=list(PROFILES), default='g1')
     ap.add_argument('--steps', type=int, default=20000); ap.add_argument('--lr', type=float, default=1e-4)
     ap.add_argument('--warmup', type=int, default=500)
+    ap.add_argument('--ema-decay', type=float, help='default: official config (0.999); smoke runs of a few hundred steps need less')
     ap.add_argument('--batch', type=int, default=16, help='windows per GPU per micro-batch'); ap.add_argument('--accum', type=int, default=1)
     ap.add_argument('--workers', type=int, default=8); ap.add_argument('--seed', type=int, default=20261105)
     ap.add_argument('--log-every', type=int, default=50); ap.add_argument('--save-every', type=int, default=1000)
@@ -164,6 +165,7 @@ def main():
     ema = {k: v.detach().clone() for k, v in model.state_dict().items()}
     if ck is not None: ema = {k: v.to(dev) for k, v in ck['ema'].items()}
     tc = config.training
+    ema_decay = a.ema_decay if a.ema_decay is not None else tc.ema_decay
     opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=tc.weight_decay)
     lam = lambda s: min(1.0, (s + 1) / max(1, a.warmup)) * 0.5 * (1 + math.cos(math.pi * min(s, a.steps) / a.steps))
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lam)
@@ -205,7 +207,7 @@ def main():
         if not torch.isfinite(g): raise FloatingPointError(f'non-finite gradient at step {step}')
         opt.step(); opt.zero_grad(set_to_none=True); sched.step(); step += 1
         with torch.no_grad():
-            for k, v in model.state_dict().items(): ema[k].mul_(tc.ema_decay).add_(v.detach(), alpha=1 - tc.ema_decay)
+            for k, v in model.state_dict().items(): ema[k].mul_(ema_decay).add_(v.detach(), alpha=1 - ema_decay)
         if rank == 0 and (step <= 3 or step % a.log_every == 0):
             now = time.perf_counter(); peak = torch.cuda.max_memory_allocated(dev) / 2 ** 30
             r = dict(step=step, loss=loss.item(), flow=fl.item(), temporal=tl_.item(), grad=float(g), lr=sched.get_last_lr()[0],

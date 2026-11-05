@@ -86,7 +86,7 @@ def main():
             for l, (r, h, _) in zip(labels, res): tot[l] += r; ph[l] += h
     out = dict(clips=nclip, minutes=dur / 60, block_ms=A.block_ms, fps=A.fps, space=A.space, labels={})
     for l in labels:
-        t = tot[l]; ar = (t[0] / t[1]) / (t[2] / t[3]); jr = (t[4] / t[5]) / (t[6] / t[7]); h = ph[l] / max(ph[l].sum(), 1)
+        t = tot[l]; ar = (t[0] / t[1]) / (t[2] / t[3]); jr = (t[4] / t[5]) / (t[6] / t[7]); h = (ph[l] + 1) / (ph[l].sum() + 10)   # +1 per bin: finite on small sets
         out['labels'][l] = dict(accel_ratio=ar, jerk_ratio=jr, accel_mean=(t[0] + t[2]) / (t[1] + t[3]), jerk_mean=(t[4] + t[6]) / (t[5] + t[7]),
                                 beats_per_s=float(ph[l].sum() / dur / 17) if A.space == 'fk' else None,
                                 beat_phase_maxmin=float(h.max() / max(h.min(), 1e-9)) if A.space == 'fk' else None, beat_phase_hist=h.tolist())
