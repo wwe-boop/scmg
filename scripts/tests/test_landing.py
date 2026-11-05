@@ -93,4 +93,11 @@ res.append(ok(abs(float(d['spk_valid']) - .3) < 1e-6, 'spk_alpha sets a fraction
 try: L.apply_cond(c, 'spk_alpha=1.0'); res.append(ok(False, 'spk_alpha outside (0, 1) rejected'))
 except ValueError: res.append(ok(True, 'spk_alpha outside (0, 1) rejected'))
 
+# ---- still overlap
+gs = np.zeros(200, bool); ts = np.zeros(200, bool); ts[50:80] = True; gs[55:85] = True
+o = L.still_overlap(gs, ts, 0); res.append(ok(o == (25, 30, 25, 30), f'still_overlap exact {o}'))
+o = L.still_overlap(gs, ts, 12); res.append(ok(o == (30, 30, 30, 30), f'still_overlap with tolerance {o}'))
+o = L.still_overlap(np.roll(ts, 100), ts, 12); res.append(ok(o[0] == 0 and o[2] == 0, 'disjoint pauses -> 0'))
+res.append(ok(np.array_equal(L.dilate(np.array([0, 0, 1, 0, 0, 0], bool), 1), np.array([0, 1, 1, 1, 0, 0], bool)), 'dilate'))
+
 print('ALL PASS' if all(res) else f'{res.count(False)} FAILED'); sys.exit(0 if all(res) else 1)

@@ -12,6 +12,10 @@ Per label (gen and, where meaningful, the GT of the same clips):
   still_gap     |still_gen - still_gt| (user 11-04: stillness should match the human, not be minimal)
   freeze        share of speaking frames inside >= 1.5 s still segments that lie entirely in speech;
                 freeze_per_min = such segments per minute of speech
+  still_overlap (user 11-05) are the pauses at the human's places? still masks of gen and GT with the same threshold;
+                precision = gen still frames with a GT still frame within +-0.24 s, recall = GT still frames with a gen
+                still frame within +-0.24 s, F1; F1_shift = the same with the gen mask rolled by half the clip (chance
+                level at these still rates); align = F1 - F1_shift
   overspeed     frames with arm speed above the clip's human p95 speed (human = 5 % by construction; >> 5 % = flailing)
   speed         mean over clips of mean gen arm speed / mean GT arm speed
   amp_upper / amp_wrist   median over clips of mean_joint std_gen / std_gt (1 = like the human; << 1 = rigid)
@@ -24,7 +28,7 @@ Speech = feat89 speech-span flag (column 'valid': first unit onset .. last unit 
 import argparse, glob, json, os
 import numpy as np
 from scmg.common import P, CPFS, PROSODY_COLS, FPS
-from scmg.landing import UPPER, WRIST, load_envelope, arm_speed, stillness, freeze_segments, out_of_envelope
+from scmg.landing import UPPER, WRIST, load_envelope, arm_speed, stillness, freeze_segments, out_of_envelope, still_overlap
 
 VIEW = CPFS + '/dataset/zehan/gesture/train-v1-20261101/views/data-v36_1'
 
@@ -64,6 +68,7 @@ def main():
         acc = {w: dict(frames=0, wrist=0, upper=0, still=0, over=0, spk=0, frz=0, nseg=0) for w in ('gen', 'gt')}
         sp_ratio, amp_u, amp_w, n_clips = [], [], [], 0
         sty = {w: dict(amp=[], spd=[], pose=[]) for w in ('gen', 'gt')}
+        ov = np.zeros(4, np.int64); ovs = np.zeros(4, np.int64); TOL = 12        # 12 frames = 0.24 s
         for d in ds.split('+'):
             fl = files(d)
             if not fl: raise SystemExit(f'{lab}: no gen_H*_*.npy in {d}')
@@ -80,6 +85,8 @@ def main():
                     A['upper'] += int(out_of_envelope(x, lo[UPPER], hi[UPPER], UPPER).sum())
                     A['still'] += int(stillness(x, med).sum()); A['over'] += int((s > p95).sum())
                     seg, fz, spk = freeze_segments(x, speech, med); A['frz'] += fz; A['spk'] += spk; A['nseg'] += len(seg)
+                gs_, ts_ = stillness(g, med), stillness(t, med)
+                ov += still_overlap(gs_, ts_, TOL); ovs += still_overlap(np.roll(gs_, len(gs_) // 2), ts_, TOL)
                 sp_ratio.append(float(arm_speed(g).mean() / max(st.mean(), 1e-6)))
                 sd = lambda x, c: x[:, c].std(0)
                 amp_u.append(float(np.mean(sd(g, UPPER) / np.maximum(sd(t, UPPER), 1e-3))))
@@ -96,6 +103,12 @@ def main():
                         overspeed=round(A['over'] / nv, 4), freeze=round(A['frz'] / max(1, A['spk']), 4),
                         freeze_per_min=round(A['nseg'] / max(1e-9, A['spk'] / FPS / 60), 3))
         r['still_gap'] = round(abs(r['gen']['still'] - r['gt']['still']), 4)
+        def f1(o):
+            pr, rc = o[0] / max(1, o[1]), o[2] / max(1, o[3])
+            return pr, rc, (2 * pr * rc / (pr + rc) if pr + rc > 0 else 0.)
+        pr, rc, F = f1(ov); _, _, Fs = f1(ovs)
+        r['still_overlap'] = dict(precision=round(pr, 4), recall=round(rc, 4), f1=round(F, 4), f1_shift=round(Fs, 4),
+                                  align=round(F - Fs, 4), tol_s=TOL / FPS)
         r['speed'] = round(float(np.mean(sp_ratio)), 3)
         r['amp_upper'] = round(float(np.median(amp_u)), 3); r['amp_wrist'] = round(float(np.median(amp_w)), 3)
         for w, S in sty.items():

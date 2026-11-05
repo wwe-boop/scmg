@@ -195,3 +195,22 @@ def style_descriptor(q):
     """Per-clip arm style: [14 joint std, 14 joint mean, mean arm speed] (rad, rad, rad/s)."""
     x = np.asarray(q, np.float64)[:, ARMS14]
     return np.r_[x.std(0), x.mean(0), arm_speed(q).mean()]
+
+
+def dilate(mask, r):
+    """bool mask dilated by r frames on each side."""
+    m = np.asarray(mask, bool)
+    if r <= 0 or not m.any(): return m.copy()
+    c = np.cumsum(np.r_[0, m.astype(np.int64)])
+    i = np.arange(len(m)); lo = np.clip(i - r, 0, len(m)); hi = np.clip(i + r + 1, 0, len(m))
+    return (c[hi] - c[lo]) > 0
+
+
+def still_overlap(gen_still, gt_still, tol):
+    """Temporal coincidence of still frames (user 11-05: not the global still rate but whether the pauses are at the
+    human's places). Returns counts (tp_p, n_gen, tp_r, n_gt): precision = gen still frames with a GT still frame within
+    +-tol frames, recall = GT still frames with a gen still frame within +-tol."""
+    g = np.asarray(gen_still, bool); t = np.asarray(gt_still, bool)
+    n = min(len(g), len(t)); g, t = g[:n], t[:n]
+    return int((g & dilate(t, tol)).sum()), int(g.sum()), int((t & dilate(g, tol)).sum()), int(t.sum())
+
