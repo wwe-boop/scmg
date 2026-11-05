@@ -12,7 +12,7 @@ the sf0 dev-lane checkpoint; clips: the held-out-speaker dev split (never val_co
    encodings / conditions of the other targets change; local_audio with a per-chunk encoding == the shared one
  d training == inference: encoder input of chunk k (causal_front_feat) == Streamer causal_inputs feat at tick k (psync,
    H = 160 ms) row for row; the prefix CAM++ grade of chunk k is available by t_k and equals the Streamer's vector when
-   t_k is a grade time; every text row visible to chunk k in training has ended by t_k (and agrees with the Streamer's
+   t_k is a grade time (spk_refresh 'grades': at every tick, and the rule ignores audio after t_k); every text row visible to chunk k in training has ended by t_k (and agrees with the Streamer's
    word-level psync visibility)
  e future-perturbation invariance of TRAINING: PCM after t_k -> noise, words not ended by t_k deleted (precomputed again
    on the perturbed clip), not-yet-voiced text rows given random features / later times -> every planner input of chunk k
@@ -173,7 +173,7 @@ for stem in stems:
     words = CF.clip_words(DS / 'annotations/words' / f'{stem}.json', L)
     kn = int(sw['tmask'].sum()); cond.update(CF.text_extras(items[stem], words, tokz, kn, len(sw['tmask'])))
     pcm, wave = CF.clip_audio(DS / 'audio' / f'{stem}.wav')
-    ci_ = CF.CausalInputs(pcm, wave, words, items[stem]['lang'], L, pst, vd.fm, vd.fs, enc, Tpad=len(sw['feat']))
+    ci_ = CF.CausalInputs(pcm, wave, words, items[stem]['lang'], L, pst, vd.fm, vd.fs, enc, Tpad=len(sw['feat']), spk_refresh='grades')
     tr = []
     st = INF_.Streamer(m, vae, sw['feat'], cond, stats, H=H2, steps=2, seed=0, standby=qm, ctx_t=m.ctx_t, cfg_w=1.0,
                        text_mode='voiced', x2_rate=15., x2_lag=.15, deploy_timing=True, causal_inputs=ci_, trace=tr)
@@ -187,14 +187,22 @@ for stem in stems:
         n_feat += 1; dd_feat = max(dd_feat, float((a_ - b_).abs().max()))
         av = int(bt['cz_spkt'][0, int(grade[0, k])]) if int(grade[0, k]) >= 0 else -1
         if av > tk: dd_spk += 1
-        if int(grade[0, k]) >= 0 and av == tk and int(grade[0, k]) < 4:
-            nspk_eq += 1; dd_spk += int(not torch.allclose(spk_c[0, k].cpu(), x['spk'], atol=1e-6))
+        nspk_eq += 1                                 # spk_refresh 'grades' == the training rule at EVERY tick
+        dd_spk += int(not torch.equal(spk_c[0, k].cpu().float(), x['spk'].float()) or float(val_c[0, k]) != float(x['spk_valid']))
+    # causality of the grade rule: noise after frame t -> every vector the rule returns at Tk <= t is unchanged
+    for t in (60, 130, 230, 420):
+        if t >= L: continue
+        w2 = wave.copy(); w2[t * CF.HOP:] = np.random.default_rng(t).normal(0, .1, len(w2) - t * CF.HOP).astype(np.float32)
+        c2 = CF.CausalInputs(pcm, w2, words, items[stem]['lang'], L, pst, vd.fm, vd.fs, enc, Tpad=len(sw['feat']), spk_refresh='grades')
+        for Tk in range(8, t + 1, 16):
+            a1, a2 = ci_.spk(Tk), c2.spk(Tk); dd_spk += int(not (np.array_equal(a1[0], a2[0]) and a1[1] == a2[1]))
         now = k * CHUNK_FRAMES / 50.; Kt = len(x['ttime'])
         inf_vis = (x['cur_vis'][:Kt] | x['cur_vis'][Kt:]).numpy()
         ended = np.nan_to_num(tend.cpu().numpy(), nan=1e9) <= now + H2 * STRIDE / 50. + 1e-6
         vis_bad += int((inf_vis & ~ended).sum()); vis_n += int(inf_vis.sum()); agree.append(float((inf_vis == (ended & sw['tmask'])).mean()))
 ok('d causal_front_feat == Streamer causal feat at tick k (rows < t_k)', n_feat > 0 and dd_feat == 0., f'{n_feat} ticks, max|d| {dd_feat:.3g}')
-ok('d prefix speaker grade available by t_k; == Streamer vector at grade times', dd_spk == 0, f'{nspk_eq} grade-time ticks compared')
+ok('d prefix speaker grade available by t_k; == Streamer spk_refresh=grades vector at every tick; grade rule causal (noise after t)',
+   dd_spk == 0, f'{nspk_eq} ticks compared')
 ok('d Streamer psync visible rows have ended by t_k (training rule superset)', vis_bad == 0,
    f'{vis_n} visible rows; row agreement training-ended vs Streamer {np.mean(agree):.3f}')
 

@@ -179,7 +179,8 @@ def causal_spk_select(batch, H, K):
     can = av[:, None, :] <= tk[..., None]                                             # [B, K, 5]
     score = torch.where(can, av[:, None, :] * 2 + (torch.arange(5, device=dev) < 4).long(), torch.full_like(can, -1, dtype=torch.long))
     jsel = score.argmax(-1); has = can.any(-1)
-    return batch['cz_spk'][ar, jsel], batch['cz_spkv'][ar, jsel] * has.float(), torch.where(has, jsel, torch.full_like(jsel, -1))
+    spk = torch.where(has[..., None], batch['cz_spk'][ar, jsel], torch.zeros_like(batch['cz_spk'][:, 0])[:, None])   # none: the empty
+    return spk, batch['cz_spkv'][ar, jsel] * has.float(), torch.where(has, jsel, torch.full_like(jsel, -1))   # speaker (zeros, 0)
 
 
 def causal_spk_cond(model, batch, stream, H, drop_spk, src, K):

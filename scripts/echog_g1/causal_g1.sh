@@ -35,5 +35,19 @@ case $cmd in
       PY=${BENCH_PY:-${PY:-python}} GPUS="${GPUS:-0}" CFGW=2.5 bash scripts/echog_g1/bench.sh scmg $CK $DEC $P $p 0 >> $O/ref.log 2>&1 \
         && log "REF_DONE $p" || log "REF_FAILED $p"
     done;;
-  *) echo "usage: causal_g1.sh lane|ref ..."; exit 2;;
+  test)   # causal_g1.sh test <out root> <label> <ckpt>: val_common (3242) offline + psync x inference seeds, ONE run each,
+          # test-set use logged BEFORE inference; then executability (--collision-stride 1) on the 406-clip every-8th subset
+    lab=$3; CK=$4; R=$O/test/$lab/final-test; mkdir -p $R
+    for p in ${TEST_PROTOS:-offline psync}; do for sd in ${SEEDS:-0 1}; do
+      P=$R/$p/seed_$(printf %03d $sd); [ -f $R/$p/benchmark_seed_$(printf %03d $sd).json ] && continue
+      echo "{\"time\": \"$(date -Is)\", \"split\": \"val_common (3242)\", \"ckpt\": \"$CK\", \"decoder\": \"$DEC\", \"protocol\": \"$p\", \"seed\": $sd, \"cfg_w\": 2.5, \"steps\": 10, \"purpose\": \"report: main table, causal-matched SCMG (psync = deployment protocol); recipe fixed on the D-spk dev split\", \"host\": \"$(hostname)\"}" >> $O/TEST_USAGE.jsonl
+      PY=${BENCH_PY:-${PY:-python}} GPUS="${GPUS:-0}" CFGW=2.5 WORDS_DIR=${WORDS_DIR:-$CZ/words-vc} bash scripts/echog_g1/bench.sh scmg $CK $DEC $P $p $sd >> $R/bench.log 2>&1 \
+        && log "TEST_DONE $lab $p s$sd" || log "TEST_FAILED $lab $p s$sd"
+    done; done
+    if [ -n "${EXEC_PY:-}" ]; then
+      pan=(); for p in ${TEST_PROTOS:-offline psync}; do for sd in ${SEEDS:-0 1}; do pan+=($p-s$sd=$R/$p/seed_$(printf %03d $sd)); done; done
+      PYTHONPATH=$EXEC_PYTHONPATH $EXEC_PY scripts/echog_g1/executability.py --ref-dir ${REF_DIR:?} --stems ${EXEC_STEMS:?} --urdf ${URDF:?} --mjcf ${MJCF:?} \
+        --collision-stride 1 --out $R/EXECUTABILITY_vc_every8.json "${pan[@]}" > $R/executability.log 2>&1 && log "EXEC_DONE $lab" || log "EXEC_FAILED $lab"
+    fi;;
+  *) echo "usage: causal_g1.sh lane|ref|test ..."; exit 2;;
 esac

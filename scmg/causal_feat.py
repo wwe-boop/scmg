@@ -310,11 +310,13 @@ class CausalInputs:
     zeros after (the Streamer zeroes not-arrived rows anyway; rows >= T are zero as in the whole-clip window); spk(Tk) ->
     (spk [192], spk_valid) of the PCM prefix of min(Tk, T) frames (spk=False: always the empty embedding)."""
 
-    def __init__(self, pcm16, wave, words, lang, T, pstats, fm, fs, enc=None, Tpad=None, spk_min_s=1.0, spk=True):
+    def __init__(self, pcm16, wave, words, lang, T, pstats, fm, fs, enc=None, Tpad=None, spk_min_s=1.0, spk=True, spk_refresh='tick'):
         self.T = int(T); self.Tpad = int(Tpad or T); self.f = CausalFeat89(pcm16, words, lang, T, pstats)
         if self.Tpad < self.T: raise ValueError('Tpad < T')
         self.fm, self.fs = np.asarray(fm, np.float32), np.asarray(fs, np.float32)
         self.sp = SpeakerPrefix(wave, enc, spk_min_s) if spk else None
+        if spk_refresh not in ('tick', 'grades'): raise ValueError(spk_refresh)
+        self.spk_refresh = spk_refresh; self.grade_cache = {}
         self.calls = []
 
     def feat(self, Tk):
@@ -324,8 +326,23 @@ class CausalInputs:
         return out
 
     def spk(self, Tk):
+        """spk_refresh 'tick': CAM++ of the PCM prefix at every tick. 'grades' (11-05, the training rule of StageCfg
+        causal_spk, losses.causal_spk_select): the vector is refreshed only when a precompute grade becomes available --
+        prefix 1 / 2 / 4 / 8 s at clip frame min(50 g, T), the whole clip (view rule, SpeakerPrefix.full) at T; the grade
+        with the largest availability <= Tk, ties -> the prefix grade (the first); none -> the empty speaker. A grade uses
+        only the audio before its availability frame (<= Tk): causal; at most 5 encodes per clip."""
         if self.sp is None: return np.zeros(192, np.float32), 0.
-        return self.sp.at(int(min(Tk, self.T)) * HOP)
+        if self.spk_refresh == 'tick': return self.sp.at(int(min(Tk, self.T)) * HOP)
+        Tk = int(min(Tk, self.T)); av = [min(int(50 * g), self.T) for g in (1, 2, 4, 8)] + [self.T]
+        cand = [j for j in range(5) if av[j] <= Tk]
+        if not cand: return np.zeros(192, np.float32), 0.
+        j = max(cand, key=lambda j: (av[j], j < 4))
+        if j not in self.grade_cache:
+            if j < 4: self.grade_cache[j] = self.sp.at(min(int(round((1, 2, 4, 8)[j] * SR)), self.T * HOP))
+            else:
+                try: self.grade_cache[j] = (self.sp.full(), 1.)
+                except ValueError: self.grade_cache[j] = (np.zeros(192, np.float32), 0.)
+        return self.grade_cache[j]
 
 
 # ------------------------------------------------------------------ text visibility (word level)
