@@ -30,7 +30,7 @@ def main():
     ap.add_argument('--ckpt', required=True); ap.add_argument('--vae', required=True); ap.add_argument('--stats', required=True)
     ap.add_argument('--view', required=True); ap.add_argument('--text-cache', required=True); ap.add_argument('--out', required=True)
     ap.add_argument('--stems', default=None); ap.add_argument('--n', type=int, default=0)
-    ap.add_argument('--seed', type=int, default=0); ap.add_argument('--steps', type=int, default=10); ap.add_argument('--cfg-w', type=float, default=1.0)
+    ap.add_argument('--seed', type=int, default=0); ap.add_argument('--steps', type=int, default=10); ap.add_argument('--cfg-w', type=float, default=1.0); ap.add_argument('--cfg-t', type=float, default=None, help='separate TEXT guidance (Streamer cfg_t: v_u + w (v_a - v_u) + t (v_at - v_a)); None = joint CFG')
     ap.add_argument('--split', default='test', help="view split: 'test' (val_common view) | 'val' (held-out dev, for choosing inference settings)")
     ap.add_argument('--shard', default='0/1', help='i/n: this process handles clips i, i+n, ...')
     ap.add_argument('--save50', action='store_true', help='also keep the 50 Hz output (<stem>.q50.npy)')
@@ -86,7 +86,7 @@ def main():
                                      'titime', 'tseg', 'tiseg', 'tiend', 'text_c') if kk in s}
         kw = {} if proto is None else dict(text_mode=tm, x2_rate=a.x2_rate, x2_lag=a.x2_lag, deploy_timing=dt)
         cmd, _, tk = generate(m, vae, s['feat'], cond, stats, nch, H=H, steps=a.steps, seed=a.seed, standby=qm, ctx_t=m.ctx_t,
-                              cfg_w=a.cfg_w, noise_scale=a.noise_scale, **kw)
+                              cfg_w=a.cfg_w, cfg_t=a.cfg_t, noise_scale=a.noise_scale, **kw)
         if cmd.shape[0] < L or cmd.shape[1] != J or not np.isfinite(cmd).all(): raise ValueError(f'{stem}: generated {cmd.shape}')
         q50 = cmd[:L].astype(np.float64)
         for opt, ch in ((a.smooth, g1.JOINTS), (a.smooth_legs, g1.LEGS)):
@@ -97,7 +97,7 @@ def main():
         r30 = g1.to30(q50, n30).astype(np.float32)
         torch.save(dict(robot_repr=torch.from_numpy(r30), real_num_frames=n30, fps=30.0, representation_units='physical',
                         representation_schema='projecthermes-g1-39d-standard-v2', source=stem,
-                        generator=dict(ckpt=str(a.ckpt), seed=a.seed, steps=a.steps, cfg_w=a.cfg_w, frames50=L, noise_scale=a.noise_scale, no_spk=a.no_spk, smooth=a.smooth, smooth_legs=a.smooth_legs,
+                        generator=dict(ckpt=str(a.ckpt), seed=a.seed, steps=a.steps, cfg_w=a.cfg_w, cfg_t=a.cfg_t, frames50=L, noise_scale=a.noise_scale, no_spk=a.no_spk, smooth=a.smooth, smooth_legs=a.smooth_legs,
                                        resample='scmg/g1.py to30 (cubic / heading spline / RotationSpline)',
                                        **({} if proto is None else dict(stream=proto)))), o.with_suffix('.pt.tmp'))
         os.replace(o.with_suffix('.pt.tmp'), o)      # atomic: an interrupted run never leaves a truncated <stem>.pt that a resume skips
