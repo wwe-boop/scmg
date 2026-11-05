@@ -16,7 +16,7 @@
 #      first SNAP_N val stems + evaluator (training curve)
 #   4) SUMMARY.md / summary.json
 # Env (defaults = DLC / CPFS):  GPUS="0 1 2 3"  SPG=4  STEPS=20000 LR=1e-4 BATCH=<per GPU, default 64/|GPUS|>  SEEDS="0 1"
-#   CLIP_BATCH=8 (stream_infer lockstep clips)  N=<first N val stems, smoke>  ROWS="..."  OUT  DATA  OFF  INIT  W2V  FGD_CKPT  PY  TRAIN_ARGS (extra train_stream.py args)
+#   STREAM_CFG (StreamConfig JSON, default {"cut_boost": 4.0})  CLIP_BATCH=8 (stream_infer lockstep clips)  N=<first N val stems, smoke>  ROWS="..."  OUT  DATA  OFF  INIT  W2V  FGD_CKPT  PY  TRAIN_ARGS (extra train_stream.py args)
 #   bash scripts/echog_stream/g1_confirm.sh
 set -uo pipefail
 CODE=$(cd "$(dirname "$0")/../.." && pwd); cd $CODE
@@ -30,20 +30,22 @@ GL=(${GPUS:-$(seq 0 $(($(nvidia-smi -L | wc -l) - 1)))}); NG=${#GL[@]}; SPG=${SP
 STEPS=${STEPS:-20000}; LR=${LR:-1e-4}; BATCH=${BATCH:-$((64 / NG))}; SEEDS=${SEEDS:-0 1}
 ROWS=${ROWS:-official_offline slide_none slide_inpaint stream_prefix stream_frozen stream_offline}
 SNAP_N=${SNAP_N:-300}; EVAL_PAR=${EVAL_PAR:-6}
+# cut_boost 4: smoke (11-05) boundary step / in-block step 2.92 vs 3.55 at 1000 steps, first-frame flow error 0.110 vs 0.154
+STREAM_CFG=${STREAM_CFG:-'{"cut_boost": 4.0}'}
 export PYTHONPATH=$OFF/src PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=${OMP_NUM_THREADS:-2} TOKENIZERS_PARALLELISM=false
 mkdir -p $OUT; T=$OUT/train; P=$OUT/preds; B=$OUT/bench; mkdir -p $P $B
 log() { echo "$(date -Is) $*" | tee -a $OUT/confirm.log; }
 STEMS=$OUT/stems.txt
 if [ -n "${N:-}" ]; then head -n $N $DATA/splits/val_common.txt > $STEMS; else cp $DATA/splits/val_common.txt $STEMS; fi
 head -n $SNAP_N $STEMS > $OUT/stems_snap.txt
-log "code $(git rev-parse HEAD 2>/dev/null || cat GIT_COMMIT 2>/dev/null) GPUS=${GL[*]} SPG=$SPG STEPS=$STEPS LR=$LR BATCH=$BATCH stems $(wc -l < $STEMS)"
+log "stream $STREAM_CFG"; log "code $(git rev-parse HEAD 2>/dev/null || cat GIT_COMMIT 2>/dev/null) GPUS=${GL[*]} SPG=$SPG STEPS=$STEPS LR=$LR BATCH=$BATCH stems $(wc -l < $STEMS)"
 
 # ---- 1 training
 if [ ! -f $T/final.pt ]; then
   log TRAIN_START
   CUDA_VISIBLE_DEVICES=$(echo ${GL[*]} | tr ' ' ,) $PY -m torch.distributed.run --nnodes=1 --nproc_per_node=$NG --rdzv-backend=c10d \
     --rdzv-endpoint=localhost:${RDZV_PORT:-29637} scripts/echog_stream/train_stream.py --init $INIT --config ${CONFIG:-$OFF/configs/sgdit_audio_text.yaml} --data-root $DATA --out $T \
-    --profile g1 --steps $STEPS --lr $LR --batch $BATCH ${TRAIN_ARGS:-} >> $OUT/train.log 2>&1
+    --profile g1 --steps $STEPS --lr $LR --batch $BATCH --stream "$STREAM_CFG" ${TRAIN_ARGS:-} >> $OUT/train.log 2>&1
   [ -f $T/final.pt ] || { log TRAIN_FAILED; exit 1; }
 fi
 log TRAIN_DONE

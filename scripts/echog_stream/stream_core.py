@@ -47,12 +47,15 @@ class StreamConfig:
     x2_rate: float = 15.0            # SCMG x2 text arrival: tokens / s
     x2_lag: float = 0.15             #                      lag before the token onset, s
     known_xt: str = 'clean'          # x_t on known frames: 'clean' (x1) | 'noise' (official flow path t x1 + (1 - t) eps)
+    known_fill: str = 'zero'         # condition value on NOT-known frames: 'zero' ([known x mask, mask] as specified) |
+                                     # 'hold' (last known pose repeated, mask still 0: every generated frame sees its anchor pose)
     cut_boost: float = 0.0           # training: loss weight x (1 + cut_boost * exp(-j / cut_tau_frames)) at offset j from the cut
     cut_tau_frames: float = 3.0      #           (continuity of the first generated frames; 0 = off)
     known_aug_std: float = 0.0       # training: Gaussian noise (normalised units) on the known prefix (exposure-bias knob; 0 = off)
 
     def validate(self) -> None:
         if self.known_xt not in ('clean', 'noise'): raise ValueError('known_xt must be clean or noise')
+        if self.known_fill not in ('zero', 'hold'): raise ValueError('known_fill must be zero or hold')
         if not (0 <= self.p_cold <= 1 and 0 <= self.p_ctx_full <= 1 and 0 <= self.p_ahead_more <= 1): raise ValueError('probabilities')
         if self.block_ms <= 0 or self.ctx_s <= 0 or self.tail_max_s < 0 or self.ahead_s < 0: raise ValueError('durations')
 
@@ -69,6 +72,7 @@ class StreamSGDiT(SpeechGroundedDiT):
     def __init__(self, config):
         super().__init__(config)
         self.known_projection = nn.Linear(config.motion_dim + 1, config.hidden_dim)
+        self.known_fill = 'zero'                                  # set from StreamConfig by the trainer / loader
         nn.init.zeros_(self.known_projection.weight); nn.init.zeros_(self.known_projection.bias)
 
     def forward(self, noised_motion, flow_time, audio, text_tokens, motion_mask, text_padding_mask, time_distance,
@@ -81,7 +85,13 @@ class StreamSGDiT(SpeechGroundedDiT):
         motion_in = self.motion_projection(noised_motion)
         if known is not None:
             m = known_mask.to(noised_motion.dtype).unsqueeze(-1)
-            motion_in = motion_in + self.known_projection(torch.cat([known * m, m], dim=-1))
+            cond = known * m
+            if self.known_fill == 'hold':                         # last known frame (index < f), repeated on the other frames
+                T = known.shape[1]; idx = torch.arange(T, device=known.device)[None].expand_as(known_mask)
+                last = torch.where(known_mask, idx, torch.full_like(idx, -1)).cummax(dim=1).values      # [B, T]
+                held = torch.gather(known, 1, last.clamp_min(0)[..., None].expand_as(known))
+                cond = cond + (1 - m) * held * (last >= 0).to(known.dtype)[..., None]
+            motion_in = motion_in + self.known_projection(torch.cat([cond, m], dim=-1))
         hidden = (motion_in + self.audio_projection(self.audio_norm(audio))
                   + self.positional_encoding(frames, noised_motion.device, noised_motion.dtype))
         condition = self.timestep_mlp(timestep_embedding(flow_time, self.hidden))
@@ -117,6 +127,7 @@ def load_stream_model(path, device, config_path=None):
         model.load_state_dict(ck['ema'], strict=True); sc = StreamConfig.from_dict(ck['stream'])
     else:
         load_official_into(model, ck['ema']); sc = StreamConfig()
+    model.known_fill = sc.known_fill
     model.to(device).eval()
     mean = torch.as_tensor(ck['motion_mean']).float().reshape(-1); std = torch.as_tensor(ck['motion_std']).float().reshape(-1)
     meta = {k: v for k, v in ck.items() if k not in ('ema', 'model', 'optimizer', 'scheduler')}

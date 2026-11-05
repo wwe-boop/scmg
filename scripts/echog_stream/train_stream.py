@@ -153,7 +153,7 @@ def main():
     tr = StreamDataset(a.data_root, config.data, config.model, 'train', mean, std, a.max_train, cache=bool(a.cache))
     va = StreamDataset(a.data_root, config.data, config.model, 'val', mean, std, a.max_val)
 
-    model = StreamSGDiT(config.model)
+    model = StreamSGDiT(config.model); model.known_fill = sc.known_fill
     resume = a.out / 'latest.pt'; step = 0; ck = None
     if resume.exists():
         ck = torch.load(resume, map_location='cpu', weights_only=False)

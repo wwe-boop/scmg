@@ -61,6 +61,10 @@ with torch.no_grad():
     yo = off(x, t, au, tx, mm, tpm, td); y0 = sm(x, t, au, tx, mm, tpm, td); y1 = sm(x, t, au, tx, mm, tpm, td, known=kn, known_mask=km)
 ok('1a zero-init forward == official (no known)', torch.equal(yo, y0), f'max|diff| {(yo - y0).abs().max().item():.3g}')
 ok('1b zero-init forward == official (random known frames)', torch.equal(yo, y1), f'max|diff| {(yo - y1).abs().max().item():.3g}')
+sm.known_fill = 'hold'
+with torch.no_grad(): y2 = sm(x, t, au, tx, mm, tpm, td, known=kn, known_mask=km)
+sm.known_fill = 'zero'
+ok('1b2 zero-init forward == official (random known frames, known_fill=hold)', torch.equal(yo, y2), f'max|diff| {(yo - y2).abs().max().item():.3g}')
 ok('1c official weights load with only known_projection new', set(sm.state_dict()) - set(ck['ema']) == {'known_projection.weight', 'known_projection.bias'})
 
 # ---- 2 degenerate stream == offline == official sample
@@ -152,7 +156,8 @@ T0 = 0.5 * F / fps; ahead = 0.16
 au2 = au_.clone(); au2[frames_before(T0, fps):] += 5.0
 tx2 = tx_.clone(); tx2[torch.as_tensor(tt_[:, 1] > T0, device=dev)] += 5.0
 kw = dict(block_s=0.32, ahead=ahead, ctx_f=240, tail_f=19, text_mode='voiced', dev=dev)
-for mdl, key in ((sm, 'zero-init'), (nz, 'nonzero known_projection')):
+nzh = StreamSGDiT(config.model); nzh.load_state_dict(nz.state_dict()); nzh.to(dev).eval(); nzh.known_fill = 'hold'
+for mdl, key in ((sm, 'zero-init'), (nz, 'nonzero known_projection'), (nzh, 'nonzero known_projection, hold fill')):
     y1, _ = stream_clip(mdl, sc, au_, tx_, tt_, ce_, F, noise, fps, 8, **kw)
     y2, _ = stream_clip(mdl, sc, au2, tx2, tt_, ce_, F, noise, fps, 8, **kw)
     kmax = max(k for k in range(10 ** 4) if k * 0.32 + ahead <= T0 + 1e-9)

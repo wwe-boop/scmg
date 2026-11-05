@@ -35,10 +35,10 @@ def batch(rng, sc, n):
 
 
 ok_all = True
-for known_xt in ('clean', 'noise'):
+for known_xt, fill in (('clean', 'zero'), ('noise', 'zero'), ('clean', 'hold')):
     torch.manual_seed(0); rng = np.random.default_rng(0)
-    sc = StreamConfig(p_cold=0.0, ctx_s=1.0, tail_max_s=0.32, known_xt=known_xt)
-    m = StreamSGDiT(mc).to(dev); opt = torch.optim.AdamW(m.parameters(), lr=1e-3)
+    sc = StreamConfig(p_cold=0.0, ctx_s=1.0, tail_max_s=0.32, known_xt=known_xt, known_fill=fill)
+    m = StreamSGDiT(mc).to(dev); m.known_fill = fill; opt = torch.optim.AdamW(m.parameters(), lr=1e-3)
     for step in range(600):
         b, _ = batch(rng, sc, 32)
         loss = stream_flow_loss(m, b, 0.0, 0.5, known_xt)[0]
@@ -56,6 +56,6 @@ for known_xt in ('clean', 'noise'):
         res[name] = (err[gen].mean().item(), err[first].mean().item())
     good = res['prefix'][0] < 0.15 and res['prefix'][1] < 0.15 and res['hidden'][0] > 0.5
     ok_all &= good
-    print(f"{'PASS' if good else 'FAIL'} known_xt={known_xt}: final loss {loss.item():.4f} | |gen - prefix pose| with prefix: all {res['prefix'][0]:.3f} "
+    print(f"{'PASS' if good else 'FAIL'} known_xt={known_xt} fill={fill}: final loss {loss.item():.4f} | |gen - prefix pose| with prefix: all {res['prefix'][0]:.3f} "
           f"first frame {res['prefix'][1]:.3f} | prefix hidden: all {res['hidden'][0]:.3f} (pose std 1)")
 print('ALL_OK' if ok_all else 'SOME_FAILED')
