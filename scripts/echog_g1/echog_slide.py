@@ -69,6 +69,27 @@ class PrefixAudio:
         dur = len(x) / 16000.
         iv = self.proc(x, sampling_rate=16_000, return_tensors='pt').input_values.to(self.dev)
         h = self.model(iv, output_hidden_states=True).hidden_states[-1].float()
+        return self._post(h, dur, fps, src_fps)
+
+    @torch.no_grad()
+    def batch(self, wavs, t_ends, fps=30.0, src_fps=None, fp16=True):
+        """__call__ for several prefixes in one padded forward (attention mask; per-sample normalisation as the processor
+        does it). Not bit-identical to __call__: relative L2 ~3e-4 (FP32) / ~6e-3 (FP16 autocast), measured 11-05."""
+        xs = [w[:int(round(min(t, len(w) / 16000.) * 16000))] for w, t in zip(wavs, t_ends)]
+        out = [None] * len(xs); idx = [i for i, x in enumerate(xs) if len(x) >= 400]   # shorter than one conv frame: per-sample
+        for i in range(len(xs)):
+            if i not in idx: out[i] = self(wavs[i], t_ends[i], fps, src_fps)
+        if not idx: return out
+        iv = self.proc([xs[i] for i in idx], sampling_rate=16_000, return_tensors='pt', padding=True, return_attention_mask=True)
+        am = iv.attention_mask.to(self.dev)
+        with torch.autocast('cuda', torch.float16, enabled=fp16):
+            h = self.model(iv.input_values.to(self.dev), attention_mask=am, output_hidden_states=True).hidden_states[-1].float()
+        lens = self.model._get_feat_extract_output_lengths(am.sum(-1)).tolist()
+        for r, i in enumerate(idx): out[i] = self._post(h[r:r + 1, :int(lens[r])], len(xs[i]) / 16000., fps, src_fps)
+        return out
+
+    @staticmethod
+    def _post(h, dur, fps, src_fps):
         if src_fps is None or float(src_fps) == float(fps):
             return interpolate_features(h, int(round(dur * fps))).half().float()   # the official cache stores FP16
         f = interpolate_features(h, int(round(dur * float(src_fps)))).half()         # official 30 FPS cache (FP16)
