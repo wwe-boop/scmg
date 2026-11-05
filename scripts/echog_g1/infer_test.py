@@ -11,6 +11,12 @@ scripts/baseline_eval.sh / scmg.evaluate: text streams word by word and EARLY (x
 prefix-causal e5 features (--text-causal = the G1 causal cache of the SAME text cache, e.g. text-e5-causal-echog-g1-v1-test),
 deploy timing (token times only once voiced), audio look-ahead H = 2 x 80 ms = 160 ms past the chunk start. Individual
 switches (--text-mode / --horizon / --x2-rate / --x2-lag / --deploy-timing) override the protocol preset.
+11-05 causal protocols (design v5 section 3): --protocol psync = engine but text_mode voiced (a word is visible once it has
+been spoken within the arrived audio, = ECHO-G stream_core voiced) | pasr = voiced + 0.5 s recognition lag; both with causal
+inputs by default (--causal-inputs: feat89 recomputed every tick from the arrived PCM prefix with fixed prosody statistics
+--pstats and committed beats, CAM++ of the PCM prefix, empty embedding < 1 s; scmg/causal_feat.py). They need --wav-dir,
+--words-dir (official word times) and --pstats. --no-causal-inputs = the whole-clip feat89 / speaker vector of the view
+(leakage control); --causal-inputs also works with the engine protocol.
 """
 import argparse, json, os, sys, time
 from pathlib import Path
@@ -34,8 +40,14 @@ def main():
     ap.add_argument('--split', default='test', help="view split: 'test' (val_common view) | 'val' (held-out dev, for choosing inference settings)")
     ap.add_argument('--shard', default='0/1', help='i/n: this process handles clips i, i+n, ...')
     ap.add_argument('--save50', action='store_true', help='also keep the 50 Hz output (<stem>.q50.npy)')
-    ap.add_argument('--protocol', default='offline', choices=['offline', 'engine'])
-    ap.add_argument('--text-mode', default=None, choices=['final', 'x2'], help='override of the protocol preset')
+    ap.add_argument('--protocol', default='offline', choices=['offline', 'engine', 'psync', 'pasr'])
+    ap.add_argument('--text-mode', default=None, choices=['final', 'x2', 'voiced', 'asr'], help='override of the protocol preset')
+    ap.add_argument('--causal-inputs', action=argparse.BooleanOptionalAction, default=None,
+                    help='feat89 / CAM++ from the arrived PCM prefix every tick (default: on for psync / pasr)')
+    ap.add_argument('--wav-dir', default=None, help='causal inputs: <stem>.wav (16 kHz, the view audio)')
+    ap.add_argument('--words-dir', default=None, help='voiced / asr text and causal feat89: <stem>.json official word times')
+    ap.add_argument('--pstats', default=None, help='causal feat89: fixed prosody statistics JSON (scmg.causal_feat pstats)')
+    ap.add_argument('--campplus', default='/home/xr-25b7/bulk/models-ro/campplus'); ap.add_argument('--asr-lag', type=float, default=0.5)
     ap.add_argument('--horizon', default=None, help="audio look-ahead in 80 ms units past the chunk start, or 'inf'")
     ap.add_argument('--x2-rate', type=float, default=15.0); ap.add_argument('--x2-lag', type=float, default=0.15)
     ap.add_argument('--deploy-timing', action=argparse.BooleanOptionalAction, default=None)
@@ -59,8 +71,9 @@ def main():
                     'probe scripts/echog_g1/echog_textuse.py) instead of the length-order neighbour')
     a = ap.parse_args()
     if EMBODIMENT != 'g1': raise SystemExit('run with SCMG_J=39')
-    eng = a.protocol == 'engine'
-    tm = a.text_mode or ('x2' if eng else 'final')
+    eng = a.protocol in ('engine', 'psync', 'pasr')
+    tm = a.text_mode or {'engine': 'x2', 'psync': 'voiced', 'pasr': 'asr'}.get(a.protocol, 'final')
+    cin = a.causal_inputs if a.causal_inputs is not None else a.protocol in ('psync', 'pasr')
     hz = a.horizon or ('2' if eng else 'inf')
     H = INF if hz == 'inf' else int(hz) * U80
     dt = a.deploy_timing if a.deploy_timing is not None else eng
@@ -68,15 +81,24 @@ def main():
     # bagger_env.sh / r4_lane.sh) must never be picked up silently
     os.environ.pop('SCMG_TEXT_CAUSAL', None)
     if a.text_causal: os.environ['SCMG_TEXT_CAUSAL'] = a.text_causal
-    if tm == 'x2' and not a.text_causal: raise SystemExit('--text-mode x2 needs --text-causal (prefix-causal e5 of the same rows)')
+    if tm in ('x2', 'voiced', 'asr') and not a.text_causal: raise SystemExit(f'--text-mode {tm} needs --text-causal (prefix-causal e5 of the same rows)')
+    if tm in ('voiced', 'asr') and not a.words_dir: raise SystemExit(f'--text-mode {tm} needs --words-dir')
+    if cin and not (a.wav_dir and a.words_dir and a.pstats): raise SystemExit('--causal-inputs needs --wav-dir, --words-dir and --pstats')
+    if cin and hz == 'inf': raise SystemExit('--causal-inputs needs a streaming horizon')
     if a.modality != 'both' and a.cfg_t is not None: raise SystemExit('--cfg-t (separate text guidance) needs --modality both')
     proto = None if (tm, hz, dt) == ('final', 'inf', False) else dict(protocol=a.protocol, text_mode=tm, horizon_80ms=hz,
-        x2_rate=a.x2_rate, x2_lag=a.x2_lag, deploy_timing=dt, text_causal=a.text_causal)
+        x2_rate=a.x2_rate, x2_lag=a.x2_lag, deploy_timing=dt, text_causal=a.text_causal,
+        **({} if not (cin or tm in ('voiced', 'asr')) else dict(causal_inputs=bool(cin), asr_lag=a.asr_lag, pstats=a.pstats, words_dir=a.words_dir)))
     dev = 'cuda'; out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     stats = json.loads(Path(a.stats).read_text())
     m, vae = load(a.ckpt, a.vae, dev)
     view = View(a.view, a.split, a.text_cache, stats)
     qm, qs = np.asarray(stats['q_mean'], np.float32), np.asarray(stats['q_std'], np.float32)
+    if cin or tm in ('voiced', 'asr'):
+        from scmg import causal_feat as CF
+        tokz = CF.e5_tokenizer() if tm in ('voiced', 'asr') else None
+        enc = CF.speaker_encoder(a.campplus) if (cin and not a.no_spk) else None
+        pst = CF.load_pstats(a.pstats) if cin else None
     want = Path(a.stems).read_text().split() if a.stems else None
     idx = {c['items'][0]['id']: i for i, c in enumerate(view.clips)}
     stems = want if want else [c['items'][0]['id'] for c in view.clips]
@@ -116,6 +138,18 @@ def main():
                                      'titime', 'tseg', 'tiseg', 'tiend', 'text_c') if kk in s}
         kw = {} if proto is None else dict(text_mode=tm, x2_rate=a.x2_rate, x2_lag=a.x2_lag, deploy_timing=dt)
         mkw = dict(audio_off=True) if a.modality == 'text' else {}     # passed only when set (default call unchanged)
+        if cin or tm in ('voiced', 'asr'):
+            if a.text_swap: raise SystemExit('--text-swap is not supported with causal inputs / voiced text')
+            words = CF.clip_words(Path(a.words_dir) / f'{stem}.json', L)
+            if tm in ('voiced', 'asr'):
+                kn = view.text['index'].get(stem, [0, 0])[1] if not it.get('text_null') else 0
+                if int(np.asarray(s['tmask']).sum()) != kn: raise ValueError(f'{stem}: tmask rows != cache rows')
+                cond.update(CF.text_extras(it, words, tokz, kn, len(s['tmask'])))
+                mkw['asr_lag'] = a.asr_lag
+            if cin:
+                pcm16, wave = CF.clip_audio(Path(a.wav_dir) / f'{stem}.wav')
+                mkw['causal_inputs'] = CF.CausalInputs(pcm16, wave, words, it['lang'], L, pst, view.fm, view.fs, enc,
+                                                       Tpad=len(s['feat']), spk=not a.no_spk)
         cmd, _, tk = generate(m, vae, s['feat'], cond, stats, nch, H=H, steps=a.steps, seed=a.seed, standby=qm, ctx_t=m.ctx_t,
                               cfg_w=a.cfg_w, cfg_t=a.cfg_t, noise_scale=a.noise_scale, **kw, **mkw)
         if cmd.shape[0] < L or cmd.shape[1] != J or not np.isfinite(cmd).all(): raise ValueError(f'{stem}: generated {cmd.shape}')
