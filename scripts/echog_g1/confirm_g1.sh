@@ -8,10 +8,11 @@ vae=$1; O=$2; shift 2; mkdir -p $O; GL=(${GPUS:-0}); n=${#GL[@]}; i=0
 log() { echo "$(date -Is) $*" >> $O/confirm.log; }
 for spec in "$@"; do
   lab=${spec%%=*}; ck=${spec#*=}
-  for sd in ${SEEDS:-0 1}; do
+  for p in ${PROTOS:-offline}; do for sd in ${SEEDS:-0 1}; do        # PROTOS: offline and/or engine (EX002 streaming protocol)
     g=${GL[$((i % n))]}; i=$((i + 1))
-    ( [ -f $O/$lab/benchmark_offline_seed_00$sd.json ] || { mkdir -p $O/$lab; GPUS="$g $g $g" bash scripts/echog_g1/bench.sh scmg $ck $vae $O/$lab/offline_seed_00$sd offline $sd >> $O/$lab/bench.log 2>&1 && log "BENCH_DONE $lab s$sd" || log "BENCH_FAILED $lab s$sd"; } ) &
-  done
+    ( [ -f $O/$lab/benchmark_${p}_seed_00$sd.json ] || { mkdir -p $O/$lab; GPUS="$g $g $g" bash scripts/echog_g1/bench.sh scmg $ck $vae $O/$lab/${p}_seed_00$sd $p $sd >> $O/$lab/bench.log 2>&1 && log "BENCH_DONE $lab $p s$sd" || log "BENCH_FAILED $lab $p s$sd"; } ) &
+    [ $((i % n)) -eq 0 ] && wait                                         # at most one bench per GPU at a time
+  done; done
 done
 wait
 if [ -n "${MM_CK:-}" ]; then
