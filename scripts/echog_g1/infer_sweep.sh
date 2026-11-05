@@ -15,11 +15,14 @@ ck=$1; vae=$2; O=$3; mkdir -p $O
 # our signed jerk gap is NEGATIVE (smoother than GT, VAE jerk ratio 0.75) -> whole-body smoothing is the wrong direction;
 # only the legs are smoothed (contact slide).  Div is too HIGH (+0.53) -> null speaker / smaller initial noise.
 declare -A X=( [ref]="" [nospk]="--no-spk" [ns09]="--noise-scale 0.9" [ns08]="--noise-scale 0.8" [legs31]="--smooth-legs 31,2"
-               [legs15]="--smooth-legs 15,2" [steps20]="STEPS=20" [sm9]="--smooth 9,2" )
+               [legs15]="--smooth-legs 15,2" [steps20]="STEPS=20" [sm9]="--smooth 9,2"
+               [cfg15]="CFGW=1.5" [cfg20]="CFGW=2.0" [cfg30]="CFGW=3.0" [cfg20nospk]="CFGW=2.0 --no-spk" )
 for s in ${SETTINGS:-ref nospk ns09 ns08 legs31 legs15 steps20}; do for p in ${PROTOS:-offline}; do
   [ -f $O/benchmark_${s}_${p}_seed_000.json ] && continue
-  e=${X[$s]}; st=10; case "$e" in STEPS=*) st=${e#STEPS=}; e="";; esac
-  STEPS=$st INFER_EXTRA="$e" bash scripts/echog_g1/bench.sh scmg $ck $vae $O/${s}_${p}_seed_000 $p 0 >> $O/run.log 2>&1 \
+  e=${X[$s]}; st=10; cw=2.5
+  case "$e" in STEPS=*) st=${e#STEPS=}; e="";; esac
+  case "$e" in CFGW=*) cw=${e%% *}; cw=${cw#CFGW=}; case "$e" in *" "*) e=${e#* };; *) e="";; esac;; esac
+  CFGW=$cw STEPS=$st INFER_EXTRA="$e" bash scripts/echog_g1/bench.sh scmg $ck $vae $O/${s}_${p}_seed_000 $p 0 >> $O/run.log 2>&1 \
     && echo "$(date -Is) SWEEP_DONE $s $p" >> $O/sweep.log || echo "$(date -Is) SWEEP_FAILED $s $p" >> $O/sweep.log
 done; done
 echo "$(date -Is) INFER_SWEEP_ALL_DONE" >> $O/sweep.log
