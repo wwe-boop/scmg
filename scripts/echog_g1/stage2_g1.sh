@@ -15,7 +15,7 @@ export PROFILE=g1 G1_BENCH=1 G1_BENCH_SEEDS=0 SNAP=1000000 TRAIN_SEED=0
 for spec in ${SETTINGS:-ctrl=0 foot03=0.3 foot1=1.0}; do
   lab=${spec%%=*}; wf=${spec#*=}
   sc="{$S}"; [ "$wf" != 0 ] && sc="{$S, \"w_foot\": $wf}"
-  for side in test dev; do
+  for side in ${SIDES:-test dev}; do
     g=${GL[$((i % ${#GL[@]}))]}; i=$((i + 1))
     if [ $side = test ]; then
       ( INIT=$B/echog-g1-arch-1104/fix-base/best.pt VAE=$DEC bash scripts/r4_lane.sh $g $O/test $lab '{"adsc": true}' "$sc" 2000 > $O/lane-test-$lab.log 2>&1 ) &
@@ -28,4 +28,4 @@ for spec in ${SETTINGS:-ctrl=0 foot03=0.3 foot1=1.0}; do
     fi
   done
 done
-wait; echo "$(date -Is) STAGE2_DONE" >> $O/stage2.log
+wait; echo "$(date -Is) STAGE2_DONE ${SIDES:-test dev}" >> $O/stage2.log
