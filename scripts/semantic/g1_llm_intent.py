@@ -46,7 +46,8 @@ def main():
         k = max(1, int(round(dur / a.density)))
         text = ' '.join(f'{j}:{w[0]}' for j, w in enumerate(ws))
         msg = [{'role': 'user', 'content': PROMPT.format(dur=dur, k=k, text=text)}]
-        ids = tok.apply_chat_template(msg, add_generation_prompt=True, return_tensors='pt').to('cuda')
+        enc = tok.apply_chat_template(msg, add_generation_prompt=True, return_tensors='pt', return_dict=True)
+        ids = enc['input_ids'].to('cuda')
         with torch.no_grad(): g = m.generate(ids, max_new_tokens=200, do_sample=False)
         ans = tok.decode(g[0, ids.shape[1]:], skip_special_tokens=True)
         try: marks = json.loads(re.search(r'\[.*\]', ans, re.S).group(0))
