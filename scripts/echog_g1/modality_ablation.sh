@@ -68,7 +68,7 @@ for spec in ${SETTINGS:-$DEF}; do
     if [ $side = test ]; then        # test-set usage record (one evaluation per setting; purpose = paper ablation table)
       echo "{\"time\": \"$(date -Is)\", \"split\": \"val_common\", \"ckpt\": \"$CK\", \"decoder\": \"$DEC\", \"setting\": \"$lab\", \"infer_extra\": \"${X[$lab]}\", \"protocol\": \"$p\", \"seed\": $sd, \"purpose\": \"report: input-modality ablation table (protocol fixed on dev before this run)\", \"host\": \"$(hostname)\"}" >> $O/TEST_USAGE.jsonl
     fi
-    CFGW=2.5 STEPS=10 INFER_EXTRA="${X[$lab]}" GPUS="${GPUS:-0}" bash scripts/echog_g1/bench.sh scmg $CK $DEC $R/$tag $p $sd >> $O/run-$side.log 2>&1 \
+    CFGW=2.5 BENCH_STEPS=10 INFER_EXTRA="${X[$lab]}" GPUS="${GPUS:-0}" bash scripts/echog_g1/bench.sh scmg $CK $DEC $R/$tag $p $sd >> $O/run-$side.log 2>&1 \
       && log "DONE $tag" || log "FAILED $tag"
   done
 done
