@@ -25,7 +25,7 @@ for s in ${SETTINGS:-ref nospk ns09 ns08 legs31 legs15 steps20}; do for p in ${P
   e=${X[$s]}; st=10; cw=2.5
   case "$e" in STEPS=*) st=${e#STEPS=}; e="";; esac
   case "$e" in CFGW=*) cw=${e%% *}; cw=${cw#CFGW=}; case "$e" in *" "*) e=${e#* };; *) e="";; esac;; esac
-  CFGW=$cw STEPS=$st INFER_EXTRA="$e" bash scripts/echog_g1/bench.sh scmg $ck $vae $O/${s}_${p}_seed_000 $p 0 >> $O/run.log 2>&1 \
+  CFGW=$cw BENCH_STEPS=$st INFER_EXTRA="$e" bash scripts/echog_g1/bench.sh scmg $ck $vae $O/${s}_${p}_seed_000 $p 0 >> $O/run.log 2>&1 \
     && echo "$(date -Is) SWEEP_DONE $s $p" >> $O/sweep.log || echo "$(date -Is) SWEEP_FAILED $s $p" >> $O/sweep.log
 done; done
 echo "$(date -Is) INFER_SWEEP_ALL_DONE" >> $O/sweep.log

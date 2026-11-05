@@ -5,6 +5,8 @@
 #       -> <pred dir>/../benchmark_<basename pred dir>.json
 #   bench.sh eval <pred dir> <stem list> <tag> <out.json>
 #       official evaluator only (any method, e.g. the ECHO-G sliding-window predictions of echog_slide.py)
+# 11-06: sampling steps come from BENCH_STEPS (default 10), NOT from STEPS -- lane scripts export STEPS = TRAINING steps
+# (STEPS=4000 / 6000 in the environment made every benchmark sample with 4000 / 6000 flow steps).
 # offline = final text, H = inf (the ECHO-G benchmark setting); engine = EX002 engine protocol (x2 word-by-word early text,
 # 15 tok/s, lag 0.15 s, causal e5, deploy timing, H = 160 ms). CFG fixed a priori at the r4 value (CFGW=2.5), 10 steps.
 # Paths (defaults = this 5090 host; override on DSW/DLC): EG (ECHO-G root with ds/ and official-meta/ or REF_DIR/WAV_DIR/
@@ -32,7 +34,7 @@ case $1 in
     GL=(${GPUS:-0}); n=${#GL[@]}; mkdir -p $P
     for i in $(seq 0 $((n - 1))); do
       CUDA_VISIBLE_DEVICES=${GL[$i]} $PY scripts/echog_g1/infer_test.py --ckpt $ck --vae $vae --stats $STATS --view $VIEW_TEST \
-        --text-cache $TEXT_TEST --out $P --stems $stems --seed $seed --steps ${STEPS:-10} --cfg-w ${CFGW:-2.5} --split ${VSPLIT:-test} --shard $i/$n "${PA[@]}" ${INFER_EXTRA:-} &
+        --text-cache $TEXT_TEST --out $P --stems $stems --seed $seed --steps ${BENCH_STEPS:-10} --cfg-w ${CFGW:-2.5} --split ${VSPLIT:-test} --shard $i/$n "${PA[@]}" ${INFER_EXTRA:-} &
     done; wait
     ev $P $stems scmg_${proto}_seed$seed $(dirname $P)/benchmark_$(basename $P).json;;
   eval) ev $2 $3 $4 $5;;
