@@ -32,6 +32,7 @@ class StageCfg:
     # 11-03 user: Semantic Gesture Head (cfg.sem_head / sem_cond) and selective audio dropout
     w_gest: float = 0.0            # CE of the coarse g_k head (text-dropped samples excluded)
     gest_none_w: float = 0.3       # CE class weight of g = none
+    gest_cw: tuple = ()            # 11-05: optional per-class CE weights (len n_sem; overrides gest_none_w), () = old behaviour
     sem_tf: float = 0.5            # P(Local Flow gets the TRUE g_k one-hot) on labelled chunks; else the head's prediction
     sem_drop: float = 0.1          # P(g_k -> null (zeros)) per sample, so g can be guided like a condition
     gest_grad_scale: float = 1.0   # 11-03 review: scale of the gesture-CE gradient that reaches the plan h (head itself trains fully)
@@ -451,10 +452,12 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     if g_logits is not None and glab is not None and sc.w_gest > 0:
         gl = torch.where(drop_text[:, None] | ~cm.bool(), torch.full_like(glab, -1), glab)
         cw = torch.ones(cfg.n_sem, device=dev); cw[0] = sc.gest_none_w
+        if sc.gest_cw: cw = torch.tensor([float(x) for x in sc.gest_cw], device=dev)
         out['gest'] = F.cross_entropy(g_logits.flatten(0, 1), gl.flatten(), weight=cw, ignore_index=-1) if (gl >= 0).any() \
             else g_logits.sum() * 0.
         pos = gl >= 1
         out['gest_acc'] = ((g_logits.argmax(-1) == gl) & pos).float().sum() / pos.float().sum().clamp(min=1)
+        for k in range(cfg.n_sem): out[f'glab_{k}'] = (gl == k).float().mean()                   # chunk label distribution (logged)
         loss = loss + sc.w_gest * out['gest']
     if ilab is not None and sc.w_int > 0 and hasattr(model, 'int_head'):
         il = torch.where(drop_text[:, None] | ~cm.bool(), torch.full_like(ilab, -1), ilab)   # no text -> intent unknowable

@@ -25,6 +25,7 @@ case "${PROFILE:-ex002}" in
     VIEW=${G1_VIEW:-$C/echog-g1-v1}; STATS=${G1_STATS:-$D/STATS_echog_g1_v1.json}; TEXT=${G1_TEXT:-$D/text-e5-echog-g1-v1}
     export SCMG_TEXT_CAUSAL=${G1_TEXT_CAUSAL:-$B/models/text-e5-causal-echog-g1-v1}   # prefix-causal e5 of the SAME rows (View checks)
     DATA_ARGS=(--view $VIEW --stats $STATS --text-cache $TEXT)
+    [ -n "${G1_GEST:-}" ] && DATA_ARGS+=(--gest-frames $G1_GEST)   # 11-05: BEAT2-annotation g_k frame track (semantic head lanes)
     COLLECT_ARGS=(--vae $VAE --view $VIEW --stats $STATS --text-cache $TEXT --tok-cache none --holdout none)
     LANES_OK="b c";;                                   # lane a needs intent tracks / semantic data (EX002 only)
   *) echo "unknown PROFILE=${PROFILE}" >&2; exit 2;;

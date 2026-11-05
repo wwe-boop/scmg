@@ -37,8 +37,12 @@ def read_sem(p):
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('--data', required=True); ap.add_argument('--out', required=True)
     ap.add_argument('--sem', default=SEM); ap.add_argument('--view', default=VIEW); ap.add_argument('--seed', type=int, default=0)
+    ap.add_argument('--split-view', default=None, help='take train / dev from this view SPLIT.json (e.g. the held-out-speaker view)')
     a = ap.parse_args(); out = Path(a.out).expanduser(); out.mkdir(parents=True, exist_ok=True); rng = np.random.default_rng(a.seed)
     D = json.loads((Path(a.data).expanduser() / 'EVENTS.json').read_text())
+    if a.split_view:                       # 11-05: re-split by another view (held-out-speaker view): train / val -> dev / test kept
+        hs = json.loads((Path(a.split_view) / 'SPLIT.json').read_text()); htr, hva = set(hs['train_ids']), set(hs['val_ids'])
+        D['split'] = {s: ('test' if sp == 'test' else 'train' if s in htr else 'dev' if s in hva else 'excluded') for s, sp in D['split'].items()}
     z = np.load(Path(a.data).expanduser() / 'MOTION.npz'); L = dict(zip([str(s) for s in z['stems']], z['len']))
     v = Path(a.view)
     meta = {x['id']: x for x in json.loads((v / 'train.json').read_text())}
@@ -46,6 +50,7 @@ def main():
     sem = {p.stem: read_sem(p) for p in Path(a.sem).glob('*.txt')}
     st = Counter(); ev = []; kwhit = Counter()
     for s, sp in D['split'].items():
+        if sp == 'excluded': continue
         it = meta[s]; rec = it['echog']['recording']; s0 = float(it['echog']['start_sec'])
         if rec not in sem: st[f'no_sem_{sp}'] += 1; continue
         st[f'clips_with_sem_{sp}'] += 1

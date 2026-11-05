@@ -194,6 +194,8 @@ def train(a):
     trm = np.concatenate([np.arange(off[idx[s]], off[idx[s]] + L[idx[s]]) for s in stems if D['split'][s] == 'train'])
     std = q[trm].std(0) + 1e-3
     Q = torch.tensor(q, device=dev); feat = Feat(np.zeros(len(CH)), std, dev)
+    if a.no_dev_select:                    # the dev split is an evaluation set here: never used for model selection
+        D['events'] = [dict(e, split='dev_eval') if e['split'] == 'dev' else e for e in D['events']]
     if a.sel_frac > 0:                     # selection set = dev + a take-level slice of train (dev alone is small)
         import hashlib
         take = lambda st: st.rsplit('_utt_', 1)[0]
@@ -248,6 +250,10 @@ def score(a):
     model, feat, s = load_model(a.ckpt, dev)
     q, stems, off, L, idx = clip_table(a.data)
     E = [e for e in D['events'] if e['split'] == a.split and (a.lang == 'all' or e['lang'] == a.lang)]
+    if a.allow_missing and a.pt_dir:      # smoke runs on a stem subset: score only the stems the source has
+        have = {f.stem for f in Path(a.pt_dir).glob('*.pt')}; E = [e for e in E if e['stem'] in have]
+    elif a.allow_missing and a.stems:
+        have = set(Path(a.stems).read_text().split()); E = [e for e in E if e['stem'] in have]
     need = sorted({e['stem'] for e in E}); bad = {}
     if a.pt_dir:
         gl = {st: int(L[idx[st]]) for st in need}
@@ -286,9 +292,12 @@ def main():
     t.add_argument('--cw-pow', type=float, default=0.5); t.add_argument('--lang', default='all', choices=('all', 'en', 'zh'))
     t.add_argument('--target', default='sem', choices=('sem', 'spk'))
     t.add_argument('--sel-frac', type=float, default=0.0, help='also move this fraction of train takes into the selection set')
+    t.add_argument('--no-dev-select', action='store_true', help='select on the train slice only (dev = evaluation set)')
     s = sub.add_parser('score'); s.add_argument('--data', required=True); s.add_argument('--ckpt', required=True); s.add_argument('--name', default='gt')
     s.add_argument('--pt-dir'); s.add_argument('--split', default='test'); s.add_argument('--lang', default='all', choices=('all', 'en', 'zh'))
     s.add_argument('--out'); s.add_argument('--save-probs', action='store_true')
+    s.add_argument('--allow-missing', action='store_true', help='score only the stems present in --pt-dir (or listed in --stems)')
+    s.add_argument('--stems', help='with --allow-missing and no --pt-dir: stem list for the ground truth')
     s.add_argument('--npy-pattern', help="EX002 exports, e.g. 'gen_Hinf_{ci}.npy' (ci from EVENTS meta dev_ci)")
     s.add_argument('--gen-len-from', help='GT only: keep the events inside the spans of this export dir (with --npy-pattern)')
     a = ap.parse_args()

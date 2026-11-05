@@ -180,6 +180,7 @@ def main():
     ap.add_argument('--holdout', default=None, help='semantic-eval MANIFEST.json: its clips and rhythm variants are never sampled')
     ap.add_argument('--tok-intent', default=None, help='word-level intent labels row-aligned with --tok-cache (models/intent-qwen25-v36_1)')
     ap.add_argument('--intent-frames', default=None, help='frame-level intent track (scmg.prep_intent_frames); used by sc w_int / sem_w')
+    ap.add_argument('--gest-frames', default=None, help='direct coarse g_k frame track (scripts/semantic/g1_gest_frames.py); train split only')
     add_self_force_args(ap)
     ap.add_argument('--bagger-dir', default=None, help='colon-separated cumulative BAgger collection directories')
     ap.add_argument('--bagger-share', type=float, default=0.)
@@ -194,7 +195,8 @@ def main():
     torch.manual_seed(a.seed + rank); np.random.seed(a.seed + rank)
     stats = json.loads(Path(a.stats).read_text())
     view = View(a.view, 'train', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache, tts_hidden=a.tts_hidden,
-                intent_frames=a.intent_frames, holdout=a.holdout, tok_intent=a.tok_intent, bagger_dir=a.bagger_dir)
+                intent_frames=a.intent_frames, holdout=a.holdout, tok_intent=a.tok_intent, bagger_dir=a.bagger_dir,
+                gest_frames=a.gest_frames)
     dview = View(a.view, 'val', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache, tts_hidden=a.tts_hidden)
     if a.overfit:
         overfit_clips(view, a.overfit); dview = view

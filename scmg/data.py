@@ -86,7 +86,7 @@ class View:
     """Everything loaded once (RAM, ~8 GB) before DataLoader workers fork (shared copy-on-write)."""
 
     def __init__(self, view=VIEW, split='train', text_cache=None, stats=None, mmap=False, tok_cache=None, tts_hidden=None,
-                 intent_frames=None, holdout=None, tok_intent=None, bagger_dir=None):
+                 intent_frames=None, holdout=None, tok_intent=None, bagger_dir=None, gest_frames=None):
         self.bagger_dir = bagger_dir
         v = Path(P(view)); self.root = v
         items = json.loads((v / 'train.json').read_text())
@@ -192,6 +192,10 @@ class View:
             if len(self.intent) != len(self.q): raise ValueError('INTENT_FRAMES rows != train_q rows')
             from .semclass import coarse_lut
             self.gest_lut = coarse_lut(json.loads((v / 'VOCAB.json').read_text()))
+        self.gest = None                                # 11-05: direct coarse g_k frame track (G1 BEAT2 annotation), opt-in
+        if gest_frames:
+            if intent_frames: raise ValueError('gest_frames and intent_frames both define the g_k labels: pass one')
+            self.gest = load_gest_frames(gest_frames, v, len(self.q))
         if EMBODIMENT != 'ex002': self._refuse_foreign_assets(v, holdout, tok_cache, tok_intent, intent_frames)
         self.tts = None
         if tts_hidden:                                  # Qwen3-TTS Talker hidden states (opt-in conditioning, 11-03)
@@ -359,11 +363,24 @@ class WindowDataset(torch.utils.data.IterableDataset):
         if v.intent is not None:                        # [T] int16: -1 unknown / 0 none / >=2 class (frames past the clip end -1)
             il = np.full(T, -1, np.int16); il[:n] = v.intent[a:a + n]; extra['intent'] = il
             extra['gest'] = np.where(il >= 0, v.gest_lut[np.clip(il, 0, None)], -1).astype(np.int16)   # coarse g_k frame labels
+        if getattr(v, 'gest', None) is not None:      # [T] int16: -1 unknown / 0 none / 1.. coarse class (past the clip end -1)
+            gl = np.full(T, -1, np.int16); gl[:n] = v.gest[a:a + n]; extra['gest'] = gl
         if v.tts is not None:
             if T % 4: raise ValueError(f'tts_hidden needs windows of a multiple of 4 frames (got {T})')
             extra['tts_h'], extra['tts_hm'] = tts_rows(c['items'], c['start'], s, n, T // 4, v.tts_array)
         return dict(**extra, q=q, mask=m, feat=f, text=text, ttime=ttime, tmask=tmask, spk=spk, spk_valid=np.float32(spk_valid),
                     source=np.int64(source), tids=tids, tidm=tidm, titime=titime, tseg=tseg, tiseg=tiseg, tiend=tiend, ref=ref, ref_valid=np.float32(ref_valid), clip=np.int64(ci), start=np.int64(s))
+
+
+def load_gest_frames(d, view_dir, n_rows):
+    """GEST_FRAMES.npy (int16 per train_q row: -1 unknown, 0 none, 1..6 coarse g_k class) of scripts/semantic/g1_gest_frames.py.
+    PREP.json must name the same row count and the sha256 of THIS view's SPLIT.json (labels are only built for its train_ids)."""
+    import hashlib
+    d = Path(P(d)); g = np.load(d / 'GEST_FRAMES.npy', mmap_mode='r'); prep = json.loads((d / 'PREP.json').read_text())
+    if len(g) != n_rows or prep.get('rows') != n_rows: raise ValueError(f'GEST_FRAMES rows {len(g)} / PREP {prep.get("rows")} != train_q rows {n_rows}')
+    sha = hashlib.sha256((Path(view_dir) / 'SPLIT.json').read_bytes()).hexdigest()
+    if prep.get('split_sha256') != sha: raise ValueError(f'GEST_FRAMES built for split {prep.get("split_sha256")}, view {view_dir} has {sha}')
+    return np.asarray(g)
 
 
 def collate(batch):

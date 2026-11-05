@@ -12,9 +12,10 @@ import torch
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('--data', required=True); ap.add_argument('--out', required=True)
+    ap.add_argument('--split', default='test')
     a = ap.parse_args(); d = Path(a.data).expanduser(); out = Path(a.out).expanduser()
     z = np.load(d / 'MOTION.npz'); sp = json.loads((d / 'EVENTS.json').read_text())['split']
-    stems = [str(s) for s in z['stems']]; te = [i for i, s in enumerate(stems) if sp[s] == 'test']
+    stems = [str(s) for s in z['stems']]; te = [i for i, s in enumerate(stems) if sp[s] == a.split]
     Q, OFF, LEN = z['q'], z['off'], z['len']
     get = lambda i: Q[OFF[i]:OFF[i] + LEN[i]]
     order = sorted(te, key=lambda i: z['len'][i])
