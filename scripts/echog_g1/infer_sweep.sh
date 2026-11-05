@@ -17,7 +17,8 @@ ck=$1; vae=$2; O=$3; mkdir -p $O
 declare -A X=( [ref]="" [nospk]="--no-spk" [ns09]="--noise-scale 0.9" [ns08]="--noise-scale 0.8" [legs31]="--smooth-legs 31,2"
                [legs15]="--smooth-legs 15,2" [steps20]="STEPS=20" [sm9]="--smooth 9,2"
                [cfg15]="CFGW=1.5" [cfg20]="CFGW=2.0" [cfg30]="CFGW=3.0" [cfg20nospk]="CFGW=2.0 --no-spk"
-               [hinf]="--horizon inf" [tfinal]="--text-mode final" [nodt]="--no-deploy-timing" )   # 11-05: with PROTOS=engine = engine minus one switch
+               [hinf]="--horizon inf" [tfinal]="--text-mode final" [nodt]="--no-deploy-timing"
+               [h4]="--horizon 4" [h8]="--horizon 8" [h4tf]="--horizon 4 --text-mode final" [h8tf]="--horizon 8 --text-mode final" [hinftf]="--horizon inf --text-mode final" )   # 11-05 TTS protocol: TTS audio + word stamps arrive ahead of playback, sentence text known   # 11-05: with PROTOS=engine = engine minus one switch
 for s in ${SETTINGS:-ref nospk ns09 ns08 legs31 legs15 steps20}; do for p in ${PROTOS:-offline}; do
   [ -f $O/benchmark_${s}_${p}_seed_000.json ] && continue
   e=${X[$s]}; st=10; cw=2.5
