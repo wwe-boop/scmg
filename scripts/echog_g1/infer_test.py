@@ -39,6 +39,25 @@ CTL_MODES = {
     'predlex': 'pred + the lexical tokens (deployable)'}
 
 
+# 11-06 guard: process-global switches read by scmg at import / inference time. A non-default value silently changes every
+# output, so it must be declared on the command line (--allow-env); the values are recorded in every output's metadata.
+GUARD_ENV = {'SCMG_SEM_SCALE': '1', 'SCMG_BF16': '0', 'SCMG_SEED0': None, 'SCMG_STRIDE': '4'}
+
+
+def env_guard(allow):
+    vals = {k: os.environ.get(k) for k in GUARD_ENV}
+    def default(k, v):
+        if v is None or v == GUARD_ENV[k]: return True
+        if k == 'SCMG_SEM_SCALE':
+            try: return float(v) == 1.0
+            except ValueError: return False
+        return False
+    bad = {k: v for k, v in vals.items() if not default(k, v)}
+    if bad and not allow:
+        raise SystemExit(f'non-default global switches in the environment {bad}: pass --allow-env to run with them (recorded in the outputs)')
+    return vals
+
+
 def ctl_plan(d, mode, stems, dur, pred=None):
     """stem -> list of token dicts (scmg/ctl.py token format) for the chosen mode (deterministic, before sharding)."""
     import copy
@@ -123,7 +142,9 @@ def main():
     ap.add_argument('--ctl-mode', default='gt', choices=list(CTL_MODES), help='which tokens are given (see CTL_MODES)')
     ap.add_argument('--cfg-ctl', type=float, default=None, help='separate control-token guidance (Streamer cfg_ctl); None = joint CFG')
     ap.add_argument('--ctl-pred', default=None, help='PRED.json of scripts/semantic/g1_sem_predictor.py (text-only predicted semantic tokens; modes pred / predlex)')
+    ap.add_argument('--allow-env', action='store_true', help='allow non-default SCMG_SEM_SCALE / SCMG_BF16 / SCMG_SEED0 / SCMG_STRIDE')
     a = ap.parse_args()
+    genv = env_guard(a.allow_env)
     if EMBODIMENT != 'g1': raise SystemExit('run with SCMG_J=39')
     if a.ctl_tokens: a.save50 = True                # the control metrics are measured on the 50 Hz output
     eng = a.protocol == 'engine'
@@ -207,7 +228,7 @@ def main():
                         generator=dict(ckpt=str(a.ckpt), seed=a.seed, steps=a.steps, cfg_w=a.cfg_w, cfg_t=a.cfg_t, frames50=L, noise_scale=a.noise_scale, no_spk=a.no_spk, smooth=a.smooth, smooth_legs=a.smooth_legs,
                                        **({} if (a.modality, a.text_swap) == ('both', False) else
                                           dict(modality=a.modality, text_swap=donor.get(stem))),
-                                       resample='scmg/g1.py to30 (cubic / heading spline / RotationSpline)',
+                                       resample='scmg/g1.py to30 (cubic / heading spline / RotationSpline)', env=genv,
                                        **({} if proto is None else dict(stream=proto)),
                                        **({} if not a.ctl_tokens else dict(ctl_mode=a.ctl_mode, cfg_ctl=a.cfg_ctl, ctl=used)))), o.with_suffix('.pt.tmp'))
         os.replace(o.with_suffix('.pt.tmp'), o)      # atomic: an interrupted run never leaves a truncated <stem>.pt that a resume skips

@@ -32,9 +32,11 @@ case $1 in
     ck=$2; vae=$3; P=$4; proto=$5; seed=$6; stems=${7:-$SPLIT}
     case $proto in offline) PA=(--protocol offline);; engine) PA=(--protocol engine --text-causal $TEXT_CAUSAL_TEST);; *) echo "protocol $proto"; exit 2;; esac
     GL=(${GPUS:-0}); n=${#GL[@]}; mkdir -p $P
+    # 11-06: global switches that change every output (infer_test.py refuses non-default values without ALLOW_ENV=1 / --allow-env)
+    echo "BENCH_ENV SCMG_SEM_SCALE=${SCMG_SEM_SCALE-unset} SCMG_BF16=${SCMG_BF16-unset} SCMG_SEED0=${SCMG_SEED0-unset} SCMG_STRIDE=${SCMG_STRIDE-unset} BENCH_STEPS=${BENCH_STEPS:-10} CFGW=${CFGW:-2.5} ALLOW_ENV=${ALLOW_ENV:-0}"
     for i in $(seq 0 $((n - 1))); do
       CUDA_VISIBLE_DEVICES=${GL[$i]} $PY scripts/echog_g1/infer_test.py --ckpt $ck --vae $vae --stats $STATS --view $VIEW_TEST \
-        --text-cache $TEXT_TEST --out $P --stems $stems --seed $seed --steps ${BENCH_STEPS:-10} --cfg-w ${CFGW:-2.5} --split ${VSPLIT:-test} --shard $i/$n "${PA[@]}" ${INFER_EXTRA:-} &
+        --text-cache $TEXT_TEST --out $P --stems $stems --seed $seed --steps ${BENCH_STEPS:-10} --cfg-w ${CFGW:-2.5} --split ${VSPLIT:-test} --shard $i/$n "${PA[@]}" ${INFER_EXTRA:-} $( [ "${ALLOW_ENV:-0}" = 1 ] && echo --allow-env ) &
     done; wait
     ev $P $stems scmg_${proto}_seed$seed $(dirname $P)/benchmark_$(basename $P).json;;
   eval) ev $2 $3 $4 $5;;
