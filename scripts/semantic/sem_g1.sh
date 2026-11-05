@@ -9,7 +9,7 @@
 #   SIDE=dev  (default): hos-base on the held-out-speaker view, benchmark on the 400-clip unseen-speaker dev (selection);
 #                        recognisers rec-sem-hos-seed* (trained on the hos-view train split only, selected on a train slice)
 #   SIDE=test (only after selection): fix-base on the full view, benchmark on val_common; recognisers rec-sem-v1*
-# Lanes (LANES, default all four; label:gest(0/1):sc-fragment):
+# Lanes (LANES, default all four; label:gest(0/1/2):sc-fragment; 2 = gesture label track WITHOUT the semantic head, 11-06):
 #   ctrl    : no semantic head (same as sf0)                semw03 : w_gest 0.3, class-weighted CE
 #   semw1   : w_gest 1.0, class-weighted CE                 semw1tf: w_gest 1.0 + sem_tf 0.9 (Flow sees the true g more)
 #   sem_g1.sh <out root>        env GPUS (one per lane), PY, BENCH_PY, EG/OFF/REF_DIR... as bench.sh (test side)
@@ -49,7 +49,7 @@ lane() {   # gpu label cfg sc gest(0/1)
   local g=$1 lab=$2 cf=$3 sc=$4 ge=$5
   ${PY:-python} -c "import json,sys; json.loads(sys.argv[1]); json.loads(sys.argv[2])" "$cf" "$sc" || { log "BAD_JSON $lab"; return 2; }
   log "lane $lab gpu $g cfg $cf sc $sc gest $ge"
-  env $( [ $ge = 1 ] && echo G1_GEST=$GEST ) INIT=$INIT VAE=$DEC "${VENV[@]}" \
+  env $( [ $ge != 0 ] && echo G1_GEST=$GEST ) INIT=$INIT VAE=$DEC "${VENV[@]}" \
     bash scripts/r4_lane.sh $g $R $lab "$cf" "$sc" ${STEPS:-2000} > $O/lane-$SIDE-$lab.log 2>&1
   log "LANE_END $lab"
   local specs=() p
@@ -58,7 +58,8 @@ lane() {   # gpu label cfg sc gest(0/1)
 }
 for spec in ${LANES:-ctrl:0: semw03:1:\"w_gest\":0.3 semw1:1:\"w_gest\":1.0 semw1tf:1:\"w_gest\":1.0,\"sem_tf\":0.9}; do
   lab=${spec%%:*}; rest=${spec#*:}; ge=${rest%%:*}; frag=${rest#*:}
-  if [ $ge = 1 ]; then cf=$SEMCFG; sc="{$S, $CW, ${frag//,/, }}"; else cf='{"adsc": true}'; sc="{$S}"; fi
+  if [ $ge = 1 ]; then cf=$SEMCFG; sc="{$S, $CW, ${frag//,/, }}"
+  else cf='{"adsc": true}'; sc="{$S${frag:+, ${frag//,/, }}}"; fi   # 11-06: ge 0 / 2 take a fragment too (empty = old "{$S}")
   g=${GL[$((i % ${#GL[@]}))]}; i=$((i + 1))
   lane $g $lab "$cf" "$sc" $ge &
 done
