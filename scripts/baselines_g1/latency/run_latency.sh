@@ -22,6 +22,9 @@ for m in "${@:-scmg_offline scmg_engine echog robogesture semtalk emage lsm gmr_
     case $mm in
       scmg_offline|scmg_engine) SCMG_J=39 $TS $ECHOG $D/lat_scmg.py --protocol ${mm#scmg_} --out $O $NA ;;
       scmg_psync) SCMG_J=39 SCMG_REL=$L/snap/scmg_causal $TS $CAUSAL $D/lat_scmg.py --protocol psync --out $O $NA ;;
+      cg_offline_off|cg_offline_on|cg_engine_on|cg_psync_off|cg_psync_on|cg_psync_on_grades|cg_psync_off_grades)   # 11-06 CUDA-graph before / after (code snap/scmg_cg)
+        set -- ${mm//_/ }; P2=$2; CGF=""; [ "$3" = on ] && CGF=--cuda-graph; SR=""; [ "${4:-}" = grades ] && SR="--spk-refresh grades"
+        SCMG_J=39 SCMG_REL=${CG_REL:-$L/snap/scmg_cg2} $TS $CAUSAL $D/lat_scmg.py --protocol $P2 $CGF $SR --tag _cg${3}${4:+_$4} --out $O $NA ;;
       echog_stream) $TS $ECHOG $D/lat_echog_stream.py --out $O $NA ;;
       echog_stream_nocudnn) ECHOG_W2V_NOCUDNN=1 $TS $ECHOG $D/lat_echog_stream.py --out $O $NA ;;
       echog) $TS $ECHOG $D/lat_echog.py --out $O $NA ;;
