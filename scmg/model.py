@@ -31,6 +31,8 @@ def autocast_dtype():
 
 from .common import J, FEAT, SPK, TEXT_DIM, N_SOURCE, STRIDE, CHUNK, CHUNK_FRAMES, PROSODY_COLS, FPS, U80
 from .nn import Block, Encoder, MLP, sincos, apply_lora
+import os as _os
+SEM_SCALE = float(_os.environ.get('SCMG_SEM_SCALE', '1'))   # 11-05: inference-only semantic guidance scale; 1 = unchanged
 
 INF = 10 ** 6
 
@@ -416,7 +418,10 @@ class SCMG(nn.Module):
         None = the head's own prediction softmax(sem_head(h)). Identity for models without sem_cond."""
         if not (self.cfg.sem_head and self.cfg.sem_cond): return h
         if g is None: g = torch.softmax(self.sem_head(h.float()), -1)
-        return h + self.sem_emb(g.to(self.sem_emb.weight.dtype)).to(h.dtype)
+        e = self.sem_emb(g.to(self.sem_emb.weight.dtype)).to(h.dtype)
+        s = SEM_SCALE
+        return h + e if s == 1.0 else h + s * e          # 11-05: inference-time semantic guidance (env SCMG_SEM_SCALE; g=0 is
+                                                         # the trained null, so s > 1 extrapolates away from it like CFG)
 
     # ------------------------------------------------------------------ conditions
     def audio_tokens(self, feat, causal, tts_h=None, tts_hm=None):
