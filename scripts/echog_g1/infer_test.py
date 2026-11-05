@@ -55,6 +55,8 @@ def main():
     ap.add_argument('--text-swap', action='store_true',
                     help='text sensitivity probe: the text (tokens, features, times) of a donor clip -- the next clip in '
                          'length order of the stem list, times rescaled to this clip -- with this clip\'s audio / speaker')
+    ap.add_argument('--text-swap-map', default=None, help='with --text-swap: JSON {stem: donor stem} (e.g. shared with the ECHO-G '
+                    'probe scripts/echog_g1/echog_textuse.py) instead of the length-order neighbour')
     a = ap.parse_args()
     if EMBODIMENT != 'g1': raise SystemExit('run with SCMG_J=39')
     eng = a.protocol == 'engine'
@@ -83,6 +85,7 @@ def main():
     if a.text_swap:                              # derangement over the WHOLE list (before sharding): neighbour in length order
         order = sorted(stems, key=lambda x: (view.clips[idx[x]]['frames'], x))
         donor = {x: order[(i + 1) % len(order)] for i, x in enumerate(order)}
+        if a.text_swap_map: donor = {x: json.loads(Path(a.text_swap_map).read_text())[x] for x in stems}
     si, sn = (int(x) for x in a.shard.split('/'))
     stems = stems[si::sn]
     t0 = time.time(); log = []
