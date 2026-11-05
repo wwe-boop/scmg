@@ -54,9 +54,12 @@ def check(Q):
 res = {}
 for spec in a.panels:
     lab, d = spec.split('=', 1); gt = d.endswith(':gt'); d = d[:-3] if gt else d
-    pat = re.compile(r'gt_(\d+)\.npy$' if gt else rf'gen_H{a.hz}_(\d+)\.npy$')
+    hz = a.hz
+    if '@' in d: d, hz = d.rsplit('@', 1)                       # label=dir@inf (offline exports are gen_Hinf_<ci>.npy)
+    pat = re.compile(r'gt_(\d+)\.npy$' if gt else rf'gen_H{hz}_(\d+)\.npy$')
     files = sorted((int(pat.search(f).group(1)), f) for f in glob.glob(os.path.join(d, '*.npy')) if pat.search(f))
     if a.limit: files = files[: a.limit]
+    if not files: raise SystemExit(f'{lab}: no {pat.pattern} files in {d}')
     per = {ci: check(np.load(f).astype(np.float64)) for ci, f in files}
     F = sum(r['T'] for r in per.values()); pairs = {}
     for r in per.values():
