@@ -66,7 +66,9 @@ NAMES34 = [
 ]
 SOURCE_ID = 5           # semsynth_r7p1 (synthetic speech), closest training source to TTS
 # landing options (Claude 11-05), both OFF unless set -- unset = the stream is bit-identical to before:
-#   SCMG_ARM_ENVELOPE=<HUMAN_ENVELOPE.json>  human-quantile soft limit of arm joints 1-3 / 5-7 on every emitted frame
+#   SCMG_ARM_ENVELOPE=<HUMAN_ENVELOPE.json>  human-quantile soft limit on every emitted frame; joints from
+#                                            SCMG_ARM_ENVELOPE_JOINTS (default 'upper' = arm joints 1-3: the wrist part
+#                                            costs semantic follow, 11-05; 'upper+wrist' / 'wrist' also accepted)
 #                                            (scmg/landing.py ArmEnvelope: stateless, zero latency, never adds speed)
 #   SCMG_PERSONA=<dir>/<name>                fixed reference motion <name>_ref.npy ([128, 34] normalised) + speaker
 #                                            embedding <name>_spk.npy ([192]) for every sentence (make_persona.py)
@@ -157,7 +159,7 @@ class Model:
         self.envelope = None
         if ARM_ENVELOPE:
             from scmg.landing import ArmEnvelope
-            self.envelope = ArmEnvelope(ARM_ENVELOPE)
+            self.envelope = ArmEnvelope(ARM_ENVELOPE, joints=os.environ.get('SCMG_ARM_ENVELOPE_JOINTS', 'upper'))
             self.cfg['arm_envelope_cfg'] = self.envelope.cfg
 
     @staticmethod
