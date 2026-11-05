@@ -142,6 +142,7 @@ def main():
     ap.add_argument('--ctl-mode', default='gt', choices=list(CTL_MODES), help='which tokens are given (see CTL_MODES)')
     ap.add_argument('--cfg-ctl', type=float, default=None, help='separate control-token guidance (Streamer cfg_ctl); None = joint CFG')
     ap.add_argument('--ctl-pred', default=None, help='PRED.json of scripts/semantic/g1_sem_predictor.py (text-only predicted semantic tokens; modes pred / predlex)')
+    ap.add_argument('--ret', default=None, help='retrieval dir:query file (scripts/semantic/g1_ret_bank.py, e.g. <dir>:RET_dev-auto.json); model with cfg ret')
     ap.add_argument('--allow-env', action='store_true', help='allow non-default SCMG_SEM_SCALE / SCMG_BF16 / SCMG_SEED0 / SCMG_STRIDE')
     a = ap.parse_args()
     genv = env_guard(a.allow_env)
@@ -174,6 +175,11 @@ def main():
         order = sorted(stems, key=lambda x: (view.clips[idx[x]]['frames'], x))
         donor = {x: order[(i + 1) % len(order)] for i, x in enumerate(order)}
         if a.text_swap_map: donor = {x: json.loads(Path(a.text_swap_map).read_text())[x] for x in stems}
+    retq = None
+    if a.ret:
+        rd, rq = a.ret.split(':', 1); a.save50 = True
+        rlat = np.load(Path(rd) / 'BANK.npz')['lat'].astype(np.float32); retq = json.loads((Path(rd) / rq).read_text())
+        if any(not x.startswith(('english_2_scott', 'english_6_carla')) for x in retq): print('note: retrieval queries outside the dev speakers')
     ctl_toks = ctl_plan(a.ctl_tokens, a.ctl_mode, stems, {x: view.clips[idx[x]]['frames'] / 50. for x in stems}, a.ctl_pred) if a.ctl_tokens else {}
     si, sn = (int(x) for x in a.shard.split('/'))
     stems = stems[si::sn]
@@ -205,6 +211,10 @@ def main():
                                      'titime', 'tseg', 'tiseg', 'tiend', 'text_c') if kk in s}
         kw = {} if proto is None else dict(text_mode=tm, x2_rate=a.x2_rate, x2_lag=a.x2_lag, deploy_timing=dt)
         mkw = dict(audio_off=True) if a.modality == 'text' else {}     # passed only when set (default call unchanged)
+        rq_ = (retq or {}).get(stem, [])
+        if rq_:
+            cond.update(ret_t=np.array([x['t'] for x in rq_], np.float32), ret_lat=np.stack([rlat[x['bank']] for x in rq_]))
+            if a.cfg_ctl is not None: mkw['cfg_ctl'] = a.cfg_ctl
         used = ctl_toks.get(stem, [])
         if used:
             from scmg.ctl import token_value
@@ -230,7 +240,8 @@ def main():
                                           dict(modality=a.modality, text_swap=donor.get(stem))),
                                        resample='scmg/g1.py to30 (cubic / heading spline / RotationSpline)', env=genv,
                                        **({} if proto is None else dict(stream=proto)),
-                                       **({} if not a.ctl_tokens else dict(ctl_mode=a.ctl_mode, cfg_ctl=a.cfg_ctl, ctl=used)))), o.with_suffix('.pt.tmp'))
+                                       **({} if not a.ctl_tokens else dict(ctl_mode=a.ctl_mode, cfg_ctl=a.cfg_ctl, ctl=used)),
+                                       **({} if not a.ret else dict(ret=a.ret, ret_used=rq_)))), o.with_suffix('.pt.tmp'))
         os.replace(o.with_suffix('.pt.tmp'), o)      # atomic: an interrupted run never leaves a truncated <stem>.pt that a resume skips
         if a.save50: np.save(out / f'{stem}.q50.npy', q50.astype(np.float32))
         log.append(dict(stem=stem, frames50=L, frames30=n30, tick_ms_p50=float(np.median(tk[1:]) * 1e3) if len(tk) > 1 else None))

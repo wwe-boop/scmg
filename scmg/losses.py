@@ -106,6 +106,7 @@ class StageCfg:
                                    # behaviour stays trained (and CFG-able)
     ctl_field_drop: float = 0.0    # P(each value field of a kept token is masked): partial tokens (target only / amplitude only)
     ctl_w: float = 0.0             # flow-loss weight 1 + ctl_w on positions inside [a - 0.3, b + 0.3] of a kept token
+    ret_drop: float = 0.5          # 11-06 retrieval route (cfg.ret + batch ret_*): P(sample sees no retrieved exemplar)
     ctl_t_jitter: float = 0.0      # 11-06 interval tokens: annotation-token time += U(-j, +j) s per token (the token says "a gesture of
                                    # this class within this ~2j s span"; the Local Flow places the stroke itself); 0 = exact times
     ctl_lr_scale: float = 1.0      # 11-06: learning-rate multiplier of the control-token modules (scmg.train param group)
@@ -279,6 +280,15 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         cc = model.ctl_flow_cond(u, ct, keep, timed, qsec)
         if cc is not None: ctl_c = cc.flatten(0, 1)
         ctl = dict(cm=cm, keep=keep, qsec=qsec, cval=cval, cf=cf)
+    if getattr(cfg, 'ret', False) and 'ret_t' in batch:      # retrieved exemplars: arrive with their word, used once their time is known
+        from .ctl import anchor_arrival, visibility
+        rt = batch['ret_t'].float(); rm = batch['ret_m'].bool() & torch.isfinite(rt) & ~r(sc.ret_drop)[:, None]
+        nowr = torch.arange(K, device=dev).float() * CHUNK_FRAMES / 50.
+        if sc.p_async > 0:
+            _, rtimed = visibility(rm, rt, anchor_arrival(arr, batch['ttime'], tvalid, rt), final, nowr, heard, stream)
+        else: rtimed = rm[:, None, :].expand(B, K, -1)
+        rc = model.ret_flow_cond(batch['ret_lat'].float(), rt, rtimed, model.flow_seconds(torch.arange(K, device=dev), cfg.ctx + CHUNK, cfg.ctx))
+        if rc is not None: ctl_c = rc.flatten(0, 1) if ctl_c is None else ctl_c + rc.flatten(0, 1).to(ctl_c.dtype)
     src = torch.where(r(0.1), torch.zeros_like(batch['source']), batch['source'])
     g = model.global_cond(batch['spk'], batch['spk_valid'] * (~drop_spk), src)
 

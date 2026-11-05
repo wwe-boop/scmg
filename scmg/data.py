@@ -86,7 +86,7 @@ class View:
     """Everything loaded once (RAM, ~8 GB) before DataLoader workers fork (shared copy-on-write)."""
 
     def __init__(self, view=VIEW, split='train', text_cache=None, stats=None, mmap=False, tok_cache=None, tts_hidden=None,
-                 intent_frames=None, holdout=None, tok_intent=None, bagger_dir=None, gest_frames=None, ctl_tokens=None):
+                 intent_frames=None, holdout=None, tok_intent=None, bagger_dir=None, gest_frames=None, ctl_tokens=None, ret=None):
         self.bagger_dir = bagger_dir
         v = Path(P(view)); self.root = v
         items = json.loads((v / 'train.json').read_text())
@@ -199,6 +199,11 @@ class View:
         self.ctl = None                                 # 11-05: explicit control tokens (scripts/semantic/g1_ctl_tokens.py), opt-in
         if ctl_tokens:
             self.ctl, self.ctl_index = load_ctl_tokens(ctl_tokens, v, self.items, self.clips, 'train' if split == 'train' else 'dev')
+        self.ret = None                                 # 11-06: retrieved exemplars (scripts/semantic/g1_ret_bank.py): (dir, query file)
+        if ret:
+            rd, rq = (ret.split(':', 1) + ['RET_train.json'])[:2]
+            bank = np.load(Path(P(rd)) / 'BANK.npz'); q = json.loads((Path(P(rd)) / rq).read_text())
+            self.ret = dict(lat=np.asarray(bank['lat'], np.float32), q={k: [(float(x['t']), int(x['bank'])) for x in v] for k, v in q.items()})
         if EMBODIMENT != 'ex002': self._refuse_foreign_assets(v, holdout, tok_cache, tok_intent, intent_frames)
         self.tts = None
         if tts_hidden:                                  # Qwen3-TTS Talker hidden states (opt-in conditioning, 11-03)
@@ -387,6 +392,14 @@ class WindowDataset(torch.utils.data.IterableDataset):
                 for (t_, a_, b_, ap_, ty_, v_, m_) in v.ctl.get(it['id'], ()):
                     if 0 <= t_ + d0 < n / 50.: toks.append((t_ + d0, a_ + d0, b_ + d0, ap_ + d0, ty_, v_, m_))
             extra.update(window_arrays(toks))
+        if getattr(v, 'ret', None) is not None:        # retrieved exemplars of the window's items (window-relative s), <= 4
+            RR = 4; lat = v.ret['lat']; rt = np.full(RR, np.nan, np.float32); rl = np.zeros((RR,) + lat.shape[1:], np.float32); rm = np.zeros(RR, bool)
+            k = 0
+            for it in c['items']:
+                d0 = (it['offset'] - c['start'] - s) / 50.
+                for (t_, j_) in v.ret['q'].get(it['id'], ()):
+                    if k < RR and 0 <= t_ + d0 < n / 50.: rt[k] = t_ + d0; rl[k] = lat[j_]; rm[k] = True; k += 1
+            extra.update(ret_t=rt, ret_lat=rl, ret_m=rm)
         if v.tts is not None:
             if T % 4: raise ValueError(f'tts_hidden needs windows of a multiple of 4 frames (got {T})')
             extra['tts_h'], extra['tts_hm'] = tts_rows(c['items'], c['start'], s, n, T // 4, v.tts_array)

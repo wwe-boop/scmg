@@ -102,6 +102,12 @@ class Config:
     ctl: bool = False
     ctl_flow: bool = False
     ctl_freqs: int = 6
+    # 11-06 causal retrieval route (scripts/semantic/g1_ret_bank.py; default off): a retrieved exemplar = frozen-VAE latents of a
+    # bank gesture, aligned at the token time (snippet starts ret_pre s earlier); every Local Flow position inside the snippet adds
+    # MLP([latent at its time, Fourier(position - token time)]) (zero-init output) to its AdaLN condition
+    ret: bool = False
+    ret_len: int = 30
+    ret_pre: float = 0.8
 
     def dict(self):
         return asdict(self)
@@ -426,6 +432,13 @@ class SCMG(nn.Module):
                 nn.init.zeros_(self.ctl_fmlp[-1].weight); nn.init.zeros_(self.ctl_fmlp[-1].bias)
             self.ctl_dt.to(self.f_in.weight.device); self.ctl_fmlp.to(self.f_in.weight.device)
             self.ctl_dt_unk.data = self.ctl_dt_unk.data.to(self.f_in.weight.device)
+        if getattr(cfg, 'ret', False) and not hasattr(self, 'ret_in'):
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(20261108)
+                self.ret_in = nn.Linear(cfg.z + 2 * cfg.ctl_freqs, d)
+                self.ret_out = nn.Sequential(nn.SiLU(), nn.Linear(d, d), nn.SiLU(), nn.Linear(d, d))
+                nn.init.zeros_(self.ret_out[-1].weight); nn.init.zeros_(self.ret_out[-1].bias)
+            self.ret_in.to(self.f_in.weight.device); self.ret_out.to(self.f_in.weight.device)
         if cfg.lora_r > 0 and not getattr(self, '_lora', False):
             for m in (self.planner, self.flow, self.audio) + ((self.vox.ralm,) if hasattr(self, 'vox') else ()):
                 apply_lora(m, r=cfg.lora_r)
@@ -477,6 +490,24 @@ class SCMG(nn.Module):
         e_dt = self.ctl_dt(fourier(dt / 4., self.cfg.ctl_freqs).to(self.ctl_dt.weight.dtype))
         e = torch.where(tm[..., None], e_dt, self.ctl_dt_unk.to(e_dt.dtype)) + u[:, None, None].to(e_dt.dtype)
         return (self.ctl_fmlp(e) * use[..., None].to(e.dtype)).sum(-2).to(u.dtype)
+
+    def ret_flow_cond(self, rlat, rt, timed, qsec):
+        """Retrieval route: rlat [B, R, ret_len, z] exemplar latents, rt [B, R] token time (s), timed [B, K, R] (token arrived AND its
+        time known by chunk k), qsec [K, L] position times -> [B, K, L, d]; None without cfg.ret. Position tau reads latent
+        floor((tau - rt + ret_pre) * 12.5) when it falls inside the snippet."""
+        if not hasattr(self, 'ret_in'): return None
+        from .ctl import fourier
+        B, R, LEN, Z = rlat.shape; K, L = qsec.shape
+        dt = qsec[None, :, :, None].float() - torch.nan_to_num(rt, 0.)[:, None, None, :].float()            # [B, K, L, R]
+        j = torch.floor((dt + self.cfg.ret_pre) * FPS / STRIDE).long()
+        use = timed[:, :, None, :] & (j >= 0) & (j < LEN)
+        out = torch.zeros(B, K, L, self.cfg.d, device=rlat.device, dtype=self.ret_in.weight.dtype)
+        if not use.any(): return out
+        bi = torch.arange(B, device=rlat.device)[:, None, None, None].expand_as(j); ri = torch.arange(R, device=rlat.device)[None, None, None, :].expand_as(j)
+        lat = rlat[bi, ri, j.clamp(0, LEN - 1)]                                                               # [B, K, L, R, Z]
+        f = torch.cat([lat.to(self.ret_in.weight.dtype), fourier(dt / 4., self.cfg.ctl_freqs).to(self.ret_in.weight.dtype)], -1)
+        e = self.ret_out(self.ret_in(f))
+        return (e * use[..., None].to(e.dtype)).sum(-2)
 
     # ------------------------------------------------------------------ conditions
     def audio_tokens(self, feat, causal, tts_h=None, tts_hm=None):

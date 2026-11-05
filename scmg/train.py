@@ -59,7 +59,7 @@ def overfit_clips(view, n):
 
 
 ADDABLE = {'vox_prefsq_norm', 'vox_text_xattn', 'vox_slots', 'vox_word_aux', 'sem_head', 'sem_cond', 'intent_aux', 'tts_h', 'adsc',
-           'flow_text_xattn', 'ctl', 'ctl_flow'}  # ctl / ctl_flow: zero-init control-token routes (11-05); adsc: zero-init stream_emb (11-04); flow_text_xattn: zero-gated flow text cross-attn (11-04)
+           'flow_text_xattn', 'ctl', 'ctl_flow', 'ret'}  # ctl / ctl_flow: zero-init control-token routes (11-05); adsc: zero-init stream_emb (11-04); flow_text_xattn: zero-gated flow text cross-attn (11-04)
 RESIZE_TEXT = {'text_dim'}  # allowed on a fine-tune: ONLY the text input LayerNorm+Linear is re-initialised (see build_model)
 
 
@@ -204,6 +204,7 @@ def main():
     ap.add_argument('--gest-frames', default=None, help='direct coarse g_k frame track (scripts/semantic/g1_gest_frames.py); train split only')
     ap.add_argument('--ctl-tokens', default=None, help='control tokens (scripts/semantic/g1_ctl_tokens.py) of the train split; needs cfg ctl')
     ap.add_argument('--ctl-focus', type=float, default=0., help='P(train window placed around an annotation control token)')
+    ap.add_argument('--ret', default=None, help='retrieval dir[:query file] (scripts/semantic/g1_ret_bank.py; default query RET_train.json); needs cfg ret')
     add_self_force_args(ap)
     ap.add_argument('--bagger-dir', default=None, help='colon-separated cumulative BAgger collection directories')
     ap.add_argument('--bagger-share', type=float, default=0.)
@@ -219,7 +220,7 @@ def main():
     stats = json.loads(Path(a.stats).read_text())
     view = View(a.view, 'train', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache, tts_hidden=a.tts_hidden,
                 intent_frames=a.intent_frames, holdout=a.holdout, tok_intent=a.tok_intent, bagger_dir=a.bagger_dir,
-                gest_frames=a.gest_frames, **({} if not a.ctl_tokens else dict(ctl_tokens=a.ctl_tokens)))
+                gest_frames=a.gest_frames, **({} if not a.ctl_tokens else dict(ctl_tokens=a.ctl_tokens)), **({} if not a.ret else dict(ret=a.ret)))
     dview = View(a.view, 'val', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache, tts_hidden=a.tts_hidden)
     if a.overfit:
         overfit_clips(view, a.overfit); dview = view

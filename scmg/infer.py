@@ -81,7 +81,8 @@ class Streamer:
         # nothing below changes. cfg_ctl None: the tokens are part of the conditional branch of the existing CFG; a number: a
         # separate guidance term cfg_ctl * (v(with tokens) - v(without tokens)) on top of it (one more Local Flow pass).
         self.has_ctl = bool(getattr(model.cfg, 'ctl', False)) and 'ctl_type' in self.cond
-        self.cfg_ctl = cfg_ctl if self.has_ctl else None
+        self.has_ret = bool(getattr(model.cfg, 'ret', False)) and 'ret_t' in self.cond      # 11-06 retrieved exemplars (same CFG group)
+        self.cfg_ctl = cfg_ctl if (self.has_ctl or self.has_ret) else None
         if self.cfg_ctl is not None and model.cfg.mtc: raise ValueError('cfg_ctl is not implemented for mtc models')
         self.cfg_text = cfg_text             # False: guide on audio only (models never trained with text dropped, e.g. r4 VoxCPM)
         self.ctx_t = ctx_t                   # <1: noise the committed context like in training (exposure-bias fix)
@@ -241,6 +242,15 @@ class Streamer:
                 text = torch.cat([text, tt_c.to(text.dtype)], 1); tmask = torch.cat([tmask, cm], 1); tsec = torch.cat([tsec, ctn], 1)
                 if tvis is not None: tvis = torch.cat([tvis, ckeep], -1)
             tm_noctl = tmask.clone(); tm_noctl[:, n0:] = False
+        if self.has_ret:                                             # retrieved exemplars: same arrival / voicing rules as their word
+            from .ctl import anchor_arrival, visibility
+            ret_tt = (c['ret_t'].float() - f0 / 50.)[None]; rmk = torch.isfinite(ret_tt)
+            nowr = torch.arange(W, device=self.dev).float() * CHUNK_FRAMES / 50.
+            arr_r = (anchor_arrival((self.arr_text - f0 / 50.)[None], tt[None].float(), c['tmask'][None].bool(), ret_tt)
+                     if (self.arr_text is not None and self.text_mode != 'final') else ret_tt)
+            _, rtimed = visibility(rmk, ret_tt, arr_r, torch.tensor([self.text_mode == 'final'], device=self.dev), nowr,
+                                   (nowr + (self.H * STRIDE / 50. if self.H < INF else 1e9))[None],
+                                   torch.tensor([bool((self.deploy_timing or adsc_m) and self.H < INF)], device=self.dev))
         g = m.global_cond(c['spk'][None].float(), c['spk_valid'][None].float(), c['source'][None].long())
         # committed latents of the window chunks (zeros before the start)
         z = cfg.z
@@ -360,6 +370,10 @@ class Streamer:
                 cc = m.ctl_flow_cond(ctl_u, ctl_tt, ckeep[:, kw:kw + 1], ctimed[:, kw:kw + 1],
                                      m.flow_seconds(torch.tensor([kw], device=self.dev), L, cfg.ctx))
                 if cc is not None: ctlkw = dict(ctl_c=cc[:, 0])
+            if self.has_ret:
+                rc = m.ret_flow_cond(c['ret_lat'][None].float(), ret_tt, rtimed[:, kw:kw + 1],
+                                     m.flow_seconds(torch.tensor([kw], device=self.dev), L, cfg.ctx))
+                if rc is not None: ctlkw = dict(ctl_c=rc[:, 0] if 'ctl_c' not in ctlkw else ctlkw['ctl_c'] + rc[:, 0].to(ctlkw['ctl_c'].dtype))
             ada = st_ada if j == 0 else None                         # the measured state only describes "now"
             if cfg.sem_head and cfg.sem_cond:                        # Local Flow sees the predicted g_k (each CFG branch its own)
                 hk = m.sem_h(hk, self.g_override)
