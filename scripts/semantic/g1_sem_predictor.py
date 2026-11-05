@@ -15,13 +15,21 @@ import torch, torch.nn as nn, torch.nn.functional as F
 CLS = ['none', 'deictic', 'iconic', 'metaphoric']; TID = {1: 1, 2: 2, 3: 3}; NEAR = 0.25; MIN_GAP = 1.0
 
 
-def feats(X, k0, kn):
+LOOKAHEAD = None    # (bidirectional e5 cache, look-ahead s): 11-06 anticipatory variant (TTS text arrives ahead of the audio)
+
+
+def feats(X, k0, kn, tt=None):
     x = np.asarray(X[k0:k0 + kn], np.float32)
     ctx = np.zeros_like(x)
     for i in range(kn):
         j = max(0, i - 3)
         if i > j: ctx[i] = x[j:i].mean(0)
-    return np.concatenate([x, ctx], 1)
+    if LOOKAHEAD is None: return np.concatenate([x, ctx], 1)
+    Xb, la = LOOKAHEAD; xb = np.asarray(Xb[k0:k0 + kn], np.float32); fut = np.zeros_like(x)
+    for i in range(kn):
+        m = (tt > tt[i]) & (tt <= tt[i] + la)
+        if np.isfinite(tt[i]) and m.any(): fut[i] = xb[m].mean(0)
+    return np.concatenate([x, ctx, fut], 1)
 
 
 def build(raw, X, T, ix, split):
@@ -36,14 +44,20 @@ def build(raw, X, T, ix, split):
             if not ok.any(): continue
             d = np.where(ok, np.abs(tt - t['t']), 1e9); i = int(d.argmin())
             if d[i] <= NEAR: y[i] = TID[t['type']]
-        xs.append(feats(X, k0, kn)); ys.append(y); meta.append((s, tt))
+        xs.append(feats(X, k0, kn, tt)); ys.append(y); meta.append((s, tt))
     return xs, ys, meta
 
 
 def main():
     ap = argparse.ArgumentParser()
     for k in ('ctl', 'text', 'view', 'out'): ap.add_argument('--' + k, required=True)
-    ap.add_argument('--epochs', type=int, default=6); a = ap.parse_args(); torch.manual_seed(0); torch.set_num_threads(4)
+    ap.add_argument('--epochs', type=int, default=6)
+    ap.add_argument('--lookahead-text', default=None, help='bidirectional e5 cache (row-aligned): add the mean feature of the words of the next '
+                    '--lookahead s (anticipatory protocol: the TTS text of upcoming words has arrived)')
+    ap.add_argument('--lookahead', type=float, default=1.0)
+    a = ap.parse_args(); torch.manual_seed(0); torch.set_num_threads(4)
+    global LOOKAHEAD
+    if a.lookahead_text: LOOKAHEAD = (np.load(Path(a.lookahead_text) / 'TEXT_FEAT.npy', mmap_mode='r'), a.lookahead)
     raw = json.loads((Path(a.ctl) / 'CTL.json').read_text())
     X = np.load(Path(a.text) / 'TEXT_FEAT.npy', mmap_mode='r'); T = np.load(Path(a.text) / 'TEXT_TIME.npy')
     ix = json.loads((Path(a.text) / 'TEXT_INDEX.json').read_text())
@@ -89,7 +103,7 @@ def main():
     out = predict(tau); o = Path(a.out); o.mkdir(parents=True, exist_ok=True)
     (o / 'PRED.json').write_text(json.dumps(out))
     # base rate: lexicon rule (every LEX2SEM word) scored the same way
-    (o / 'PRED_INFO.json').write_text(json.dumps(dict(tau=tau, n_dev_annotations=n_ann, sweep={str(k): v for k, v in rep.items()},
+    (o / 'PRED_INFO.json').write_text(json.dumps(dict(lookahead=(a.lookahead if a.lookahead_text else None), tau=tau, n_dev_annotations=n_ann, sweep={str(k): v for k, v in rep.items()},
                                                       train_tokens=int(len(Ytr)), train_pos=cnt.tolist(), near_s=NEAR, min_gap_s=MIN_GAP), indent=1))
     torch.save(dict(net=net.state_dict(), mu=mu, sd=sd), o / 'predictor.pt')
     print('TAU', tau, rep[tau])
