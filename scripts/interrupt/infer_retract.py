@@ -53,6 +53,7 @@ class RetractStreamer(Streamer):
         self.applied = False; self.k_int = None; self.o = 0; self.prefix = []; self.l_r = None
         self.tgt = None; self._eps = {}; self._flow = None
         self.splice = splice; self._sp = None; self.w0 = w0
+        if floor and not hasattr(self.m, 'floor_emb'): raise ValueError('--floor needs a model trained with cfg.floor')
         self.prefix_npz = prefix; self.floor = floor; self.fm_, self.fs_ = fm, fs   # 11-06: causal prefix conditions, floor token     # latent restart: frames over which the jump at the splice is blended out
         if t_int is not None:
             self.l_r = int(np.ceil((t_int + react_delay) * 50 / STRIDE - 1e-9)) if restart == 'latent' else \
