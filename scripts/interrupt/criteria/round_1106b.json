@@ -1,0 +1,16 @@
+{
+ "written": "2026-11-06, before any run of this round (coordinator 11-06: three ~5-minute validations, criteria in git first)",
+ "common": {"dev_subset": "every 3rd sorted dev stem (100 clips x 30/50/70 % = 300 interruptions)",
+            "protocol": "audio end at t_i, chunk restart, text truncated, interruption-causal prefix feat89 / CAM++, then the same safety projection (smooth 300) for the _p rows",
+            "new_column": "abrupt_pre = the abrupt test on the 2.13 s BEFORE t_i (the model's own jerkiness); reported for every row; the abrupt definition itself is unchanged",
+            "main_table_bar_unchanged": {"yield_rate_min": 0.90, "abrupt_max": 0.10, "rkd": "below B2_p with the clip-bootstrap 95 % interval of the difference excluding 0", "unsafe_max": 0.01}},
+ "R1_model_difference_guidance": {"what": "dev yld model, v = v_yld + s (v_yld - v_sf0) on the CFG-combined velocity (each model's own CFG branches), post-interruption only",
+            "s": [1, 2, 4], "pass": "main-table bar on the _p row"},
+ "R2_yld_rest_inpainting": {"what": "dev yld model, chunk restart, replacement inpainting of the settled rest pose (R_sil) only on the two latents ending at t_i + T_r (weights 0.5, 1); tr2h also pins the last latent of each later chunk",
+            "configs": ["tr2 T_r 1.0", "tr2 T_r 1.4", "tr2h T_r 1.0", "tr2h T_r 1.4"],
+            "pass": "yield_rate >= 0.90 and RKD < 0.5 (coordinator target); main-table bar reported alongside"},
+ "R3_quick_lane_tail05w2td05": {"training": "as tail05w2 (criteria/tail05w2_quick.json) + StageCfg w_tdelta 0.5 (ECHO-G temporal_loss_weight), 2000 steps, zehan-server free GPU",
+            "pass": {"abrupt_pre_max": 0.35, "self_yield_rate_min": 0.30,
+                     "dev_fgd_max_vs_ctrl": "<= 1.05 x ctrl (offline 1.6376, engine 1.6746)", "div_drop_max_vs_ctrl": "Div >= ctrl - 0.1 (1.6015 / 1.6124)"},
+            "reference_before_launch": {"tail05w2": {"yield": 0.369, "abrupt": 0.457, "rkd": 0.355, "offline_fgd": 1.6985, "offline_div": 1.6191}}}
+}

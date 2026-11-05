@@ -16,6 +16,7 @@ Metrics (hands = wrist_yaw links, pose-only official FK, pelvis frame):
                         not reached -> counted as 2.13 s; yield_rate [%, higher] = share reached within the window
   jerk    [m/s^3, lower]: peak hand jerk in [t_i - 0.1 s, t_i + 2.13 s); abrupt_rate [%, lower] = share above the human
                         post-speech P95 (human_ref.json)
+  abrupt_pre        : the same abrupt test on the 2.13 s before t_i (the model's own jerkiness while speaking; 11-06)
   rkd     [lower]     : retraction-kinematics distance to the human RETRACTION windows (post-speech windows whose hands are
                         above rest height at the offset and come down; rkd_all = to all post-speech windows): mean over 5 speaker-normalised
                         descriptors (icommon.kin_features: log speed ratio 0-1 s / 1-2 s after vs 1 s before, hand height
@@ -138,6 +139,7 @@ for spec in a.methods:
         for rk in rest_z:
             ty, need = I.yield_time(P, f, rest_z[rk]); row[f'need_{rk}'] = need; row[f'yield_{rk}'] = ty
         row['jerk'] = I.peak_jerk(P, f - I.PRE, f + I.WIN); row['acc'] = I.peak_acc(P, f - I.PRE, f + I.WIN)
+        row['jerk_pre'] = I.peak_jerk(P, max(0, f - I.WIN), f)          # 11-06: the same peak jerk on the 2.13 s BEFORE t_i
         v = I.hand_speed(P).mean(1); row['energy'] = float(v[f + 32:f + I.WIN].mean() / max(v[max(0, f - 30):f].mean(), 1e-6))
         row.update({f'unsafe_{k}': x for k, x in unsafe(mo, f).items()})
         # the same contract on the 2.13 s BEFORE t_i (identical motion for B1 / B2 / B3 of one base output): separates the
@@ -161,6 +163,7 @@ for spec in a.methods:
     jk = np.array([x['jerk'] for x in rows]); out.update(jerk_median=float(np.median(jk)), jerk_p95=float(np.percentile(jk, 95)),
                                                        abrupt_rate=float((jk > P95).mean()), acc_median=float(np.median([x['acc'] for x in rows])))
     out['energy_median'] = float(np.median([x['energy'] for x in rows]))
+    jp = np.array([x['jerk_pre'] for x in rows]); out['abrupt_pre'] = float(np.nanmean(jp > P95))   # model's own jerkiness while speaking
     for k in ('pos', 'vel', 'coll', 'any', 'pre', 'new'): out[f'unsafe_{k}'] = float(np.mean([x[f'unsafe_{k}'] for x in rows]))
     out['fgd'] = E.FGD.frechet_distance(np.concatenate(lats), H_lat)
     out['rkd'], out['rkd_per_feature'] = I.kin_distance(np.stack(kins), H_kin)
@@ -173,7 +176,7 @@ for spec in a.methods:
     res[lab] = out
     print(f"{lab:14s} n {out['n']} | react {out['react_s'] if out['react_s'] is None else round(out['react_s'], 3)} | yield {out['yield_s_R_sil']:.2f}s "
           f"rate {100 * out['yield_rate_R_sil']:.1f}% (R_gt {out['yield_s_R_gt']:.2f}s {100 * out['yield_rate_R_gt']:.1f}%) | jerk med {out['jerk_median']:.0f} "
-          f"abrupt {100 * out['abrupt_rate']:.1f}% | RKD {out['rkd']:.3f} (all {out['rkd_all']:.3f}) FGD {out['fgd']:.3f} | unsafe {100 * out['unsafe_any']:.1f}% (vel {100 * out['unsafe_vel']:.1f} coll "
+          f"abrupt {100 * out['abrupt_rate']:.1f}% (pre {100 * out['abrupt_pre']:.1f}%) | RKD {out['rkd']:.3f} (all {out['rkd_all']:.3f}) FGD {out['fgd']:.3f} | unsafe {100 * out['unsafe_any']:.1f}% (vel {100 * out['unsafe_vel']:.1f} coll "
           f"{100 * out['unsafe_coll']:.1f} pos {100 * out['unsafe_pos']:.1f}; pre {100 * out['unsafe_pre']:.1f} new {100 * out['unsafe_new']:.1f}) | energy {out['energy_median']:.2f}", flush=True)
 res['_meta'] = dict(T_r=T_r, human_jerk_p95=P95, structural=[(mujoco.mj_id2name(mm, mujoco.mjtObj.mjOBJ_BODY, x), mujoco.mj_id2name(mm, mujoco.mjtObj.mjOBJ_BODY, y)) for x, y in structural],
                     n_interrupts=len(ints), human_windows=len(HW))

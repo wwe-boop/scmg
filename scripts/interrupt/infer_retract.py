@@ -45,7 +45,8 @@ UPPER = list(range(10 + 12, 10 + 29))          # waist + arms channels of the 39
 
 class RetractStreamer(Streamer):
     def __init__(self, *args, t_int=None, keep_tok=None, audio='end', fm=None, fs=None, n_total=None, restart='chunk',
-                 react_delay=0.04, retract=None, rest=None, tr=1.0, w=1.0, splice=0, w0=0., prefix=None, floor=0, guide=0., **kw):
+                 react_delay=0.04, retract=None, rest=None, tr=1.0, w=1.0, splice=0, w0=0., prefix=None, floor=0, guide=0.,
+                 comp=None, diff=0., **kw):
         super().__init__(*args, **kw)
         self.t_int, self.keep_tok, self.audio, self.n_total = t_int, keep_tok, audio, n_total
         self.sil = None if fm is None else torch.as_tensor((SIL_RAW - fm) / fs, device=self.dev).float()
@@ -56,6 +57,7 @@ class RetractStreamer(Streamer):
         if floor and not hasattr(self.m, 'floor_emb'): raise ValueError('--floor needs a model trained with cfg.floor')
         self.prefix_npz = prefix; self.floor = floor; self.fm_, self.fs_ = fm, fs
         self.guide = float(guide)          # 11-06 yield guidance (post-interruption only; 0 = off)
+        self.comp, self.diff = comp, float(diff)   # 11-06 model-difference guidance: companion streamer of the reference model
         if self.guide and self.cfg_t is not None: raise ValueError('--yield-guide supports the joint CFG only (cfg_t None)')   # 11-06: causal prefix conditions, floor token     # latent restart: frames over which the jump at the splice is blended out
         if t_int is not None:
             self.l_r = int(np.ceil((t_int + react_delay) * 50 / STRIDE - 1e-9)) if restart == 'latent' else \
@@ -121,7 +123,7 @@ class RetractStreamer(Streamer):
         q0 = F[-1]; v0 = (F[-1] - F[-2]) * 50. if len(F) > 1 else torch.zeros_like(q0)
         n = 64 * 2; t = torch.arange(1, n + 1, device=self.dev).float()[:, None] / 50.
         rest = torch.as_tensor(self.rest, device=self.dev).float()
-        tr = self.tr if self.retract != 'tr' else 1e-3
+        tr = self.tr if self.retract not in ('tr', 'tr2', 'tr2h') else 1e-3     # tr*: target = the settled rest pose
         wn = 4.744 / max(tr, 1e-3); e = q0 - rest
         traj = q0[None].repeat(n, 1)
         up = (rest + (e + (v0 + wn * e) * t) * torch.exp(-wn * t))
@@ -130,14 +132,26 @@ class RetractStreamer(Streamer):
         seq = torch.cat([F[len(F) - back:], traj], 0)
         mu, _ = self.vae.encode(((seq - self.qm) / self.qs)[None])
         z = ((mu - self.m.lat_mean) / self.m.lat_std)[0]
-        l0 = self.l_r - back // STRIDE
-        t_settle = self.t_int + (self.tr if self.retract == 'tr' else 0.)
+        l0 = len(F) // STRIDE - back // STRIDE                  # first encoded latent (F = the frames emitted so far)
+        t_settle = self.t_int + (self.tr if self.retract == 'tr' else self.tr - 0.08 - 1e-6 if self.retract in ('tr2', 'tr2h') else 0.)
         self.tgt = {l0 + i: z[i] for i in range(z.shape[0]) if l0 + i >= self.l_r and (l0 + i) * STRIDE / 50. >= t_settle - 1e-9}
 
     def _positions(self):
         """target-chunk positions (0..CHUNK-1) replaced in the chunk about to be generated, with their target latents"""
         a0 = self.o + self.k * CHUNK                            # absolute index of the chunk's first latent
-        sel = dict(end=[CHUNK - 1], mid=[1, CHUNK - 1], all=list(range(CHUNK)), tr=list(range(CHUNK)), ramp=list(range(CHUNK)))[self.retract]
+        sel = dict(end=[CHUNK - 1], mid=[1, CHUNK - 1], all=list(range(CHUNK)), tr=list(range(CHUNK)), ramp=list(range(CHUNK)),
+                   tr2=list(range(CHUNK)), tr2h=list(range(CHUNK)))[self.retract]
+        if self.retract in ('tr2', 'tr2h'):
+            # 11-06: only the two latents ending at t_i + T_r (weights w/2, w: a short ramp onto the rest pose); tr2h also pins the
+            # last latent of every later chunk to the rest pose (stay down)
+            T = self.t_int + self.tr; out = {}
+            for i in sel:
+                a = a0 + i; ta = a * STRIDE / 50.
+                if a not in self.tgt: continue
+                if abs(ta - T) < 0.04: out[i] = (self.tgt[a], self.w)
+                elif abs(ta - (T - 0.08)) < 0.04: out[i] = (self.tgt[a], 0.5 * self.w)
+                elif self.retract == 'tr2h' and ta > T and i == CHUNK - 1: out[i] = (self.tgt[a], self.w)
+            return out
         def wt(i):
             if self.retract != 'ramp': return self.w
             u = min(max(((a0 + i) * STRIDE / 50. - self.t_int) / self.tr, 0.), 1.)
@@ -197,8 +211,41 @@ class RetractStreamer(Streamer):
             return v + s * (v - v_spk)
         return plan, fv
 
+    def _capture(self):
+        """Run the companion (reference model) up to its first Local-Flow call of this tick on the SAME committed latents
+        and conditions; return the arguments of its conditional and unconditional velocity calls (everything after x, t,
+        known). The companion never commits anything."""
+        c = self.comp; c.lat = list(self.lat); c.k = self.k
+        real = c.m.flow_velocity; cap = []
+        class _Cap(Exception): pass
+        def fv(xt, t, known, *a, **kw):
+            cap.append((a, kw))
+            if len(cap) == (2 if c.cfg_w != 1 else 1): raise _Cap()
+            return real(xt, t, known, *a, **kw)
+        c.m.flow_velocity = fv
+        try: c.tick(None, None, None)
+        except _Cap: pass
+        finally: del c.m.flow_velocity
+        return cap, real
+
+    def _diffguided(self):
+        """11-06 model-difference guidance: v = v_self + s (v_self - v_ref) on the CFG-combined velocities; CFG is linear, so
+        each branch (conditional / unconditional) is replaced by (1 + s) v_self - s v_ref of that branch."""
+        cap, real_ref = self._capture(); s = self.diff; real = self.m.flow_velocity
+        per = len(cap); st = dict(n=0)
+        def fv(xt, t, known, *a, **kw):
+            v = real(xt, t, known, *a, **kw)
+            ra, rk = cap[st['n'] % per]; st['n'] += 1
+            return (1 + s) * v - s * real_ref(xt, t, known, *ra, **rk)
+        return fv
+
     def tick(self, *a, **kw):
         if self.due(): self._apply()
+        if self.applied and self.diff:
+            if self.retract or self.guide: raise ValueError('--diff-guide is exclusive with --retract / --yield-guide')
+            self.m.flow_velocity = self._diffguided()
+            try: return super().tick(*a, **kw)
+            finally: del self.m.flow_velocity
         if self.applied and self.guide:
             if self.retract: raise ValueError('--yield-guide and --retract are exclusive')
             self.m.plan, self.m.flow_velocity = self._guided()
@@ -225,12 +272,14 @@ def main():
     ap.add_argument('--audio', default='end', choices=['end', 'silence', 'off']); ap.add_argument('--limit', type=int, default=0)
     ap.add_argument('--every', type=int, default=1, help='use every n-th clip of the interrupt list (dev screening subsets)')
     ap.add_argument('--restart', default='latent', choices=['latent', 'chunk']); ap.add_argument('--react-delay', type=float, default=0.04)
-    ap.add_argument('--retract', default=None, choices=[None, 'end', 'mid', 'all', 'tr', 'ramp'])
+    ap.add_argument('--retract', default=None, choices=[None, 'end', 'mid', 'all', 'tr', 'ramp', 'tr2', 'tr2h'])
     ap.add_argument('--rest', default='R_sil'); ap.add_argument('--human', default=None, help='human_ref json (rest poses)')
     ap.add_argument('--tr', type=float, default=1.0); ap.add_argument('--w', type=float, default=1.0)
     ap.add_argument('--w0', type=float, default=0., help='ramp: weight at t_i (rises to --w at t_i + T_r)')
     ap.add_argument('--prefix-feats', default=None, help='prefix_feats.py dir: causal feat89 / CAM++ of the audio before t_i')
     ap.add_argument('--yield-guide', type=float, default=0., help='yield guidance scale s after the interruption (0 = off)')
+    ap.add_argument('--diff-guide', type=float, default=0., help='model-difference guidance s: v + s (v - v_ref) after the interruption')
+    ap.add_argument('--ref-ckpt', default=None, help='reference model of --diff-guide (e.g. the sf0 checkpoint)')
     ap.add_argument('--floor', type=int, default=0, help='floor state after the interruption (models with cfg.floor; 0 = off)')
     ap.add_argument('--splice', type=int, default=0, help='latent restart: blend the jump at the splice out over n 50 Hz frames (0 = off)')
     ap.add_argument('--seed', type=int, default=0); ap.add_argument('--steps', type=int, default=10); ap.add_argument('--cfg-w', type=float, default=2.5)
@@ -248,6 +297,10 @@ def main():
     dev = 'cuda'; out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     stats = json.loads(Path(a.stats).read_text())
     m, vae = load(a.ckpt, a.vae, dev)
+    mref = None
+    if a.diff_guide:
+        mref, _ = load(a.ref_ckpt, a.vae, dev)
+        if not (torch.equal(mref.lat_mean, m.lat_mean) and torch.equal(mref.lat_std, m.lat_std)): raise ValueError('latent normalisation differs')
     view = View(a.view, a.split, a.text_cache, stats)
     qm = np.asarray(stats['q_mean'], np.float32)
     fm, fs = np.asarray(stats['f_mean'], np.float32), np.asarray(stats['f_std'], np.float32)
@@ -286,8 +339,13 @@ def main():
                        prefix=(f"{a.prefix_feats}/{stem}@{r['frac']:.1f}.npz" if a.prefix_feats else None))
         else:
             n_run = nch
+        comp = None
+        if mref is not None and r is not None:      # companion: same inputs / interruption handling, reference model, no guidance
+            comp = RetractStreamer(mref, vae, s['feat'], {k_: (v_.copy() if hasattr(v_, 'copy') else v_) for k_, v_ in cond.items()}, stats,
+                                   H=H, steps=a.steps, seed=a.seed, standby=qm, ctx_t=mref.ctx_t, cfg_w=a.cfg_w, cfg_t=None, noise_scale=1.0,
+                                   **kw, **dict(ikw, retract=None, guide=0., floor=0))
         st = RetractStreamer(m, vae, s['feat'], cond, stats, H=H, steps=a.steps, seed=a.seed, standby=qm, ctx_t=m.ctx_t,
-                             cfg_w=a.cfg_w, cfg_t=None, noise_scale=1.0, **kw, **ikw)
+                             cfg_w=a.cfg_w, cfg_t=None, noise_scale=1.0, comp=comp, diff=a.diff_guide if r is not None else 0., **kw, **ikw)
         if r is None:
             for i in range(n_run):                               # == scmg.infer.generate (robot=None)
                 st.tick(None, None, None)
@@ -307,7 +365,7 @@ def main():
             q50 = cmd.astype(np.float64); r30 = g1.to30(q50, n30o).astype(np.float32)
             gen = dict(ckpt=str(a.ckpt), seed=a.seed, steps=a.steps, cfg_w=a.cfg_w, stream=proto, interrupt=dict(
                 t_i=t_i, f_i=r['f_i'], frac=r['frac'], audio=a.audio, restart=a.restart, react_delay=a.react_delay, l_r=st.l_r,
-                o=st.o, k_int=st.k_int, retract=a.retract, rest=a.rest, tr=a.tr, w=a.w, w0=a.w0, splice=a.splice, floor=a.floor, prefix_feats=a.prefix_feats, yield_guide=a.yield_guide, n_targets=len(st.tgt or {}),
+                o=st.o, k_int=st.k_int, retract=a.retract, rest=a.rest, tr=a.tr, w=a.w, w0=a.w0, splice=a.splice, floor=a.floor, prefix_feats=a.prefix_feats, yield_guide=a.yield_guide, diff_guide=a.diff_guide, ref_ckpt=a.ref_ckpt, n_targets=len(st.tgt or {}),
                 tokens_kept=int(keep.sum()), tokens_total=int(np.asarray(s['tmask']).sum())))
             meta = dict(real_num_frames=n30o, clip_frames30=n30)
             np.save(o.with_suffix('.q50.npy'), cmd.astype(np.float32))
