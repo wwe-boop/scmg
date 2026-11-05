@@ -29,7 +29,15 @@ MODEL = '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/tts/qwen3_text/offical/Qwen3-0.6B'
 # --------------------------------------------------------------------------- tokenisation / byte -> character spans
 def _byte_decoder():
     """Inverse of GPT-2's bytes_to_unicode(), the byte<->unicode table used by Qwen's byte-level BPE."""
-    from transformers.models.gpt2.tokenization_gpt2 import bytes_to_unicode
+    try:
+        from transformers.models.gpt2.tokenization_gpt2 import bytes_to_unicode
+    except ImportError:                 # newer transformers moved it; the table itself is fixed (GPT-2 byte-level BPE)
+        def bytes_to_unicode():
+            bs = list(range(ord('!'), ord('~') + 1)) + list(range(ord('¡'), ord('¬') + 1)) + list(range(ord('®'), ord('ÿ') + 1))
+            cs = bs[:]; n = 0
+            for b in range(256):
+                if b not in bs: bs.append(b); cs.append(256 + n); n += 1
+            return dict(zip(bs, [chr(c) for c in cs]))
     return {v: k for k, v in bytes_to_unicode().items()}
 
 

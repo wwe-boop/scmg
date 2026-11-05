@@ -9,8 +9,8 @@ CODE=$(cd "$(dirname "$0")/../.." && pwd); cd $CODE
 B=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg; A=${DEV_ASSETS:-$B/echog-g1-dev-assets}; C=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture   # DEV_ASSETS / DEV_VIEW: held-out-speaker dev (11-05)
 D=$B/baseline-repro-1104/echog/data_root; W=/mnt/cpfs/zbl-cpfs-new/USERS/zehan/baselines/echog-official
 export OFF=$W/official REF_DIR=$A/motion_39d_30fps WAV_DIR=$A/audio SPLIT=$A/dev_stems.txt MMAE=$D/eval_assets/mmae/g1_mmae_30body_30fps.npy \
-  FGD_CKPT=$W/weights/evaluation/g1_fgd_encoder.pt VIEW_TEST=${DEV_VIEW:-$C/echog-g1-v1} TEXT_TEST=$C/scmg/text-e5-echog-g1-v1 \
-  TEXT_CAUSAL_TEST=$B/models/text-e5-causal-echog-g1-v1 VSPLIT=val
+  FGD_CKPT=$W/weights/evaluation/g1_fgd_encoder.pt VIEW_TEST=${DEV_VIEW:-$C/echog-g1-v1} TEXT_TEST=${SWEEP_TEXT:-$C/scmg/text-e5-echog-g1-v1} \
+  TEXT_CAUSAL_TEST=${SWEEP_TEXT_CAUSAL:-$B/models/text-e5-causal-echog-g1-v1} VSPLIT=val   # 11-05: SWEEP_TEXT* = an LLM cache (native causal: same dir for both)
 ck=$1; vae=$2; O=$3; mkdir -p $O
 # our signed jerk gap is NEGATIVE (smoother than GT, VAE jerk ratio 0.75) -> whole-body smoothing is the wrong direction;
 # only the legs are smoothed (contact slide).  Div is too HIGH (+0.53) -> null speaker / smaller initial noise.
