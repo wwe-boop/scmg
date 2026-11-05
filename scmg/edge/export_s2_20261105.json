@@ -1,0 +1,38 @@
+[
+ {
+  "module": "audio_tokens",
+  "inputs": {
+   ".0.0": [
+    [
+     1,
+     96,
+     89
+    ],
+    "torch.float32"
+   ],
+   ".0.1": [
+    [
+     1
+    ],
+    "torch.bool"
+   ]
+  },
+  "onnx": "/home/xr-25b7/bulk/scratch/edge-onnx-s2/audio_tokens.onnx",
+  "onnx_mb": 57.9,
+  "export_s": 0.9,
+  "ort_ms": 2.089,
+  "provider": "CPUExecutionProvider",
+  "outputs": [
+   {
+    "shape": [
+     1,
+     24,
+     512
+    ],
+    "max_abs": 4.291534423828125e-06,
+    "rel": 9.537047844787594e-07
+   }
+  ],
+  "calls_in_tick": 1
+ }
+]

@@ -35,3 +35,16 @@ Thor 上没有 PyTorch（69g 实查）。
 | E5 | 镜像 `gesturelab-edge-live-scmg-local`，切换脚本加 `edge`；影子 → 发布 | 真机影子覆盖率、首动作时延 |
 
 注意：端侧不消除句首约 0.24 s 空档（x2tour 首包后 0.02 s 即开播，见 robot-client v0.5.0 实测），只省网络往返与共享 GPU 排队。
+
+## E1 进度（2026-11-05 14:30，权重 sibag-s2 ed30c13a，`python -m scmg.edge.export_onnx`）
+
+导出时在 CPU 上做（GPU 追踪会把部分形状张量记在 CPU 上），参数先冻结；onnxruntime CPU EP 与 torch 对齐（捕获第 3 个 tick 的真实输入）：
+
+| 模块 | 每步调用 | 输入（tick 3） | ONNX | ORT CPU 单次 | 最大误差 |
+|---|---|---|---|---|---|
+| flow_velocity | 20 | 7 个张量 | 155.5 MB | 11.8 ms | 1e-6 |
+| plan | 2 | 潜变量 1×6×4×16、音频 1×24×512、文本 1×24×512、tvis/sstate 1×6×24 / 1×6 | 201.7 MB | 18.4 ms | 2e-6 |
+| audio_tokens | 1 | 特征 1×96×89 | 57.9 MB | 2.1 ms | 4e-6 |
+| local_audio | 1 | 1×24×512 | <0.1 MB | 0.01 ms | 0 |
+
+E1 剩余：vae.decode / encode；e5 前缀因果批（L≤64）；文本 token 数可变（本例 12 → 计时 / 未计时共 24）→ 固定上限补齐 + 掩码，需验证补齐后与原长度逐位一致；窗口未满（前几个 tick）的形状。
