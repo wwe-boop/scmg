@@ -484,7 +484,13 @@ class SCMG(nn.Module):
     def plan(self, lat, a, amask, text, tmask, g, mt=None, mt_mask=None, tids=None, tidm=None, sref=None,
              tvis=None, lvis=None, sstate=None):
         """lat [B, K, CHUNK, z] latents of chunks 0..K-1 (teacher forcing: chunk k's input is chunk k-1);
-        a [B, N, d]; amask [B, K, N]; returns h [B, K, d]."""
+        a [B, N, d]; amask [B, K, N]; g [B, d]; returns h [B, K, d].
+        11-05 training-matched causal inputs (default shapes = the unchanged path): a [B, K, N, d] and / or g [B, K, d] =
+        the audio encoding / global condition AS OF chunk k's stream time t_k. h_k is then the planner run in which EVERY
+        position j <= k reads its audio from encoding k and the AdaLN condition g_k -- exactly what scmg.infer.Streamer does
+        at tick k (the whole window re-encoded from the prefix of t_k, one speaker vector); see _plan_as_of."""
+        if a.dim() == 4 or g.dim() == 3:
+            return self._plan_as_of(lat, a, amask, text, tmask, g, mt, mt_mask, tids, tidm, sref, tvis, lvis, sstate)
         B, K = lat.shape[:2]
         own = (amask & self._own_chunk(K, a.shape[1], a.device)[None]).float()          # visible audio of chunk k
         pooled = torch.einsum('bkn,bnd->bkd', own, a) / own.sum(-1, keepdim=True).clamp(min=1)
@@ -501,6 +507,38 @@ class SCMG(nn.Module):
             if isinstance(blk, GatedXBlock): x = blk(x, g, causal, text, tm, mt, mt_mask)
             else: x = blk(x, g, causal, text, tm)
         return self.p_norm(x)
+
+    def _plan_as_of(self, lat, a, amask, text, tmask, g, mt, mt_mask, tids, tidm, sref, tvis, lvis, sstate):
+        """plan() with a per-target audio encoding a [B, K, N, d] (a [B, N, d] = the same for every target) and / or a
+        per-target global condition g [B, K, d]. The K target runs are folded into ONE planner pass over K x K tokens
+        (target-major, token (k, j) = position j of the run for target k): self-attention only inside a run and causal,
+        AdaLN condition g_k for every token of run k, the text cross-attention mask of position j (its own arrival time,
+        as the Streamer's window chunks), output h_k = token (k, k). With a / g identical for every target this equals
+        plan() (scripts/tests/test_causal_train.py)."""
+        if self.cfg.planner == 'voxcpm' or mt is not None:
+            raise ValueError('per-target causal inputs: chunk planner without the multi-token memory only')
+        B, K = lat.shape[:2]; dev = lat.device; d = self.cfg.d
+        N = a.shape[-2]
+        a4 = a if a.dim() == 4 else a[:, None].expand(B, K, N, a.shape[-1])
+        g3 = g if g.dim() == 3 else g[:, None].expand(B, K, g.shape[-1])
+        own = (amask & self._own_chunk(K, N, dev)[None]).float()                       # [B, K(pos j), N]
+        cnt = own.sum(-1)                                                              # [B, K(pos)]
+        pooled = torch.einsum('bjn,bknd->bkjd', own, a4) / cnt.clamp(min=1)[:, None, :, None]   # [B, K(target), K(pos), d]
+        pooled = torch.where((cnt > 0)[:, None, :, None], pooled, self.audio_null)
+        prev = torch.cat([self.p_start.expand(B, 1, -1), self.p_in(lat[:, :-1].flatten(-2))], 1)          # [B, K(pos), d]
+        x = prev[:, None] + self.p_audio(pooled) + sincos(torch.arange(K, device=dev), d)[None, None]
+        if sstate is not None and hasattr(self, 'stream_emb'): x = x + self.stream_emb(sstate)[:, None]
+        x = x.reshape(B, K * K, d)
+        tri = torch.ones(K, K, dtype=torch.bool, device=dev).tril()
+        mask = torch.block_diag(*([tri] * K))[None]                                    # [1, K*K, K*K]
+        tm = self.chunk_text_mask(tmask, tvis, K)                                      # [B, K(pos), Kt]
+        tm = tm[:, None].expand(B, K, K, tm.shape[-1]).reshape(B, K * K, tm.shape[-1])
+        c = g3[:, :, None].expand(B, K, K, g3.shape[-1]).reshape(B, K * K, g3.shape[-1])
+        for blk in self.planner:
+            if isinstance(blk, GatedXBlock): x = blk(x, c, mask, text, tm)
+            else: x = blk(x, c, mask, text, tm)
+        h = self.p_norm(x).view(B, K, K, d)
+        return h[:, torch.arange(K, device=dev), torch.arange(K, device=dev)]
 
     @staticmethod
     def _own_chunk(K, N, device):
@@ -536,13 +574,14 @@ class SCMG(nn.Module):
 
     def local_audio(self, a, H, K):
         """Gather per-chunk audio windows: tokens [4k - back, 4k + CHUNK + max lookahead), masked by visibility.
-        Returns aw [B, K, W, d], mask [B, K, W]."""
-        B, N, d = a.shape; back = self.cfg.flow_audio_back
+        a [B, N, d], or [B, K, N, d] (chunk k gathers from its own encoding). Returns aw [B, K, W, d], mask [B, K, W]."""
+        B, N, d = a.shape[0], a.shape[-2], a.shape[-1]; back = self.cfg.flow_audio_back
         W = back + 2 * CHUNK                                   # current chunk + up to one chunk of extra look-ahead
         start = torch.arange(K, device=a.device) * CHUNK - back
         idx = start[:, None] + torch.arange(W, device=a.device)[None]            # [K, W]
         valid = (idx >= 0) & (idx < N)
-        g = a[:, idx.clamp(0, N - 1)]                                            # [B, K, W, d]
+        if a.dim() == 4: g = a[:, torch.arange(K, device=a.device)[:, None], idx.clamp(0, N - 1)]
+        else: g = a[:, idx.clamp(0, N - 1)]                                      # [B, K, W, d]
         vis = idx[None] < (torch.arange(K, device=a.device)[None, :, None] * CHUNK + H[:, None, None])
         return g, valid[None] & vis
 

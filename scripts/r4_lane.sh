@@ -18,7 +18,7 @@ mkdir -p $R/$o; log(){ echo "$(date -Is) $*" >> $R/$o/lane.log; }
 if [ ! -f $R/$o/DONE.json ]; then
   SCMG_EXTRA_MASK=${EXTRA_MASK_TRAIN:-} $PY -m scmg.train --out $R/$o --init $INIT "${DATA_ARGS[@]}" --vae $VAE --workers ${WORKERS:-6} \
     --semsynth-share ${SEMSHARE:-0.4} --batch ${BATCH:-64} --stage base --steps $ST --lr ${LR:-1e-4} \
-    --warmup 200 --eval-every 1000 --snap-every $SNAP --seed ${TRAIN_SEED:-0} --cfg "$cf" --sc "$scj" ${ANCHOR:+--anchor-share "$ANCHOR"} ${BAGGER_DIR:+--bagger-dir $BAGGER_DIR --bagger-share ${BAGGER_SHARE:-0.33}} >> $R/$o/log.txt 2>&1 &
+    --warmup 200 --eval-every 1000 --snap-every $SNAP --seed ${TRAIN_SEED:-0} --cfg "$cf" --sc "$scj" ${ANCHOR:+--anchor-share "$ANCHOR"} ${BAGGER_DIR:+--bagger-dir $BAGGER_DIR --bagger-share ${BAGGER_SHARE:-0.33}} ${CAUSAL_DIR:+--causal-dir $CAUSAL_DIR} >> $R/$o/log.txt 2>&1 &
   TP=$!; log "TRAIN_START pid $TP"
 else TP=; fi
 evalq() {  # <ckpt> <label>
@@ -57,7 +57,7 @@ rm -f $R/$o/resume.pt
 if [ "${PROFILE:-ex002}" = g1 ]; then
   evalq $R/$o/final.pt final
   if [ "${G1_BENCH:-0}" = 1 ]; then
-    for P in offline engine; do for sd in ${G1_BENCH_SEEDS:-0 1}; do
+    for P in ${BENCH_PROTOS:-offline engine}; do for sd in ${G1_BENCH_SEEDS:-0 1}; do
       PY=${BENCH_PY:-$PY} GPUS="$(for r in $(seq ${SPG:-1}); do printf "%s " $gpu; done)" CFGW=${CFGW:-2.5} bash $CODE/scripts/echog_g1/bench.sh scmg $R/$o/final.pt $VAE $R/$o/bench/$P/seed_$(printf %03d $sd) $P $sd ${G1_BENCH_STEMS:-} \
         >> $R/$o/bench.log 2>&1 && log "BENCH_DONE $P s$sd" || log "BENCH_FAILED $P s$sd"
     done; done

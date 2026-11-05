@@ -10,6 +10,7 @@ contiguous in the arrays, verified 0 gaps), so a window may span several utteran
   ref    [R, J]   reference motion: a window of ANOTHER clip of the same speaker (ref_valid = 0 if none)
   tts_h  [T/4, 2048] fp16, tts_hm [T/4]   ONLY with View(tts_hidden=<dir>): Qwen3-TTS Talker last-layer hidden state
                   per 80 ms row of the window (row r = window frames [4r, 4r+4)); see tts_rows()
+  cz_*   ONLY after View.load_causal(<precompute dir>) (11-05 训练匹配, scripts/echog_g1/precompute_causal.py): see causal_rows()
 """
 import json, os
 from collections import defaultdict
@@ -214,6 +215,39 @@ class View:
         if intent_frames is not None or tok_intent is not None:
             raise ValueError(f'intent tracks / word intent labels exist for EX002 only (view {v.name}, embodiment {EMBODIMENT})')
 
+    def load_causal(self, d, horizons, check_spk=True):
+        """Training-matched causal inputs (precompute_causal.py output; 11-05). horizons = StageCfg.horizons (80 ms units):
+        the stream times of a window whose prefix prosody columns every sample carries (causal_feat.stream_lat_grid).
+        Checks (check_spk, off only for tests on perturbed audio): the 'full' speaker grade of up to 64 covered clips equals
+        the view's SPK_EMB row and (with FEAT_PREFIX present) the whole-clip mel equals the view's mel (same audio, same rule)."""
+        d = Path(P(d)); meta = json.loads((d / 'META.json').read_text())
+        from .causal_feat import UNIT_COLS
+        if tuple(meta.get('unit_cols') or ()) != UNIT_COLS: raise ValueError(f'{d}: no / other unit table ({meta.get("unit_cols")})')
+        if list(meta['grades_s'][:4]) != [1., 2., 4., 8.] or meta['grades_s'][4] is not None: raise ValueError(f'{d}: grades {meta["grades_s"]}')
+        self.causal = dict(dir=str(d), index=json.loads((d / 'INDEX.json').read_text()), spk=np.load(d / 'SPK_PREFIX.npy'),
+                           spkv=np.load(d / 'SPK_VALID.npy'), units=np.load(d / 'UNITS.npy'), tend=np.load(d / 'TOKEN_END.npy'),
+                           horizons=tuple(int(h) for h in horizons), meta=meta)
+        ids = [c['items'][0]['id'] for c in self.clips if len(c['items']) == 1]
+        cov = [i for i in ids if i in self.causal['index']]
+        nchk = nmel = 0
+        F = np.load(d / 'FEAT_PREFIX.npy', mmap_mode='r') if (d / 'FEAT_PREFIX.npy').exists() else None
+        for i in cov[:64]:
+            row = self.cond.get(str(i)); e = self.causal['index'][i]
+            if check_spk and row and row[1]:
+                if not np.allclose(self.spk_emb[row[0]], self.causal['spk'][e['clip_row'], 4], atol=1e-5):
+                    raise ValueError(f'{d}: full-grade CAM++ of {i} != view SPK_EMB row (other audio / view?)')
+                nchk += 1
+            if check_spk and F is not None and e['feat'][4][1]:  # the view mel IS the prefix mel (cz_feat columns 0-79)
+                c = self.clips[[k for k, x in enumerate(self.clips) if x['items'][0]['id'] == i][0]]
+                r0, nf = e['feat'][4]
+                if nf != c['frames'] or not np.array_equal(np.asarray(self.f[c['start']:c['start'] + nf, :80]), np.asarray(F[r0:r0 + nf, :80])):
+                    raise ValueError(f'{d}: whole-clip mel of {i} != view feat mel')
+                nmel += 1
+        self.causal['coverage'] = len(cov) / max(1, len(self.clips))
+        print(f'View {self.root.name}: causal inputs {d} cover {len(cov)} / {len(self.clips)} clips; SPK_EMB check {nchk}, '
+              f'mel check {nmel} clips', flush=True)
+        return self.causal['coverage']
+
     def tts_array(self, item_id):
         """[codec, 2048] fp16 memory map of one item's TTS hidden states, or None (no export)."""
         e = self.tts['index'].get(item_id)
@@ -248,6 +282,8 @@ class WindowDataset(torch.utils.data.IterableDataset):
         self.bagger = None
         if not 0 <= bagger_share <= 1: raise ValueError('bagger_share must be in [0,1]')
         self.bagger_share = bagger_share
+        if bagger_share > 0 and getattr(view, 'causal', None) is not None:
+            raise ValueError('causal inputs (cz_*) are not produced for BAgger samples')
         if bagger_share > 0:
             from .bagger import BaggerPool
             self.bagger = BaggerPool(view.bagger_dir, self)
@@ -288,6 +324,8 @@ class WindowDataset(torch.utils.data.IterableDataset):
         f[:n] = (np.asarray(v.f[a:a + n], np.float32) - v.fm) / v.fs
         # text tokens of every utterance overlapping [s, s+n)
         toks, times, segs, toks_c = [], [], [], []      # segs: start time of the TTS segment (utterance) of each token
+        czt = [] if getattr(v, 'causal', None) is not None else None     # 11-05 训练匹配: token end times (cz_tend)
+        cz_tend = None
         native_c = v.text_c is not None and v.text_c is v.text['feat']   # LLM cache: text_c IS text
         if v.text is not None:
             off = c['start']
@@ -302,6 +340,7 @@ class WindowDataset(torch.utils.data.IterableDataset):
                     toks_c.append(np.asarray(v.text_c[k0:k0 + kn], np.float32))
                 times.append(v.text['time'][k0:k0 + kn] + (i0 - s) / 50.)
                 segs.append(np.full(kn, (i0 - s) / 50., np.float32))
+                if czt is not None: czt.append(causal_tend(v, it['id'], kn) + (i0 - s) / 50.)
         K = self.K; TD = v.text_dim
         text = np.zeros((K, TD), np.float32); ttime = np.full(K, np.nan, np.float32); tmask = np.zeros(K, bool)
         tseg = np.full(K, np.nan, np.float32)
@@ -309,12 +348,16 @@ class WindowDataset(torch.utils.data.IterableDataset):
         if toks:
             tk, tt, ts_ = np.concatenate(toks), np.concatenate(times), np.concatenate(segs)
             tkc = np.concatenate(toks_c) if toks_c else None
+            te_ = np.concatenate(czt) if czt else None
             if len(tk) > K:                                            # keep tokens closest to the window
                 order = np.argsort(np.nan_to_num(np.abs(tt - T / 100.), nan=1e9))[:K]; order.sort()
                 tk, tt, ts_ = tk[order], tt[order], ts_[order]
                 if tkc is not None: tkc = tkc[order]
+                if te_ is not None: te_ = te_[order]
             text[:len(tk)] = tk; ttime[:len(tk)] = tt; tmask[:len(tk)] = True; tseg[:len(tk)] = ts_
             if tkc is not None: text_c[:len(tk)] = tkc
+            if te_ is not None: cz_tend = np.full(K, np.nan, np.float32); cz_tend[:len(tk)] = te_
+        if czt is not None and cz_tend is None: cz_tend = np.full(K, np.nan, np.float32)
         if native_c: text_c = text
         # LM token ids of the utterances overlapping the window, in order (VoxCPM-style planner)
         tids = np.zeros(self.KI, np.int64); tidm = np.zeros(self.KI, bool); titime = np.full(self.KI, np.nan, np.float32); tiseg = np.full(self.KI, np.nan, np.float32)
@@ -368,8 +411,54 @@ class WindowDataset(torch.utils.data.IterableDataset):
         if v.tts is not None:
             if T % 4: raise ValueError(f'tts_hidden needs windows of a multiple of 4 frames (got {T})')
             extra['tts_h'], extra['tts_hm'] = tts_rows(c['items'], c['start'], s, n, T // 4, v.tts_array)
+        if getattr(v, 'causal', None) is not None:
+            extra.update(causal_rows(v, c, s, n, T, f)); extra['cz_tend'] = cz_tend
         return dict(**extra, q=q, mask=m, feat=f, text=text, ttime=ttime, tmask=tmask, spk=spk, spk_valid=np.float32(spk_valid),
                     source=np.int64(source), tids=tids, tidm=tidm, titime=titime, tseg=tseg, tiseg=tiseg, tiend=tiend, ref=ref, ref_valid=np.float32(ref_valid), clip=np.int64(ci), start=np.int64(s))
+
+
+def causal_tend(v, item_id, kn):
+    """[kn] token end times (item-relative s) of an item's e5 cache rows (precompute TOKEN_END; NaN = never voiced:
+    not in the precompute, or a token count that differs from the text cache)."""
+    e = v.causal['index'].get(item_id)
+    if e is None or 'tend' not in e or e['tend'][1] != kn: return np.full(kn, np.nan, np.float32)
+    r0, nr = e['tend']
+    return np.asarray(v.causal['tend'][r0:r0 + nr], np.float32)
+
+
+def causal_rows(v, c, s, n, T, f):
+    """cz_* sample keys (training-matched causal inputs, 11-05; window = clip frames [s, s + n), T rows):
+      cz_ok    bool: the clip (one item) is in the precompute
+      cz_feat  [T, 89] the window's view feat (its mel columns 0-79 == the prefix mel row for row, checked against the
+               precompute's whole-clip grade by load_causal); columns 80-88 are always overwritten from cz_pro
+      cz_pro   [S, T, 9] normalised causal_feat.FRONT_COLS (80-88) of the prefix at stream time j (window latents
+               stream_lat_grid(K, horizons)[j], clip frame s + 4 * latents capped at the clip end): rows below the
+               stream time = causal_feat.front_prosody (bitwise = prefix_feat89 there), rows at / after it 0
+      cz_spk [5, 192], cz_spkv [5], cz_spkt [5]: prefix CAM++ grades 1 / 2 / 4 / 8 s / whole clip, valid, and the clip
+               frame from which each grade exists at inference (min(50 g, frames); whole clip: frames)
+      cz_tend  [Kt] (added by sample()) window-relative end time of the last word of every text row (NaN = never voiced)
+    Not covered -> cz_ok False and cz_feat = the view feat, zeros elsewhere (the loss keeps the original inputs)."""
+    from .common import CHUNK, U80
+    from .causal_feat import FRONT_COLS, front_prosody, stream_lat_grid
+    cz = v.causal; it = c['items'][0]; L = c['frames']
+    grid = stream_lat_grid(T // CHUNK_FRAMES, cz['horizons'], CHUNK, U80)
+    out = dict(cz_ok=np.bool_(False), cz_feat=f.copy(), cz_pro=np.zeros((len(grid), T, len(FRONT_COLS)), np.float32),
+               cz_spk=np.zeros((5, SPK), np.float32), cz_spkv=np.zeros(5, np.float32),
+               cz_spkt=np.array([min(50 * g, L) for g in (1, 2, 4, 8)] + [L], np.int64))
+    e = cz['index'].get(it['id']) if len(c['items']) == 1 else None
+    if e is None or int(e['frames']) != L: return out
+    cols = list(FRONT_COLS); fm, fs = v.fm[cols], v.fs[cols]
+    u0, un = e['units']; tab = cz['units'][u0:u0 + un]
+    cache = {}
+    for j, lat in enumerate(grid):
+        Tk = min(L, s + lat * STRIDE)                   # inference: CausalInputs.feat(min(Tk, T))
+        rows = min(n, Tk - s)
+        if rows <= 0: continue
+        if Tk not in cache: cache[Tk] = front_prosody(tab, Tk, final=Tk >= L).astype(np.float16).astype(np.float32)
+        out['cz_pro'][j, :rows] = (cache[Tk][s:s + rows] - fm) / fs
+    out['cz_spk'] = cz['spk'][e['clip_row']].astype(np.float32); out['cz_spkv'] = cz['spkv'][e['clip_row']].astype(np.float32)
+    out['cz_ok'] = np.bool_(True)
+    return out
 
 
 def load_gest_frames(d, view_dir, n_rows):

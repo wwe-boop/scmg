@@ -92,6 +92,18 @@ class StageCfg:
     # the other modality keeps its independent 10 % dropout, so the joint null (CFG unconditional branch) is still learned
     force_drop_text: bool = False
     force_drop_audio: bool = False
+    # 11-05 训练匹配 (training-matched causal streaming inputs; default off = bit-identical, nothing extra is drawn or
+    # computed). Need the cz_* batch keys (scmg.train --causal-dir <precompute_causal.py output>); batches without them
+    # (the dev loss) and samples of clips outside the precompute (cz_ok False) keep the original inputs. Only STREAMING
+    # samples change; t_k = window start + (k * CHUNK + H) * STRIDE frames (chunk_audio_mask) = scmg.infer.Streamer's Tk,
+    # and h_k / the Local Flow of chunk k see the conditions AS OF t_k, as the Streamer at tick k (SCMG.plan per target).
+    causal_front: bool = False     # encoder input of chunk k = the causal prefix features at t_k: mel rows of the clip (equal
+                                   # row for row to the prefix mel) + prosody block 80-88 rebuilt from the words ended by t_k
+                                   # (causal_feat.front_prosody, bitwise = prefix_feat89), rows >= t_k zero
+    causal_spk: bool = False       # global condition of chunk k = the longest precomputed prefix CAM++ grade (1/2/4/8 s,
+                                   # whole clip) available at t_k (< 1 s: the empty speaker -> spk_null)
+    causal_text: bool = False      # streaming async text: a token is visible once its last word has ENDED by now + H (psync
+                                   # 'voiced'), on top of the x2 arrival; ADSC text state 2 only once the audio is final
 
 
 def logit_normal(n, device, generator=None):
@@ -114,6 +126,73 @@ def chunk_intent_labels(frames, n_classes):
     count, label = counts.max(-1)
     none = torch.where((frames >= 0).all(-1), torch.zeros_like(label), torch.full_like(label, -1))
     return torch.where(count >= 4, label, none)
+
+
+def _stream_lut(K, horizons, device):
+    """latents -> row of the cz_pro table (causal_feat.stream_lat_grid, the order WindowDataset wrote it in)."""
+    from .causal_feat import stream_lat_grid
+    grid = stream_lat_grid(K, horizons, CHUNK, U80)
+    lut = torch.full((grid[-1] + 1,), -1, dtype=torch.long, device=device)
+    lut[torch.tensor(grid, device=device)] = torch.arange(len(grid), device=device)
+    return lut
+
+
+def causal_front_feat(batch, bi, Hb, K, horizons):
+    """[len(bi), K, T, 89] encoder input of chunk k of samples bi (horizon Hb latents): cz_feat with the FRONT_COLS of
+    the cz_pro row of t_k = (k * CHUNK + Hb) latents, rows >= t_k zero (scripts/tests/test_causal_train.py compares it
+    with causal_feat.CausalInputs.feat(t_k))."""
+    from .causal_feat import FRONT_COLS
+    dev = batch['cz_feat'].device
+    lat = torch.arange(K, device=dev)[None] * CHUNK + Hb[:, None]                     # [Bs, K] stream time (latents)
+    j = _stream_lut(K, horizons, dev)[lat]
+    if bool((j < 0).any()): raise ValueError('stream time outside the cz_pro grid (StageCfg.horizons != the data loader\'s)')
+    fk = batch['cz_feat'][bi][:, None].repeat(1, K, 1, 1)                              # [Bs, K, T, 89]
+    fk[..., list(FRONT_COLS)] = batch['cz_pro'][bi[:, None], j]
+    T = fk.shape[2]
+    keep = (torch.arange(T, device=dev)[None, None] < lat[..., None] * STRIDE)[..., None]
+    return torch.where(keep, fk, torch.zeros_like(fk))
+
+
+def causal_front_tokens(model, batch, a, stream, H, drop_audio, K, horizons, tfocus):
+    """Training-matched audio tokens (StageCfg.causal_front): [B, K, N, d], row k of a streaming sample with causal inputs
+    = the causal encoder on chunk k's own prefix input (cz_feat with the FRONT_COLS of cz_pro at t_k, rows >= t_k zero --
+    what Streamer feeds the encoder at tick k); other samples keep their shared tokens. Same audio dropout / text-focus."""
+    B, N = a.shape[0], a.shape[1]
+    sel = stream & batch['cz_ok'].bool()
+    a4 = a[:, None].expand(-1, K, -1, -1)
+    if not bool(sel.any()): return a4
+    bi = sel.nonzero()[:, 0]; Bs = bi.numel(); dev = a.device
+    fk = causal_front_feat(batch, bi, H[bi], K, horizons)
+    if tfocus: fk[..., :80] = 0.
+    ak = model.audio_tokens(fk.flatten(0, 1), torch.ones(Bs * K, dtype=torch.bool, device=dev)).view(Bs, K, N, -1)
+    ak = torch.where(drop_audio[bi][:, None, None, None], model.audio_null.to(ak.dtype).expand_as(ak), ak)
+    a4 = a4.clone(); a4[bi] = ak.to(a4.dtype)
+    return a4
+
+
+def causal_spk_select(batch, H, K):
+    """Prefix speaker grade of chunk k: (spk [B, K, 192], spk_valid [B, K], grade [B, K] (-1 = none available)) --
+    the grade with the largest availability frame cz_spkt <= t_k (clip frames), ties -> the prefix grade."""
+    B = H.shape[0]; dev = H.device; ar = torch.arange(B, device=dev)[:, None]
+    tk = batch['start'][:, None] + (torch.arange(K, device=dev)[None] * CHUNK + torch.clamp(H, max=10 ** 6)[:, None]) * STRIDE
+    av = batch['cz_spkt']                                                             # [B, 5]
+    can = av[:, None, :] <= tk[..., None]                                             # [B, K, 5]
+    score = torch.where(can, av[:, None, :] * 2 + (torch.arange(5, device=dev) < 4).long(), torch.full_like(can, -1, dtype=torch.long))
+    jsel = score.argmax(-1); has = can.any(-1)
+    return batch['cz_spk'][ar, jsel], batch['cz_spkv'][ar, jsel] * has.float(), torch.where(has, jsel, torch.full_like(jsel, -1))
+
+
+def causal_spk_cond(model, batch, stream, H, drop_spk, src, K):
+    """Per-chunk global condition [B, K, d] (StageCfg.causal_spk): streaming chunk k of a covered sample uses the prefix
+    CAM++ grade with the largest availability frame <= t_k (clip frames; ties -> the prefix grade, whose value is the
+    inference one; none -> empty speaker, spk_valid 0); everything else the original speaker. drop_spk applies on top."""
+    B = stream.shape[0]
+    use = (stream & batch['cz_ok'].bool())[:, None].expand(B, K)
+    spk_c, val_c, _ = causal_spk_select(batch, H, K)
+    spk = torch.where(use[..., None], spk_c, batch['spk'][:, None].expand(B, K, -1))
+    val = torch.where(use, val_c, batch['spk_valid'][:, None].expand(B, K)) * (~drop_spk)[:, None].float()
+    g = model.global_cond(spk.reshape(B * K, -1), val.reshape(B * K), src.repeat_interleave(K))
+    return g.view(B, K, -1)
 
 
 def step_losses(model, vae, batch, sc: StageCfg, stats):
@@ -139,10 +218,11 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         drop_text = drop_text | bagger
         drop_spk = drop_spk | batch.get('bagger_null', torch.zeros_like(bagger))
         drop_audio = drop_audio | batch.get('bagger_null', torch.zeros_like(bagger))
+    tfocus = False
     if sc.text_focus_p > 0 and float(torch.rand(())) < sc.text_focus_p:
         # text-focused batch (alternates with joint batches): the speech CONTENT channels are hidden -- mel (80 cols, 0 = the
         # normalised mean) and TTS hidden rows -- while prosody (onset/energy/f0/beat) keeps the timing; text is never dropped
-        feat = feat.clone(); feat[..., :80] = 0.
+        feat = feat.clone(); feat[..., :80] = 0.; tfocus = True
         if 'tts_hm' in batch: batch = dict(batch, tts_hm=torch.zeros_like(batch['tts_hm']))
         drop_text = torch.zeros_like(drop_text)
     if sc.force_drop_text: drop_text = torch.ones_like(drop_text)          # audio-only model (after text_focus: it wins)
@@ -181,6 +261,12 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             hidden_tokens = hide.repeat_interleave(CHUNK, 1)
             a = torch.where(hidden_tokens[..., None], model.audio_null.expand_as(a), a)
             amask_k = amask_k & ~hidden_tokens[:, None, :]  # planner AND MTC lose the hidden source tokens
+    if (sc.causal_front or sc.causal_spk) and (cfg.mtc or cfg.planner != 'chunk' or cfg.state or sc.p_sel_audio > 0):
+        raise ValueError('causal_front / causal_spk: chunk planner without mtc / state / selective audio dropout only')
+    if sc.causal_front and 'cz_pro' in batch:
+        if sc.sel_audio_premask or getattr(cfg, 'tts_h', False):
+            raise ValueError('causal_front: not implemented with sel_audio_premask / tts_h')
+        a = causal_front_tokens(model, batch, a, stream, H, drop_audio, K, sc.horizons, tfocus)
     dtime = r(cfg.drop_time)
     text, tmask = model.text_tokens(batch['text'], batch['ttime'], batch['tmask'] & ~drop_text[:, None], drop=dtime)
     tsec = model.token_seconds(batch['ttime'], dtime)                                # flow_text_xattn: usable token times
@@ -194,6 +280,12 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         tvalid = batch['tmask'] & ~drop_text[:, None]
         arr = torch.where(seg[:, None], batch['tseg'] - slead[:, None], x2_arrival(batch['ttime'], tvalid, rate, lag))
         tvis = arrival_mask(arr, tvalid, final, now)
+        use_ct = None
+        if sc.causal_text and 'cz_tend' in batch:                                     # psync 'voiced': the word has ended
+            use_ct = asy & ~seg & batch['cz_ok'].bool()
+            Hs = torch.clamp(H, max=10 ** 6).float() * STRIDE / 50.
+            ended = torch.nan_to_num(batch['cz_tend'], nan=1e9)[:, None, :] <= (now[None] + Hs[:, None])[..., None]
+            tvis = torch.where(use_ct[:, None, None], tvis & ended, tvis)
         if tidm_d is not None and 'titime' in batch:
             larr = torch.where(seg[:, None], batch['tiseg'] - slead[:, None], x2_arrival(batch['titime'], tidm_d, rate, lag))
             lvis = arrival_mask(larr, tidm_d, final, now)
@@ -201,7 +293,12 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         Hc = torch.clamp(H, max=10 ** 6)
         reach = (torch.arange(K, device=dev)[None] * CHUNK + Hc[:, None]) * STRIDE
         afin = (H[:, None] >= INF) | ((nvalid[:, None] < T) & (reach >= nvalid[:, None]))
-        if hasattr(model, 'stream_emb'): sstate = stream_state(tvis, tvalid, afin)
+        if hasattr(model, 'stream_emb'):
+            sstate = stream_state(tvis, tvalid, afin)
+            if use_ct is not None:                   # Streamer voiced / asr: text 'final' only once the audio is final
+                nv = tvis.sum(-1); nt = tvalid.sum(-1, keepdim=True)
+                s_ct = torch.where(afin & (nv >= nt), 2, torch.where(nv > 0, 1, 0)) * 2 + afin.long()
+                sstate = torch.where(use_ct[:, None], s_ct, sstate)
         # timing exists only for voiced tokens when streaming (audio, and with it the anchors, arrived up to now + H)
         heard = now[None] + Hc[:, None].float() * STRIDE / 50.                        # [B, K]
         voiced = torch.isfinite(batch['ttime'])[:, None] & (torch.nan_to_num(batch['ttime'], 1e9)[:, None] <= heard[:, :, None])
@@ -219,6 +316,8 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         tvis = torch.cat([tvis & voiced, tvis & ~voiced], -1)
     src = torch.where(r(0.1), torch.zeros_like(batch['source']), batch['source'])
     g = model.global_cond(batch['spk'], batch['spk_valid'] * (~drop_spk), src)
+    if sc.causal_spk and 'cz_spk' in batch:
+        g = causal_spk_cond(model, batch, stream, H, drop_spk, src, K)
 
     # ---- state simulation (stage 4): replaces targets of the selected chunks by recovery trajectories
     seg_q, seg_valid = segments(q, K, CHUNK_FRAMES * 3, CHUNK_FRAMES)                # [B, K, 64, J] normalised
@@ -287,7 +386,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     if hide is not None:                  # the hidden chunks' Local Flow audio window = the null audio (as for dropped audio)
         aw = torch.where(hide[:, :, None, None], model.audio_null.to(aw.dtype).expand_as(aw), aw)
     aw, awm = aw.flatten(0, 1), awm.flatten(0, 1)
-    gi = g[:, None].expand(-1, K, -1).flatten(0, 1)
+    gi = g.flatten(0, 1) if g.dim() == 3 else g[:, None].expand(-1, K, -1).flatten(0, 1)
     Lf = cfg.ctx + CHUNK
     hist = lat_k
     if sc.self_force_p > 0 and not cfg.state and float(torch.rand(())) < sc.self_force_p:

@@ -16,6 +16,13 @@ t_k = k * 320 ms + H (H = 160 ms) and the words completed by then.
            (voiced + 0.5 s recognition lag); token_word_span() maps the e5 token rows of the SCMG text cache to words
            (a token is visible iff every word it overlaps is).
 
+  train    (11-05 "训练匹配") unit_table() / front_prosody(): the whole prosody block 80-88 (frame_prosody columns onset /
+           prominence / energy / logf0 / voiced / committed beats + speech flag; fm_build.frame_prosody loaded from its
+           SHA-pinned source file) of any stream time Tk from the per-unit table of the whole-clip v2 recording: only the
+           units whose WORD has ended by Tk, beats re-picked over them, as prefix_feat89 sees them (mel 0-79 of the prefix
+           equals the whole-clip mel row for row). scripts/tests/test_causal_train.py checks it against prefix_feat89 bitwise;
+           scmg/data.py + scmg/losses.py (StageCfg causal_front / causal_spk / causal_text) use it.
+
 Nothing here is used unless the Streamer gets causal_inputs / text_mode voiced|asr (scmg/infer.py); the default paths are
 unchanged.  CLI:
     python -m scmg.causal_feat pstats --view V --split train --audio-dir D/audio --words-dir D/annotations/words --out J [--n 400]
@@ -80,24 +87,33 @@ def pad_pcm(pcm16, T):
 
 
 @contextlib.contextmanager
-def _hooks(pstats, final):
-    """v2 prosody of scripts/feat_causality.py: fixed prominence statistics + committed beats (monkey-patched like its extract)."""
+def _hooks(pstats, final, capture=None):
+    """v2 prosody of scripts/feat_causality.py: fixed prominence statistics + committed beats (monkey-patched like its extract).
+    capture: a list -> the syllables handed to the beat picker are appended (unrounded onset / offset / prominence)."""
     F, m = F89(), fc()
     old = F.features, F.pick_beats
-    F.features = m.fixed_features(pstats); F.pick_beats = m.committed_beats(final)
+    pick = m.committed_beats(final)
+    F.features = m.fixed_features(pstats)
+    F.pick_beats = pick if capture is None else (lambda syl, **kw: (capture.extend(syl), pick(syl, **kw))[1])
     try: yield
     finally: F.features, F.pick_beats = old
 
 
-def _feat(pcm16, words, lang, T):
-    """build_view.extract_one's feature step for frames [0, T) (pcm16 already [T*320])."""
+def _feat(pcm16, words, lang, T, units=False):
+    """build_view.extract_one's feature step for frames [0, T) (pcm16 already [T*320]). units=True: (feat, the segment's
+    prosody units (Recording.segment()['units'] with char indices back in the recording text; [] on the no-unit
+    fallback))."""
     F = F89()
     if words:
         try:
-            return np.asarray(F.Recording(None, None, lang, T, words=words, pcm_fs=(pcm16, SR)).segment(0, T)['feat'])
+            rec = F.Recording(None, None, lang, T, words=words, pcm_fs=(pcm16, SR)); seg = rec.segment(0, T)
+            if not units: return np.asarray(seg['feat'])
+            i0 = rec.units_in(0, T)[0]['chars'][0]                     # segment() shifts char indices by the first unit's
+            return np.asarray(seg['feat']), [dict(u, chars=[c + i0 for c in u['chars']]) for u in seg['units']]
         except ValueError:
             pass
-    return build_view().null_features(F, pcm16, T)
+    f = build_view().null_features(F, pcm16, T)
+    return (f, []) if units else f
 
 
 def full_feat89(pcm16, words, lang, T):
@@ -105,12 +121,130 @@ def full_feat89(pcm16, words, lang, T):
     return _feat(pad_pcm(pcm16, T), words, lang, T)
 
 
-def prefix_feat89(pcm16, words, lang, T, Tk, pstats):
-    """Causal v2 feat89 of the first Tk frames: pcm[:Tk*320] and the words with end <= Tk/50 only. [Tk, 89] f16."""
+def prefix_feat89(pcm16, words, lang, T, Tk, pstats, units=False):
+    """Causal v2 feat89 of the first Tk frames: pcm[:Tk*320] and the words with end <= Tk/50 only. [Tk, 89] f16.
+    units=True: (feat, segment units) -- the per-unit values the prosody columns are drawn from, each with the beat
+    picker's syllable (syl_onset / syl_offset / syl_prom: unrounded, as gesturelab.prosody.Syllable)."""
     Tk = int(min(Tk, T)); final = Tk >= T
     use = words if final else [w for w in words if w['end_time'] <= Tk / 50.]
-    with _hooks(pstats, final):
-        return _feat(pad_pcm(pcm16, Tk), use, lang, Tk)
+    cap = [] if units else None
+    with _hooks(pstats, final, cap):
+        out = _feat(pad_pcm(pcm16, Tk), use, lang, Tk, units=units)
+    if not units: return out
+    f, us = out; syl = {int(x.index): x for x in cap}
+    for u in us:
+        x = syl[int(u['index'])]; u.update(syl_onset=float(x.onset_s), syl_offset=float(x.offset_s), syl_prom=float(x.prominence))
+    return f, us
+
+
+# ------------------------------------------------------------------ training-time front prosody (训练匹配)
+FM_BUILD = '/mnt/cpfs/zbl-cpfs-new/USERS/zehan/gesture/experiments/rsi/motion/fm_build.py'
+FM_BUILD_SHA = 'be7540ab3ce4694e439e05af892482d0c1c5a01714e16edc690b60cb2dc8002b'   # = feat89.PINS (C043 build)
+FRONT_COLS = tuple(range(80, 89))       # the prosody block of feat89: frame_prosody 0-7 (onset, prominence, energy, logf0,
+                                        # voiced, beat strength, beat left, beat right) + the speech flag
+UNIT_COLS = ('onset_s', 'offset_s', 'prominence', 'energy_db', 'f0_hz', 'word_end', 'syl_onset', 'syl_offset', 'syl_prom')
+
+
+def frame_prosody():
+    """fm_build.frame_prosody (the function feat89.Recording.segment uses), executed from its SHA-pinned source file
+    alone (no gl_build / audio imports: the training data loader needs only numpy)."""
+    if 'frame_prosody' not in _MODS:
+        import ast, hashlib
+        from .common import P
+        src = Path(P(FM_BUILD)).read_bytes()
+        if hashlib.sha256(src).hexdigest() != FM_BUILD_SHA: raise RuntimeError(f'{FM_BUILD} changed since the C043 build')
+        tree = ast.parse(src.decode()); ns = dict(np=np)
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and any(getattr(t, 'id', None) in ('PROSODY', 'FPS') for t in node.targets):
+                exec(compile(ast.Module([node], []), FM_BUILD, 'exec'), ns)
+            if isinstance(node, ast.FunctionDef) and node.name == 'frame_prosody':
+                exec(compile(ast.Module([node], []), FM_BUILD, 'exec'), ns)
+        _MODS['frame_prosody'] = ns['frame_prosody']
+    return _MODS['frame_prosody']
+
+
+class _Syl:
+    """the attributes of gesturelab.prosody.Syllable the beat picker reads (nucleus_s = the Syllable property)."""
+    __slots__ = ('onset_s', 'offset_s', 'prominence')
+
+    def __init__(self, on, off, prom): self.onset_s, self.offset_s, self.prominence = on, off, prom
+
+    @property
+    def nucleus_s(self): return self.onset_s + min(.1, .4 * (self.offset_s - self.onset_s))
+
+
+def committed_beats(final, threshold=.6, min_gap_s=.45):
+    """= scripts/feat_causality.py committed_beats (verbatim; scripts/tests/test_causal_train.py checks the source)."""
+    def pick(syllables, **kw):
+        n = len(syllables); ncand = n if final else max(0, n - 2)
+        beats = []
+        for i in range(ncand):
+            s = syllables[i]; nb = syllables[max(0, i - 2):i] + syllables[i + 1:i + 3]
+            if s.prominence < threshold or any(x.prominence > s.prominence for x in nb): continue
+            t = s.nucleus_s; st = float(np.clip((s.prominence - threshold) / 1.5 + .4, .3, 1.))
+            if beats and t - beats[-1][0] < min_gap_s:
+                if s.prominence > beats[-1][2]: beats[-1] = (t, st, s.prominence)
+                continue
+            beats.append((t, st, s.prominence))
+        if not final and beats and ncand < n and syllables[ncand].onset_s - beats[-1][0] < min_gap_s:
+            beats = beats[:-1]                                         # could still be replaced by an undecided candidate
+        return [(t, s) for t, s, _ in beats]
+    return pick
+
+
+def assign_sides(beats, seed=0):
+    """= feat89's human_stage2.assign_sides (verbatim; checked by scripts/tests/test_causal_train.py)."""
+    rng = np.random.default_rng(seed); sides = rng.choice(['right', 'left', 'both'], size=len(beats), p=[.55, .3, .15]); out = []
+    for (t, s), side in zip(beats, sides): out += [(t, s, 'left'), (t, s, 'right')] if side == 'both' else [(t, s, str(side))]
+    return out
+
+
+def unit_table(units, words, lang):
+    """[U, 9] float64 (UNIT_COLS) of the segment units of the whole-clip v2 recording (prefix_feat89(units=True), onset
+    order): word_end = end_time of the view word the unit's first character belongs to (the time prefix_feat89 admits it);
+    syl_* = the beat picker's syllable."""
+    sep = 1 if lang == 'en' else 0
+    starts, pos = [], 0
+    for w in words:
+        starts.append(pos); pos += len(w['text'].strip()) + sep
+    starts = np.asarray(starts)
+    out = np.zeros((len(units), len(UNIT_COLS)), np.float64)
+    for i, u in enumerate(units):
+        ci = int(u['chars'][0]); wi = int(np.searchsorted(starts, ci, side='right') - 1)
+        out[i] = (u['onset_s'], u['offset_s'], u['prominence'], u['energy_db'], u['f0_hz'], words[wi]['end_time'],
+                  u['syl_onset'], u['syl_offset'], u['syl_prom'])
+    return out
+
+
+def front_prosody(table, Tk, final=False):
+    """Raw feat89 columns FRONT_COLS [Tk, 9] float32 of the causal prefix at Tk frames (= prefix_feat89(Tk)[:, 80:89],
+    scripts/tests/test_causal_train.py checks it bitwise after the f16 cast), rebuilt from the whole-clip unit table:
+    the prefix recording holds the units whose word ended by Tk / 50 (all of them when final, i.e. Tk >= clip frames)
+    and whose offset <= Tk / 50 (feat89.Recording); its beats = committed_beats(final) over those syllables in onset
+    order, then assign_sides(seed 0), kept when 0 <= t < Tk / 50 (Recording.segment); the segment units additionally
+    need onset < Tk / 50 - 1e-6 (units_in); frame_prosody(Tk, units, beats) + the speech flag (first unit onset .. last
+    unit offset); no unit -> build_view.null_features: zero prosody, beats and flag."""
+    Tk = int(Tk); lim = Tk / 50.
+    t = np.asarray(table, np.float64).reshape(-1, len(UNIT_COLS))
+    rec = t[:, 1] <= lim
+    if not final: rec &= t[:, 5] <= lim
+    t = t[rec]
+    out = np.zeros((Tk, len(FRONT_COLS)), np.float32)
+    seg = t[t[:, 0] < lim - 1e-6]
+    if not len(seg): return out
+    beats = assign_sides(committed_beats(final)([_Syl(r[6], r[7], r[8]) for r in t]), seed=0)
+    bl = [dict(time_s=round(b, 4), strength=st, side=side) for b, st, side in beats if 0 <= b < lim]
+    us = [dict(onset_s=float(r[0]), offset_s=float(r[1]), prominence=float(r[2]), energy_db=float(r[3]), f0_hz=float(r[4])) for r in seg]
+    out[:, :8] = frame_prosody()(Tk, us, bl)[:, :8]
+    ar = np.arange(Tk) / 50
+    out[:, 8] = ((ar >= us[0]['onset_s']) & (ar <= us[-1]['offset_s'])).astype(np.float32)
+    return out
+
+
+def stream_lat_grid(K, horizons, chunk, u80):
+    """Sorted distinct stream times in latents (k * chunk + h * u80, k < K, h in horizons) of a training window: the
+    rows of WindowDataset's cz_pro table (scmg/losses.py looks a chunk's time up in the same list)."""
+    return sorted({k * chunk + int(h) * u80 for k in range(K) for h in horizons})
 
 
 class CausalFeat89:
