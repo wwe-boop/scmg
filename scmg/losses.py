@@ -87,6 +87,11 @@ class StageCfg:
     dim_mask: tuple = ()           # 11-04 ECHO-G G1 'leg masking' report lane (default off): motion channels with ZERO weight in
                                    # the decoded-motion losses (w_cont / rhythm unaffected: arms only); pair with the VAE's
                                    # dim_mask so the latents do not carry them at all (view META.json lists legs / root indices)
+    # 11-05 input-modality ablation (default off = bit-identical: the dropout draws are made and consumed exactly as before):
+    # every sample drops the text (audio-only model) / the audio (text-only model) as a drop_text / drop_audio sample does;
+    # the other modality keeps its independent 10 % dropout, so the joint null (CFG unconditional branch) is still learned
+    force_drop_text: bool = False
+    force_drop_audio: bool = False
 
 
 def logit_normal(n, device, generator=None):
@@ -140,6 +145,8 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         feat = feat.clone(); feat[..., :80] = 0.
         if 'tts_hm' in batch: batch = dict(batch, tts_hm=torch.zeros_like(batch['tts_hm']))
         drop_text = torch.zeros_like(drop_text)
+    if sc.force_drop_text: drop_text = torch.ones_like(drop_text)          # audio-only model (after text_focus: it wins)
+    if sc.force_drop_audio: drop_audio = torch.ones_like(drop_audio)       # text-only model
     if sc.p_async > 0:                    # ADSC lanes: offline / online text-final / online text-streaming
         stream = r(sc.p_adsc_stream); asy = stream & r(sc.p_async)
     else:

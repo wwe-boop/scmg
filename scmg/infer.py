@@ -27,7 +27,8 @@ class Streamer:
     def __init__(self, model, vae, feat, cond, stats, H=INF, steps=10, temperature=1.0, n_future=0, seed=0, noise_scale=1.0,
                  standby=None, device='cuda', hist_measured=False, ctx_t=1.0, cfg_w=1.0, cfg_text=True, cfg_t=None,
                  text_mode='final', x2_rate=15.0, x2_lag=0.15, seg_lead=0.3, deploy_timing=False,
-                 elastic=None, window_lm_text=False, g_override=None, trim_start=True, cfg_null_fix=True, still_refresh=None):
+                 elastic=None, window_lm_text=False, g_override=None, trim_start=True, cfg_null_fix=True, still_refresh=None,
+                 audio_off=False):
         """feat [T, 89] normalised (whole utterance; access is restricted to what has arrived);
         cond: dict(text [K,768], ttime [K] absolute s, tmask [K], spk [192], spk_valid, source, ref [R,J], ref_valid)
         (+ tts_h [T/4, 2048], tts_hm [T/4] for models with cfg.tts_h: TTS hidden rows aligned to feat frame 0, row r = frames
@@ -71,6 +72,11 @@ class Streamer:
         self.cfg_null_fix = cfg_null_fix     # 11-03 review N1: CFG null branch attends to the null audio tokens with the normal
                                              # visibility mask (as dropped audio in training); default False = old (mask all)
         self.g_override = g_override         # fixed g_k [n_sem] for every chunk (zeros = null g; None = the head's prediction)
+        # 11-05 input-modality ablation (off = bit-identical): audio_off = every branch sees the NULL audio exactly as a
+        # drop_audio training sample (tokens -> audio_null, planner / MTC audio mask all False, Local Flow window = null
+        # tokens with the normal window mask); the audio still sets the clip length and the clock. Text-only = audio_off
+        # with the text kept (drop_text / drop_audio are sampled independently in training, so it is a trained case).
+        self.audio_off = audio_off
         self.cfg_text = cfg_text             # False: guide on audio only (models never trained with text dropped, e.g. r4 VoxCPM)
         self.ctx_t = ctx_t                   # <1: noise the committed context like in training (exposure-bias fix)
         # 11-04 static-history refresh (off = None, bit-identical): (thr, t_low). When the current chunk contains speech and the
@@ -177,6 +183,8 @@ class Streamer:
         a = m.audio_tokens(feat, causal, *self._tts)                  # == m.audio(feat, causal) for models without tts_h
         Hrel = torch.tensor([self.H if self.H < INF else INF], device=self.dev)
         amask = m.chunk_audio_mask(W, N, Hrel, self.dev)
+        if self.audio_off:                                           # = the CFG null branch's audio, now in every branch
+            a = m.audio_null.expand_as(a); amask = torch.zeros_like(amask)
         # chunks before the clip start do not exist: hide their audio (zeros) is enough; text times relative to window
         c = self.cond
         tt = c['ttime'] - f0 / 50.

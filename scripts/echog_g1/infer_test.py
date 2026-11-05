@@ -46,6 +46,15 @@ def main():
     ap.add_argument('--no-spk', action='store_true', help='use the learned null speaker embedding (spk_valid = 0)')
     ap.add_argument('--smooth', default=None, help="'w,o': SG filter on the 29 joint channels at 50 Hz (root channels untouched)")
     ap.add_argument('--smooth-legs', default=None, help="'w,o': SG filter on the 12 leg joints only (after --smooth)")
+    # 11-05 input-modality ablation (defaults = the unchanged path, bit-identical): which speech-side inputs every branch sees
+    ap.add_argument('--modality', default='both', choices=['both', 'audio', 'text'],
+                    help="both = audio + text (default); audio = no text tokens in any branch (tmask / tidm = 0, as a drop_text "
+                         "sample); text = null audio in every branch (Streamer audio_off, as a drop_audio sample; the audio "
+                         "still sets the length, the clock and the word times). CFG: cond = the kept modality, uncond = both "
+                         "dropped (unchanged), same cfg_w")
+    ap.add_argument('--text-swap', action='store_true',
+                    help='text sensitivity probe: the text (tokens, features, times) of a donor clip -- the next clip in '
+                         'length order of the stem list, times rescaled to this clip -- with this clip\'s audio / speaker')
     a = ap.parse_args()
     if EMBODIMENT != 'g1': raise SystemExit('run with SCMG_J=39')
     eng = a.protocol == 'engine'
@@ -58,6 +67,7 @@ def main():
     os.environ.pop('SCMG_TEXT_CAUSAL', None)
     if a.text_causal: os.environ['SCMG_TEXT_CAUSAL'] = a.text_causal
     if tm == 'x2' and not a.text_causal: raise SystemExit('--text-mode x2 needs --text-causal (prefix-causal e5 of the same rows)')
+    if a.modality != 'both' and a.cfg_t is not None: raise SystemExit('--cfg-t (separate text guidance) needs --modality both')
     proto = None if (tm, hz, dt) == ('final', 'inf', False) else dict(protocol=a.protocol, text_mode=tm, horizon_80ms=hz,
         x2_rate=a.x2_rate, x2_lag=a.x2_lag, deploy_timing=dt, text_causal=a.text_causal)
     dev = 'cuda'; out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
@@ -69,6 +79,10 @@ def main():
     idx = {c['items'][0]['id']: i for i, c in enumerate(view.clips)}
     stems = want if want else [c['items'][0]['id'] for c in view.clips]
     if a.n: stems = stems[:a.n]
+    donor = {}
+    if a.text_swap:                              # derangement over the WHOLE list (before sharding): neighbour in length order
+        order = sorted(stems, key=lambda x: (view.clips[idx[x]]['frames'], x))
+        donor = {x: order[(i + 1) % len(order)] for i, x in enumerate(order)}
     si, sn = (int(x) for x in a.shard.split('/'))
     stems = stems[si::sn]
     t0 = time.time(); log = []
@@ -83,11 +97,24 @@ def main():
         s = ds.sample(ci, 0, np.random.default_rng(ci))
         s['ref'] = np.zeros_like(s['ref']); s['ref_valid'] = np.float32(0.)
         if a.no_spk: s['spk'] = np.zeros_like(s['spk']); s['spk_valid'] = np.float32(0.)
+        if a.text_swap:
+            dc = idx[donor[stem]]; Ld = view.clips[dc]['frames']
+            sd = WindowDataset(view, -(-Ld // CHUNK_FRAMES) * CHUNK_FRAMES, max_tokens=256).sample(dc, 0, np.random.default_rng(dc))
+            for kk in ('text', 'ttime', 'tmask', 'tids', 'tidm', 'titime', 'tseg', 'tiseg', 'tiend', 'text_c'):
+                if kk in s or kk in sd:
+                    if (kk in s) != (kk in sd) or np.shape(s[kk]) != np.shape(sd[kk]): raise ValueError(f'{stem}: text-swap {kk} mismatch')
+                    v = np.array(sd[kk])
+                    if kk in ('ttime', 'titime', 'tseg', 'tiseg', 'tiend'): v = v * (L / Ld)      # NaN (untimed) stays NaN
+                    s[kk] = v.astype(np.asarray(sd[kk]).dtype)
+        if a.modality == 'audio':                # = drop_text in training: no text token is valid in any branch
+            for kk in ('tmask', 'tidm'):
+                if kk in s: s[kk] = np.zeros_like(s[kk])
         cond = {kk: s[kk] for kk in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm',
                                      'titime', 'tseg', 'tiseg', 'tiend', 'text_c') if kk in s}
         kw = {} if proto is None else dict(text_mode=tm, x2_rate=a.x2_rate, x2_lag=a.x2_lag, deploy_timing=dt)
+        mkw = dict(audio_off=True) if a.modality == 'text' else {}     # passed only when set (default call unchanged)
         cmd, _, tk = generate(m, vae, s['feat'], cond, stats, nch, H=H, steps=a.steps, seed=a.seed, standby=qm, ctx_t=m.ctx_t,
-                              cfg_w=a.cfg_w, cfg_t=a.cfg_t, noise_scale=a.noise_scale, **kw)
+                              cfg_w=a.cfg_w, cfg_t=a.cfg_t, noise_scale=a.noise_scale, **kw, **mkw)
         if cmd.shape[0] < L or cmd.shape[1] != J or not np.isfinite(cmd).all(): raise ValueError(f'{stem}: generated {cmd.shape}')
         if k > 0: ticks.extend(float(x) for x in tk)           # first clip excluded (CUDA warm-up)
         q50 = cmd[:L].astype(np.float64)
@@ -100,6 +127,8 @@ def main():
         torch.save(dict(robot_repr=torch.from_numpy(r30), real_num_frames=n30, fps=30.0, representation_units='physical',
                         representation_schema='projecthermes-g1-39d-standard-v2', source=stem,
                         generator=dict(ckpt=str(a.ckpt), seed=a.seed, steps=a.steps, cfg_w=a.cfg_w, cfg_t=a.cfg_t, frames50=L, noise_scale=a.noise_scale, no_spk=a.no_spk, smooth=a.smooth, smooth_legs=a.smooth_legs,
+                                       **({} if (a.modality, a.text_swap) == ('both', False) else
+                                          dict(modality=a.modality, text_swap=donor.get(stem))),
                                        resample='scmg/g1.py to30 (cubic / heading spline / RotationSpline)',
                                        **({} if proto is None else dict(stream=proto)))), o.with_suffix('.pt.tmp'))
         os.replace(o.with_suffix('.pt.tmp'), o)      # atomic: an interrupted run never leaves a truncated <stem>.pt that a resume skips
