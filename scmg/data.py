@@ -86,7 +86,7 @@ class View:
     """Everything loaded once (RAM, ~8 GB) before DataLoader workers fork (shared copy-on-write)."""
 
     def __init__(self, view=VIEW, split='train', text_cache=None, stats=None, mmap=False, tok_cache=None, tts_hidden=None,
-                 intent_frames=None, holdout=None, tok_intent=None, bagger_dir=None, gest_frames=None):
+                 intent_frames=None, holdout=None, tok_intent=None, bagger_dir=None, gest_frames=None, floor_frames=None):
         self.bagger_dir = bagger_dir
         v = Path(P(view)); self.root = v
         items = json.loads((v / 'train.json').read_text())
@@ -196,6 +196,11 @@ class View:
         if gest_frames:
             if intent_frames: raise ValueError('gest_frames and intent_frames both define the g_k labels: pass one')
             self.gest = load_gest_frames(gest_frames, v, len(self.q))
+        self.floor = None                               # 11-06: floor track of post-speech tail views (build_tail_view.py), opt-in
+        if floor_frames:
+            fp = Path(P(floor_frames)); self.floor = np.load(fp / 'FLOOR.npy', mmap_mode='r')
+            if len(self.floor) != len(self.q): raise ValueError(f'FLOOR rows {len(self.floor)} != {len(self.q)} rows of view {v.name}')
+            self.tail_clips = [i for i, c in enumerate(self.clips) if np.asarray(self.floor[c['start']:c['start'] + c['frames']]).max() > 0]
         if EMBODIMENT != 'ex002': self._refuse_foreign_assets(v, holdout, tok_cache, tok_intent, intent_frames)
         self.tts = None
         if tts_hidden:                                  # Qwen3-TTS Talker hidden states (opt-in conditioning, 11-03)
@@ -240,7 +245,7 @@ class View:
 
 class WindowDataset(torch.utils.data.IterableDataset):
     def __init__(self, view: View, frames=256, ref_frames=128, max_tokens=128, seed=0, semsynth_share=0.4,
-                 fixed=None, max_ids=160, bagger_share=0.):
+                 fixed=None, max_ids=160, bagger_share=0., tail_share=0.):
         self.v, self.T, self.R, self.K, self.seed = view, frames, ref_frames, max_tokens, seed
         self.w = view.weights(semsynth_share)
         self.fixed = fixed            # list of (clip_idx, start) for deterministic evaluation
@@ -248,6 +253,8 @@ class WindowDataset(torch.utils.data.IterableDataset):
         self.bagger = None
         if not 0 <= bagger_share <= 1: raise ValueError('bagger_share must be in [0,1]')
         self.bagger_share = bagger_share
+        self.tail_share = tail_share        # 11-06: share of windows drawn around a speech offset of a tail clip (floor views)
+        if tail_share > 0 and (view.floor is None or not view.tail_clips): raise ValueError('tail_share needs a floor view with tails')
         if bagger_share > 0:
             from .bagger import BaggerPool
             self.bagger = BaggerPool(view.bagger_dir, self)
@@ -262,6 +269,11 @@ class WindowDataset(torch.utils.data.IterableDataset):
             if self.bagger is not None and rng.random() < self.bagger_share:
                 yield self.bagger.sample(rng)
                 continue
+            if self.tail_share > 0 and rng.random() < self.tail_share:
+                ci = int(self.v.tail_clips[rng.integers(len(self.v.tail_clips))]); c = self.v.clips[ci]
+                fl = np.asarray(self.v.floor[c['start']:c['start'] + c['frames']]); off = int(np.argmax(fl > 0))
+                s = max(0, off - int(rng.integers(64, self.T - 32))) // STRIDE * STRIDE      # window covers the speech offset
+                yield self.sample(ci, s, rng); continue
             ci = int(rng.choice(len(self.w), p=self.w))
             L = self.v.clips[ci]['frames']
             s = int(rng.integers(0, max(1, L - self.T + 1))) // STRIDE * STRIDE
@@ -365,6 +377,9 @@ class WindowDataset(torch.utils.data.IterableDataset):
             extra['gest'] = np.where(il >= 0, v.gest_lut[np.clip(il, 0, None)], -1).astype(np.int16)   # coarse g_k frame labels
         if getattr(v, 'gest', None) is not None:      # [T] int16: -1 unknown / 0 none / 1.. coarse class (past the clip end -1)
             gl = np.full(T, -1, np.int16); gl[:n] = v.gest[a:a + n]; extra['gest'] = gl
+        if getattr(v, 'floor', None) is not None:       # [T] floor per frame (0 speaking, 1 hold, 2 yield; 0 past the clip end)
+            fl = np.zeros(T, np.int64); fl[:n] = v.floor[a:a + n]; extra['floor'] = fl
+            extra['aend'] = np.int64(int(np.argmax(fl[:n] > 0)) if (n and fl[:n].max() > 0) else n)   # audio frames of the window
         if v.tts is not None:
             if T % 4: raise ValueError(f'tts_hidden needs windows of a multiple of 4 frames (got {T})')
             extra['tts_h'], extra['tts_hm'] = tts_rows(c['items'], c['start'], s, n, T // 4, v.tts_array)

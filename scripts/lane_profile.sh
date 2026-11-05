@@ -26,6 +26,7 @@ case "${PROFILE:-ex002}" in
     export SCMG_TEXT_CAUSAL=${G1_TEXT_CAUSAL:-$B/models/text-e5-causal-echog-g1-v1}   # prefix-causal e5 of the SAME rows (View checks)
     DATA_ARGS=(--view $VIEW --stats $STATS --text-cache $TEXT)
     [ -n "${G1_GEST:-}" ] && DATA_ARGS+=(--gest-frames $G1_GEST)   # 11-05: BEAT2-annotation g_k frame track (semantic head lanes)
+    [ -n "${G1_FLOOR:-}" ] && DATA_ARGS+=(--floor-frames $G1_FLOOR --tail-share ${TAIL_SHARE:-0.3})   # 11-06: post-speech tail views
     COLLECT_ARGS=(--vae $VAE --view $VIEW --stats $STATS --text-cache $TEXT --tok-cache none --holdout none)
     LANES_OK="b c";;                                   # lane a needs intent tracks / semantic data (EX002 only)
   *) echo "unknown PROFILE=${PROFILE}" >&2; exit 2;;

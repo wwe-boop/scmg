@@ -59,7 +59,7 @@ def overfit_clips(view, n):
 
 
 ADDABLE = {'vox_prefsq_norm', 'vox_text_xattn', 'vox_slots', 'vox_word_aux', 'sem_head', 'sem_cond', 'intent_aux', 'tts_h', 'adsc',
-           'flow_text_xattn'}  # adsc: zero-init stream_emb (11-04); flow_text_xattn: zero-gated flow text cross-attn (11-04)
+           'flow_text_xattn', 'floor'}  # floor: zero-init floor-state token (11-06); adsc: zero-init stream_emb (11-04); flow_text_xattn: zero-gated flow text cross-attn (11-04)
 RESIZE_TEXT = {'text_dim'}  # allowed on a fine-tune: ONLY the text input LayerNorm+Linear is re-initialised (see build_model)
 
 
@@ -181,6 +181,8 @@ def main():
     ap.add_argument('--tok-intent', default=None, help='word-level intent labels row-aligned with --tok-cache (models/intent-qwen25-v36_1)')
     ap.add_argument('--intent-frames', default=None, help='frame-level intent track (scmg.prep_intent_frames); used by sc w_int / sem_w')
     ap.add_argument('--gest-frames', default=None, help='direct coarse g_k frame track (scripts/semantic/g1_gest_frames.py); train split only')
+    ap.add_argument('--floor-frames', default=None, help='floor track of a post-speech tail view (scripts/interrupt/build_tail_view.py); train split only')
+    ap.add_argument('--tail-share', type=float, default=0., help='share of windows drawn around a tail clip speech offset')
     add_self_force_args(ap)
     ap.add_argument('--bagger-dir', default=None, help='colon-separated cumulative BAgger collection directories')
     ap.add_argument('--bagger-share', type=float, default=0.)
@@ -196,12 +198,13 @@ def main():
     stats = json.loads(Path(a.stats).read_text())
     view = View(a.view, 'train', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache, tts_hidden=a.tts_hidden,
                 intent_frames=a.intent_frames, holdout=a.holdout, tok_intent=a.tok_intent, bagger_dir=a.bagger_dir,
-                gest_frames=a.gest_frames)
+                gest_frames=a.gest_frames, floor_frames=a.floor_frames)
     dview = View(a.view, 'val', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache, tts_hidden=a.tts_hidden)
     if a.overfit:
         overfit_clips(view, a.overfit); dview = view
     if a.anchor_share: view.anchor = json.loads(a.anchor_share)
-    ds = WindowDataset(view, a.frames, seed=a.seed * 1000 + rank, semsynth_share=a.semsynth_share, bagger_share=a.bagger_share)
+    ds = WindowDataset(view, a.frames, seed=a.seed * 1000 + rank, semsynth_share=a.semsynth_share, bagger_share=a.bagger_share,
+                       tail_share=a.tail_share)
     dl = iter(torch.utils.data.DataLoader(ds, a.batch, num_workers=a.workers, collate_fn=collate, pin_memory=True,
                                           persistent_workers=a.workers > 0, prefetch_factor=4 if a.workers else None))
     dev_ds = WindowDataset(dview, a.frames, seed=12345, fixed=fixed_windows(dview, a.frames))

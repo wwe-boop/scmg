@@ -198,10 +198,15 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             larr = torch.where(seg[:, None], batch['tiseg'] - slead[:, None], x2_arrival(batch['titime'], tidm_d, rate, lag))
             lvis = arrival_mask(larr, tidm_d, final, now)
         nvalid = mask.sum(1)                                                          # frames before the clip end
+        if 'aend' in batch:               # 11-06 post-speech tails: the audio stream ends at the speech offset, motion goes on
+            nvalid = torch.minimum(nvalid, batch['aend'].to(nvalid))
         Hc = torch.clamp(H, max=10 ** 6)
         reach = (torch.arange(K, device=dev)[None] * CHUNK + Hc[:, None]) * STRIDE
         afin = (H[:, None] >= INF) | ((nvalid[:, None] < T) & (reach >= nvalid[:, None]))
         if hasattr(model, 'stream_emb'): sstate = stream_state(tvis, tvalid, afin)
+        if sstate is not None and hasattr(model, 'floor_emb') and 'floor' in batch:   # floor state of every chunk (at its start)
+            fk = batch['floor'][:, ::CHUNK_FRAMES][:, :K].clamp(min=0).long()
+            sstate = sstate + 6 * fk
         # timing exists only for voiced tokens when streaming (audio, and with it the anchors, arrived up to now + H)
         heard = now[None] + Hc[:, None].float() * STRIDE / 50.                        # [B, K]
         voiced = torch.isfinite(batch['ttime'])[:, None] & (torch.nan_to_num(batch['ttime'], 1e9)[:, None] <= heard[:, :, None])

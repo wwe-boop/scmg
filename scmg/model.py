@@ -72,6 +72,8 @@ class Config:
     vox_ref_gate: bool = False     # VoxCPM style reference: zero-gated add onto the speaker token (11-02 review fix) instead of
                                    # an extra LM token (which changed the base output at initialisation)
     adsc: bool = False             # Asynchronous Dual-Stream Conditioning: per-chunk text/audio visibility + stream-state token
+    floor: bool = False            # 11-06 floor-state token (0 speaking / 1 after speech, holding the floor / 2 yielding), adsc only:
+                                   # encoded as stream state + 6 * floor; row 0 fixed at zero (padding_idx) -> floor 0 = old function
     # 11-03 opt-in: Qwen3-TTS Talker hidden states (data.View(tts_hidden=...), one 2048-d row per 80 ms) projected
     # (LayerNorm -> Linear, zero-init) and ADDED to the audio-encoder input tokens; dropped / masked exactly like audio
     vox_text_xattn: bool = False   # 11-03 text route around the FSQ: chunks cross-attend to LM text-token states (voxplanner)
@@ -380,6 +382,10 @@ class SCMG(nn.Module):
             self.vox.ref_gate = nn.Parameter(torch.zeros(1))
         if cfg.adsc and not hasattr(self, 'stream_emb'):
             self._init_adsc()
+        if getattr(cfg, 'floor', False) and not hasattr(self, 'floor_emb'):
+            if not cfg.adsc: raise ValueError('floor needs adsc (the floor rides on the stream-state token)')
+            self.floor_emb = nn.Embedding(3, self.cfg.d, padding_idx=0); nn.init.zeros_(self.floor_emb.weight)
+            self.floor_emb.to(self.stream_emb.weight.device)
         if hasattr(self, 'vox') and (cfg.vox_text_xattn or cfg.vox_slots or cfg.vox_word_aux):
             self.vox.add_text_path(cfg)
         if hasattr(self, 'vox') and cfg.vox_prefsq_norm and self.vox.prefsq_norm is None:
@@ -494,7 +500,10 @@ class SCMG(nn.Module):
         own = (amask & self._own_chunk(K, a.shape[1], a.device)[None]).float()          # visible audio of chunk k
         pooled = torch.einsum('bkn,bnd->bkd', own, a) / own.sum(-1, keepdim=True).clamp(min=1)
         pooled = torch.where(own.sum(-1, keepdim=True) > 0, pooled, self.audio_null)
-        semb = self.stream_emb(sstate) if (sstate is not None and hasattr(self, 'stream_emb')) else None
+        if sstate is not None and hasattr(self, 'floor_emb') and bool((sstate >= 6).any()):   # floor > 0 somewhere (11-06)
+            semb = self.stream_emb(sstate % 6) + self.floor_emb(torch.div(sstate, 6, rounding_mode='floor'))
+        else:
+            semb = self.stream_emb(sstate) if (sstate is not None and hasattr(self, 'stream_emb')) else None
         if self.cfg.planner == 'voxcpm':
             return self.vox(lat, pooled, tids, tidm, g, sref, lvis=lvis, semb=semb)[0]
         prev = torch.cat([self.p_start.expand(B, 1, -1), self.p_in(lat[:, :-1].flatten(-2))], 1)

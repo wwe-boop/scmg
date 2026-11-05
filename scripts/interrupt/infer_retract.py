@@ -45,14 +45,15 @@ UPPER = list(range(10 + 12, 10 + 29))          # waist + arms channels of the 39
 
 class RetractStreamer(Streamer):
     def __init__(self, *args, t_int=None, keep_tok=None, audio='end', fm=None, fs=None, n_total=None, restart='chunk',
-                 react_delay=0.04, retract=None, rest=None, tr=1.0, w=1.0, splice=0, w0=0., **kw):
+                 react_delay=0.04, retract=None, rest=None, tr=1.0, w=1.0, splice=0, w0=0., prefix=None, floor=0, **kw):
         super().__init__(*args, **kw)
         self.t_int, self.keep_tok, self.audio, self.n_total = t_int, keep_tok, audio, n_total
         self.sil = None if fm is None else torch.as_tensor((SIL_RAW - fm) / fs, device=self.dev).float()
         self.restart, self.delay, self.retract, self.rest, self.tr, self.w = restart, react_delay, retract, rest, tr, w
         self.applied = False; self.k_int = None; self.o = 0; self.prefix = []; self.l_r = None
         self.tgt = None; self._eps = {}; self._flow = None
-        self.splice = splice; self._sp = None; self.w0 = w0     # latent restart: frames over which the jump at the splice is blended out
+        self.splice = splice; self._sp = None; self.w0 = w0
+        self.prefix_npz = prefix; self.floor = floor; self.fm_, self.fs_ = fm, fs   # 11-06: causal prefix conditions, floor token     # latent restart: frames over which the jump at the splice is blended out
         if t_int is not None:
             self.l_r = int(np.ceil((t_int + react_delay) * 50 / STRIDE - 1e-9)) if restart == 'latent' else \
                 int(np.ceil(t_int / (CHUNK_FRAMES / 50.) - 1e-9)) * CHUNK
@@ -67,6 +68,15 @@ class RetractStreamer(Streamer):
     def _apply(self):
         l_r = self.l_r; o = l_r % CHUNK if self.restart == 'latent' else 0
         n50 = int(round(self.t_int * 50))
+        if self.prefix_npz is not None:   # 11-06: feat89 / CAM++ recomputed from the audio before t_i only (prefix_feats.py)
+            pf = np.load(self.prefix_npz)
+            fz = torch.as_tensor((pf['feat'].astype(np.float32) - self.fm_) / self.fs_, device=self.dev).float()
+            if fz.shape[0] != n50: raise ValueError(f'prefix feat {fz.shape[0]} frames != {n50}')
+            f = self.feat.clone(); f[:n50] = fz; self.feat = f   # frames >= t_i: handled by --audio below
+            self.cond['spk'] = torch.as_tensor(pf['spk'], device=self.dev).float()
+            self.cond['spk_valid'] = torch.as_tensor(float(pf['spk_valid']), device=self.dev)
+        if self.floor:                    # floor state from the first post-interruption chunk on (models trained with cfg.floor)
+            self.floor_k0, self.floor_val = None, int(self.floor)
         # audio after t_i (absolute frames), then the clock shift by o latents
         if self.audio == 'end':
             self.feat = self.feat[:n50]
@@ -93,6 +103,7 @@ class RetractStreamer(Streamer):
             self.lat = self.lat[o:]
         self.o = o
         self.frames = frames; self.n_emitted = len(frames)
+        if self.floor: self.floor_k0 = self.k                   # chunk index in the (possibly re-based) clock
         if self.splice and self.restart == 'latent' and len(frames) >= 2:
             # the first new frame should continue the executed motion: x[-1] + (x[-1] - x[-2]); the difference is removed
             # with a weight falling smoothly from 1 to 0 over `splice` frames (only frames emitted after the restart change)
@@ -187,6 +198,8 @@ def main():
     ap.add_argument('--rest', default='R_sil'); ap.add_argument('--human', default=None, help='human_ref json (rest poses)')
     ap.add_argument('--tr', type=float, default=1.0); ap.add_argument('--w', type=float, default=1.0)
     ap.add_argument('--w0', type=float, default=0., help='ramp: weight at t_i (rises to --w at t_i + T_r)')
+    ap.add_argument('--prefix-feats', default=None, help='prefix_feats.py dir: causal feat89 / CAM++ of the audio before t_i')
+    ap.add_argument('--floor', type=int, default=0, help='floor state after the interruption (models with cfg.floor; 0 = off)')
     ap.add_argument('--splice', type=int, default=0, help='latent restart: blend the jump at the splice out over n 50 Hz frames (0 = off)')
     ap.add_argument('--seed', type=int, default=0); ap.add_argument('--steps', type=int, default=10); ap.add_argument('--cfg-w', type=float, default=2.5)
     ap.add_argument('--shard', default='0/1'); ap.add_argument('--protocol', default='engine', choices=['offline', 'engine'])
@@ -237,7 +250,8 @@ def main():
             n_run = -(-int(np.ceil((n30o - 1) / 30. * 50 + 2)) // CHUNK_FRAMES)
             keep = spoken_tokens(s['ttime'], s['tmask'], words[stem], t_i)
             ikw = dict(t_int=t_i, keep_tok=keep, audio=a.audio, fm=fm, fs=fs, n_total=n_run * CHUNK_FRAMES, restart=a.restart,
-                       react_delay=a.react_delay, retract=a.retract, rest=rest39, tr=a.tr, w=a.w, w0=a.w0, splice=a.splice)
+                       react_delay=a.react_delay, retract=a.retract, rest=rest39, tr=a.tr, w=a.w, w0=a.w0, splice=a.splice, floor=a.floor,
+                       prefix=(f"{a.prefix_feats}/{stem}@{r['frac']:.1f}.npz" if a.prefix_feats else None))
         else:
             n_run = nch
         st = RetractStreamer(m, vae, s['feat'], cond, stats, H=H, steps=a.steps, seed=a.seed, standby=qm, ctx_t=m.ctx_t,
@@ -261,7 +275,7 @@ def main():
             q50 = cmd.astype(np.float64); r30 = g1.to30(q50, n30o).astype(np.float32)
             gen = dict(ckpt=str(a.ckpt), seed=a.seed, steps=a.steps, cfg_w=a.cfg_w, stream=proto, interrupt=dict(
                 t_i=t_i, f_i=r['f_i'], frac=r['frac'], audio=a.audio, restart=a.restart, react_delay=a.react_delay, l_r=st.l_r,
-                o=st.o, k_int=st.k_int, retract=a.retract, rest=a.rest, tr=a.tr, w=a.w, w0=a.w0, splice=a.splice, n_targets=len(st.tgt or {}),
+                o=st.o, k_int=st.k_int, retract=a.retract, rest=a.rest, tr=a.tr, w=a.w, w0=a.w0, splice=a.splice, floor=a.floor, prefix_feats=a.prefix_feats, n_targets=len(st.tgt or {}),
                 tokens_kept=int(keep.sum()), tokens_total=int(np.asarray(s['tmask']).sum())))
             meta = dict(real_num_frames=n30o, clip_frames30=n30)
             np.save(o.with_suffix('.q50.npy'), cmd.astype(np.float32))

@@ -207,6 +207,8 @@ class Streamer:
                 kg = torch.arange(W, device=self.dev) + c0
                 afin = torch.full((1, W), self.H >= INF, device=self.dev) | ((kg * CHUNK + min(self.H, 10 ** 6)) * STRIDE >= self.feat.shape[0])[None]
                 sstate = stream_state(tvis, tm0, afin)
+                if getattr(self, 'floor_k0', None) is not None:         # 11-06 floor token from chunk floor_k0 on (default off)
+                    sstate = sstate + 6 * self.floor_val * (kg >= self.floor_k0).long()[None]
             if (self.deploy_timing or adsc_m) and self.H < INF:              # timing only for tokens voiced by now + H
                 heard = now + self.H * STRIDE / 50.
                 ttw = tt.float()
