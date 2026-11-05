@@ -45,6 +45,9 @@ class StageCfg:
     sel_audio_premask: bool = False  # remove hidden chunks from encoder input as well as direct audio routes
     p_sel_audio: float = 0.0       # P(per text-bearing sample) that the audio of every gesture chunk is hidden (planner + flow)
     w_foot: float = 0.0            # 11-05 G1 only: foot-contact consistency on the decoded [ctx | target] frames (scmg/g1_contact.py:
+    w_safe: float = 0.0            # 11-05 G1 only: executable-contract loss on the decoded [ctx | target] frames (scmg/g1_safety.py:
+                                   # URDF joint limits + calibrated left-right / arm-torso self-collision proxies); 0 = off
+    safe_torso_w: float = 0.5      # weight of the weaker arm-torso proxy inside w_safe
                                    # sole xy velocity + lowest-sole height vs ground truth on GT-contact frames, official geometry)
     w_tdelta: float = 0.0          # 11-04 ECHO-G temporal loss (temporal_loss_weight 0.5 there): squared error of the change of
                                    # the velocity-field error between adjacent steps; with the identity codec (z = STRIDE*J)
@@ -470,7 +473,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         loss = loss + sc.w_int * out['intent']
 
     # ---- decoded continuity / rhythm
-    if sc.w_cont > 0 or sc.w_rhy > 0 or sc.w_phys > 0 or sc.w_foot > 0:
+    if sc.w_cont > 0 or sc.w_rhy > 0 or sc.w_phys > 0 or sc.w_foot > 0 or sc.w_safe > 0:
         x1hat = torch.where(known[..., None], x1i, xt + (1 - t[..., None]) * v)
         # decode with the context the streamer has: 3 more history chunks before the known context (the decoder looks
         # ~7 latents back) and the next chunk's first latent as look-ahead (inference emits a frame only once the latent
@@ -505,6 +508,12 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             from .g1_contact import foot_contact_loss
             fc = foot_contact_loss(y.float() * qs + qm, gt_frames.float() * qs + qm, fv * w_inst[:, None], 50.)
             out.update(fc); loss = loss + sc.w_foot * (fc['foot_slide'] + 10. * fc['foot_height'])   # m/s and m -> comparable scale
+        if sc.w_safe > 0:
+            from .common import EMBODIMENT
+            if EMBODIMENT != 'g1': raise ValueError('StageCfg.w_safe is the G1 executable-contract term (SCMG_J=39)')
+            from .g1_safety import contract_loss
+            sf = contract_loss(y.float() * qs + qm, fv * w_inst[:, None])
+            out.update(sf); loss = loss + sc.w_safe * (sf['safe_lim'] + sf['safe_lr'] + sc.safe_torso_w * sf['safe_torso'])
         if sc.w_phys > 0:
             out.update(phys_reg(y, fv * w_inst[:, None], qm, qs, sc))
             loss = loss + sc.w_phys * (out['phys_joint'] + sc.phys_dyn_w * out['phys_dyn'] + sc.phys_coll_w * out['phys_coll'])
