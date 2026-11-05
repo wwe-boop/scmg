@@ -1,0 +1,133 @@
+{
+ "params": {
+  "audio": 22240768,
+  "text_in": 395264,
+  "text_time": 262656,
+  "spk_in": 99200,
+  "source": 4096,
+  "p_in": 33280,
+  "p_audio": 262656,
+  "planner": 52518912,
+  "p_norm": 1024,
+  "p_aux": 32832,
+  "f_in": 8704,
+  "f_role": 1024,
+  "f_t": 525312,
+  "f_plan": 262656,
+  "flow": 39389184,
+  "f_norm": 0,
+  "f_ada": 525312,
+  "f_out": 8208,
+  "stream_emb": 3072,
+  "int_head": 109782
+ },
+ "vae_params": 4389570,
+ "base_cfg": {
+  "n_source": 8,
+  "z": 16,
+  "d": 512,
+  "text_dim": 768,
+  "heads": 8,
+  "audio_layers": 4,
+  "planner_layers": 8,
+  "flow_layers": 6,
+  "ctx": 4,
+  "stride": 4,
+  "flow_audio_back": 4,
+  "mtc": false,
+  "style": false,
+  "style_z": 8,
+  "state": false,
+  "state_dim": 104,
+  "planner": "chunk",
+  "lm_lr_scale": 0.1,
+  "lora_r": 0,
+  "vox_lm": "",
+  "vox_lm_trust_remote_code": false,
+  "vox_lm_init": "pretrained",
+  "vox_fsq": true,
+  "vox_ralm": true,
+  "vox_locenc": true,
+  "vox_text": true,
+  "vox_prefsq_norm": false,
+  "vox_in_match": false,
+  "vox_ref_gate": false,
+  "adsc": true,
+  "vox_text_xattn": false,
+  "vox_slots": 0,
+  "vox_word_aux": false,
+  "sem_head": false,
+  "sem_cond": false,
+  "n_sem": 7,
+  "intent_aux": true,
+  "n_intent": 214,
+  "tts_h": false,
+  "tts_h_dim": 2048,
+  "audio_feat": true,
+  "drop_text": 0.1,
+  "drop_audio": 0.1,
+  "drop_spk": 0.2,
+  "drop_ref": 0.5,
+  "drop_time": 0.5,
+  "flow_text_xattn": false
+ },
+ "tick_ms": {
+  "p50": 44.35335099697113,
+  "p95": 47.817258303985,
+  "n": 15
+ },
+ "modules_per_tick": {
+  "flow_velocity": {
+   "calls": 20.0,
+   "ms": 35.18385955442985
+  },
+  "vae.encode": {
+   "calls": 0.06666666666666667,
+   "ms": 5.765875273694594
+  },
+  "plan": {
+   "calls": 2.0,
+   "ms": 5.622256966307759
+  },
+  "audio_tokens": {
+   "calls": 1.0,
+   "ms": 1.288482795159022
+  },
+  "vae.decode": {
+   "calls": 1.0,
+   "ms": 0.5944422446191311
+  },
+  "text_tokens": {
+   "calls": 2.0,
+   "ms": 0.3052556732048591
+  },
+  "local_audio": {
+   "calls": 1.0,
+   "ms": 0.09125246045490105
+  },
+  "global_cond": {
+   "calls": 1.0,
+   "ms": 0.06088907830417156
+  },
+  "chunk_audio_mask": {
+   "calls": 1.0,
+   "ms": 0.0399476382881403
+  },
+  "token_seconds": {
+   "calls": 1.0,
+   "ms": 0.030771689489483833
+  },
+  "chunk_text_mask": {
+   "calls": 2.0,
+   "ms": 0.02760309725999832
+  }
+ },
+ "covered_ms": 49.01063647121191,
+ "feat_ms": {
+  "p50": 0.9711629245430231,
+  "max": 332.7882871963084,
+  "last_T": 107,
+  "threads": 1,
+  "real": true
+ }
+}
