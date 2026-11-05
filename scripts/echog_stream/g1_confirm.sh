@@ -5,7 +5,8 @@
 #        official_offline   official best.pt, whole clip (stream_infer --offline == echo_g.inference, test_stream 2a/2d)
 #        slide_none         not trained: echog_slide.py --audio prefix --text voiced --prefix none   (official model)
 #        slide_inpaint      not trained: same + --prefix inpaint (RePaint-style committed frames)
-#        official_stream    not trained: stream_infer.py protocol (ctx 8 s, tail) with the official best.pt (zero known_projection)
+#        official_stream    (optional, not in the default ROWS) official best.pt through stream_infer.py: with known_xt=clean the
+#                           untrained model sees clean prefix frames it was never trained on (smoke FGD ~27), not a fair control
 #        stream_prefix      trained: stream_infer.py --audio prefix (strictly causal, default)
 #        stream_frozen      trained: stream_infer.py --audio frozen (training-time features; leak control)
 #        stream_offline     trained: stream_infer.py --offline (offline ability kept?)
@@ -14,7 +15,7 @@
 #      scripts/echog_g1/beat_phase.py per row (seed 0); intermediate EMA snapshots (ema_step*.pt): stream_prefix seed 0 on the
 #      first SNAP_N val stems + evaluator (training curve)
 #   4) SUMMARY.md / summary.json
-# Env (defaults = DLC / CPFS):  GPUS="0 1 2 3"  SPG=3  STEPS=20000 LR=1e-4 BATCH=<per GPU, default 64/|GPUS|>  SEEDS="0 1"
+# Env (defaults = DLC / CPFS):  GPUS="0 1 2 3"  SPG=4  STEPS=20000 LR=1e-4 BATCH=<per GPU, default 64/|GPUS|>  SEEDS="0 1"
 #   CLIP_BATCH=8 (stream_infer lockstep clips)  N=<first N val stems, smoke>  ROWS="..."  OUT  DATA  OFF  INIT  W2V  FGD_CKPT  PY  TRAIN_ARGS (extra train_stream.py args)
 #   bash scripts/echog_stream/g1_confirm.sh
 set -uo pipefail
@@ -25,11 +26,11 @@ OUT=${OUT:-/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/echog-stream-1105/g1-c
 DATA=${DATA:-/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/echog-stream-1105/data_root}
 OFF=${OFF:-$E/official}; INIT=${INIT:-$E/weights/best.pt}; W2V=${W2V:-$E/models/wav2vec2-large-xlsr-53-english}
 FGD_CKPT=${FGD_CKPT:-$E/weights/evaluation/g1_fgd_encoder.pt}; MMAE=${MMAE:-$DATA/eval_assets/mmae/g1_mmae_30body_30fps.npy}
-GL=(${GPUS:-$(seq 0 $(($(nvidia-smi -L | wc -l) - 1)))}); NG=${#GL[@]}; SPG=${SPG:-3}; NSLOT=$((NG * SPG))
+GL=(${GPUS:-$(seq 0 $(($(nvidia-smi -L | wc -l) - 1)))}); NG=${#GL[@]}; SPG=${SPG:-4}; NSLOT=$((NG * SPG))
 STEPS=${STEPS:-20000}; LR=${LR:-1e-4}; BATCH=${BATCH:-$((64 / NG))}; SEEDS=${SEEDS:-0 1}
-ROWS=${ROWS:-official_offline slide_none slide_inpaint official_stream stream_prefix stream_frozen stream_offline}
+ROWS=${ROWS:-official_offline slide_none slide_inpaint stream_prefix stream_frozen stream_offline}
 SNAP_N=${SNAP_N:-300}; EVAL_PAR=${EVAL_PAR:-6}
-export PYTHONPATH=$OFF/src PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=${OMP_NUM_THREADS:-4} TOKENIZERS_PARALLELISM=false
+export PYTHONPATH=$OFF/src PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=${OMP_NUM_THREADS:-2} TOKENIZERS_PARALLELISM=false
 mkdir -p $OUT; T=$OUT/train; P=$OUT/preds; B=$OUT/bench; mkdir -p $P $B
 log() { echo "$(date -Is) $*" | tee -a $OUT/confirm.log; }
 STEMS=$OUT/stems.txt

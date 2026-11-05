@@ -47,6 +47,8 @@ class StreamConfig:
     x2_rate: float = 15.0            # SCMG x2 text arrival: tokens / s
     x2_lag: float = 0.15             #                      lag before the token onset, s
     known_xt: str = 'clean'          # x_t on known frames: 'clean' (x1) | 'noise' (official flow path t x1 + (1 - t) eps)
+    cut_boost: float = 0.0           # training: loss weight x (1 + cut_boost * exp(-j / cut_tau_frames)) at offset j from the cut
+    cut_tau_frames: float = 3.0      #           (continuity of the first generated frames; 0 = off)
     known_aug_std: float = 0.0       # training: Gaussian noise (normalised units) on the known prefix (exposure-bias knob; 0 = off)
 
     def validate(self) -> None:
@@ -192,6 +194,7 @@ def sample_window(sample: dict[str, Any], rng: np.random.Generator, sc: StreamCo
     f = torch.arange(ws, fe)
     known = f < c
     w = torch.where(known, 0.0, torch.where(f < f1, 1.0, sc.tail_weight if tail_weight is None else tail_weight))
+    if sc.cut_boost > 0: w = w * torch.where(known, 1.0, 1.0 + sc.cut_boost * torch.exp(-(f - c).clamp_min(0).float() / sc.cut_tau_frames))
     return dict(motion=sample['motion'][ws:fe], known_mask=known, loss_weight=w.float(), audio=cond['audio'],
                 text=cond['text'], text_padding_mask=cond['text_padding_mask'], time_distance=cond['time_distance'],
                 stem=sample['stem'], meta=dict(k=k, c=c, ws=ws, f1=f1, fe=fe, now=now, ahead=ahead, n_visible=cond['n_visible'],
