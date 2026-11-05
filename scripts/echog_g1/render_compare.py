@@ -18,7 +18,8 @@ ap.add_argument('--mjcf', required=True); ap.add_argument('--width', type=int, d
 ap.add_argument('panels', nargs='+')
 a = ap.parse_args()
 out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
-env = dict(os.environ, PYTHONPATH=OFF, MUJOCO_GL=os.environ.get('MUJOCO_GL', 'egl'))
+env = dict(os.environ, PYTHONPATH=os.pathsep.join(x for x in (OFF, os.environ.get('PYTHONPATH', '')) if x), MUJOCO_GL=os.environ.get('MUJOCO_GL', 'egl'))
+FFMPEG = os.environ.get('RENDER_FFMPEG', 'ffmpeg')
 tmp = Path(tempfile.mkdtemp(prefix='g1render_', dir=out))
 vids = []
 for spec in a.panels:
@@ -33,7 +34,7 @@ label = ';'.join(f"[{i}:v]drawtext=fontfile={FONT}:text='{lab}':x=(w-text_w)/2:y
                  for i, (lab, _) in enumerate(vids))
 stack = ''.join(f'[v{i}]' for i in range(len(vids))) + f'hstack=inputs={len(vids)}[v]' if len(vids) > 1 else '[v0]copy[v]'
 dst = out / f'{a.stem}.mp4'
-subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', *inputs, '-filter_complex', f'{label};{stack}', '-map', '[v]', '-map', f'{len(vids)}:a',
+subprocess.run([FFMPEG, '-y', '-loglevel', 'error', *inputs, '-filter_complex', f'{label};{stack}', '-map', '[v]', '-map', f'{len(vids)}:a',
                 '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '23', '-c:a', 'aac', '-shortest', str(dst)], check=True)
 for f in tmp.iterdir(): f.unlink()
 tmp.rmdir()

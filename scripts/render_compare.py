@@ -4,8 +4,12 @@ eval_dir = an evaluate.py output dir (gen_H<h>_<ci>.npy, gt_<ci>.npy; 34 joints,
 ground truth (gt_<ci>.npy of the first eval dir). Clip index ci = order of the val clips exactly as data.View builds
 them (contiguous utterances of one recording). Runs on speech_server with EGL (physical GPU1)."""
 import os
-os.environ.update(__EGL_VENDOR_LIBRARY_FILENAMES='/mnt/cpfs/zbl-cpfs-new/USERS/zehan/speaker-style-emb-r2-20261030/nvidia-egl.json',
-                  MUJOCO_GL='egl', PYOPENGL_PLATFORM='egl', MUJOCO_EGL_DEVICE_ID='1')
+# defaults = speech_server (physical GPU1); every one can be overridden from the environment (e.g. local xr-xx: RENDER_EGL_VENDOR=,
+# MUJOCO_EGL_DEVICE_ID=0, RENDER_FFMPEG=<imageio-ffmpeg binary>, RENDER_FONT=<CJK font>)
+for k, v in dict(__EGL_VENDOR_LIBRARY_FILENAMES=os.environ.get('RENDER_EGL_VENDOR', '/mnt/cpfs/zbl-cpfs-new/USERS/zehan/speaker-style-emb-r2-20261030/nvidia-egl.json'),
+                 MUJOCO_GL='egl', PYOPENGL_PLATFORM='egl', MUJOCO_EGL_DEVICE_ID='1').items():
+    os.environ.setdefault(k, v)
+if not os.environ['__EGL_VENDOR_LIBRARY_FILENAMES']: del os.environ['__EGL_VENDOR_LIBRARY_FILENAMES']
 import json, subprocess, sys, wave
 from collections import OrderedDict
 from pathlib import Path
@@ -14,7 +18,7 @@ from PIL import Image, ImageDraw, ImageFont
 
 V = Path('/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/train-v1-20261101/views')
 MODEL = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/ex002-rm003-v4-20261020/model-r1/scene.xml'
-FONT = ImageFont.truetype('/usr/share/fonts/truetype/wqy/wqy-microhei.ttc', 16)
+FONT = ImageFont.truetype(os.environ.get('RENDER_FONT', '/usr/share/fonts/truetype/wqy/wqy-microhei.ttc'), 16)
 W, H = 300, 340
 
 
@@ -56,7 +60,7 @@ def main():
         wav = out / f'clip{ci}.wav'
         with wave.open(str(wav), 'wb') as w: w.setnchannels(1); w.setsampwidth(2); w.setframerate(16000); w.writeframes(a.tobytes())
         vid = out / f'clip{ci}.mp4'; TW = W * len(qs)
-        enc = subprocess.Popen(['/usr/bin/ffmpeg', '-v', 'error', '-y', '-nostdin', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', f'{TW}x{H + 28}',
+        enc = subprocess.Popen([os.environ.get('RENDER_FFMPEG', '/usr/bin/ffmpeg'), '-v', 'error', '-y', '-nostdin', '-f', 'rawvideo', '-pix_fmt', 'rgb24', '-s', f'{TW}x{H + 28}',
                                 '-r', '25', '-i', 'pipe:0', '-i', str(wav), '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '23',
                                 '-c:a', 'aac', '-shortest', str(vid)], stdin=subprocess.PIPE)
         for t in range(0, n, 2):                                     # 50 Hz motion -> 25 fps video
