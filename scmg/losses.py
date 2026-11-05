@@ -106,6 +106,10 @@ class StageCfg:
                                    # behaviour stays trained (and CFG-able)
     ctl_field_drop: float = 0.0    # P(each value field of a kept token is masked): partial tokens (target only / amplitude only)
     ctl_w: float = 0.0             # flow-loss weight 1 + ctl_w on positions inside [a - 0.3, b + 0.3] of a kept token
+    ctl_lr_scale: float = 1.0      # 11-06: learning-rate multiplier of the control-token modules (scmg.train param group)
+    ctl_cf_p: float = 0.0          # 11-06 counterfactual control: P(sample's kept POINT tokens get ANOTHER token's target, rolled over
+                                   # the batch); their segment [a - 0.3, b + 0.3] is removed from the flow loss and only the ray loss
+                                   # (w_ctl_aux, toward the swapped target) supervises it -> following the token is the only way down
     w_ctl_aux: float = 0.0         # pointing-ray loss on the decoded apex frame of kept POINT tokens: 1 - cos(elbow->wrist ray,
                                    # wrist->target), official FK (needs the decode path; weighted like w_cont by the noise level)
 
@@ -242,7 +246,18 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         cm = (batch['ctl_type'] > 0) & torch.isfinite(ct) & ~torch.gather(gdrop, 1, batch['ctl_g'].long().clamp(0, 1))
         cvm = batch['ctl_vm'].float()
         if sc.ctl_field_drop > 0: cvm = cvm * (torch.rand(cvm.shape, device=dev) >= sc.ctl_field_drop).float()
-        u = model.ctl_embed(batch['ctl_type'].long() * cm.long(), batch['ctl_v'].float(), cvm)
+        cval = batch['ctl_v'].float(); cf = None
+        if sc.ctl_cf_p > 0:
+            from .ctl import POINT
+            pt = cm & (batch['ctl_type'] == POINT) & (cvm[..., 0] > 0)
+            cf = pt & r(sc.ctl_cf_p)[:, None]
+            bi, ji = pt.nonzero(as_tuple=True)
+            if len(bi) > 1:
+                src = torch.roll(torch.arange(len(bi), device=dev), 1)                     # another token's target
+                newv = cval.clone(); newv[bi, ji, :3] = cval[bi[src], ji[src], :3]
+                cval = torch.where(cf[..., None], newv, cval)
+            else: cf = torch.zeros_like(pt)
+        u = model.ctl_embed(batch['ctl_type'].long() * cm.long(), cval, cvm)
         nowk = torch.arange(K, device=dev).float() * CHUNK_FRAMES / 50.
         if sc.p_async > 0:                # arrives with the word it is attached to; time known once voiced (streaming samples)
             arr_c = anchor_arrival(arr, batch['ttime'], tvalid, ct)
@@ -259,7 +274,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         qsec = model.flow_seconds(torch.arange(K, device=dev), cfg.ctx + CHUNK, cfg.ctx)
         cc = model.ctl_flow_cond(u, ct, keep, timed, qsec)
         if cc is not None: ctl_c = cc.flatten(0, 1)
-        ctl = dict(cm=cm, keep=keep, qsec=qsec)
+        ctl = dict(cm=cm, keep=keep, qsec=qsec, cval=cval, cf=cf)
     src = torch.where(r(0.1), torch.zeros_like(batch['source']), batch['source'])
     g = model.global_cond(batch['spk'], batch['spk_valid'] * (~drop_spk), src)
 
@@ -447,6 +462,10 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     sup = ~known
     sup[:, cfg.ctx:] &= tgt_valid
     sup[:, :cfg.ctx] = False                                                          # past context never supervised
+    if ctl is not None and ctl['cf'] is not None and ctl['cf'].any():   # counterfactual segments: no GT flow target
+        a_, b_ = batch['ctl_a'].float(), batch['ctl_b'].float(); q_ = ctl['qsec'][None, :, :, None]
+        ins_cf = ((q_ >= (a_ - 0.3)[:, None, None]) & (q_ <= (b_ + 0.3)[:, None, None]) & ctl['cf'][:, None, None]).any(-1)
+        sup = sup & ~ins_cf.flatten(0, 1)
     err = (v - (x1i - noise)).square().mean(-1)
     ilab = None
     if 'intent' in batch and (sc.w_int > 0 or sc.sem_w > 0):
@@ -634,7 +653,7 @@ def ctl_ray_loss(yp, batch, ctl, fw, B, K):
     g = arm_points(q); hand = (batch['ctl_v'][bi, ji, 3] > 0).long()
     ar = torch.arange(len(bi), device=dev)
     w_ = g['wrist'][ar, 0, hand]; e_ = g['elbow'][ar, 0, hand]
-    tgt = batch['ctl_v'][bi, ji, :3].float() * POS_SCALE
+    tgt = ctl.get('cval', batch['ctl_v'])[bi, ji, :3].float() * POS_SCALE
     cos = F.cosine_similarity(w_ - e_, tgt - w_, dim=-1)
     wt = fw[m, lf]
     return dict(ctl_ray=((1 - cos) * wt).sum() / wt.sum().clamp(min=1e-3), ctl_ray_n=torch.tensor(float(len(bi)), device=dev))

@@ -293,8 +293,11 @@ def main():
     net = torch.nn.parallel.DistributedDataParallel(model, find_unused_parameters=True) if world > 1 else model
     lm_ids = {id(p) for n, p in model.named_parameters() if n.startswith('vox.lm.')}
     lm_scale = getattr(getattr(model, 'cfg', None), 'lm_lr_scale', 1.0)
-    groups = [dict(params=[p for p in params if id(p) not in lm_ids], scale=1.0)]
+    ctl_scale = float(getattr(sc, 'ctl_lr_scale', 1.0)) if sc is not None else 1.0
+    ctl_ids = {id(p) for n, p in model.named_parameters() if n.startswith('ctl_')} if ctl_scale != 1.0 else set()
+    groups = [dict(params=[p for p in params if id(p) not in lm_ids and id(p) not in ctl_ids], scale=1.0)]
     if any(id(p) in lm_ids for p in params): groups.append(dict(params=[p for p in params if id(p) in lm_ids], scale=lm_scale))
+    if ctl_ids: groups.append(dict(params=[p for p in params if id(p) in ctl_ids], scale=ctl_scale))   # 11-06 control-token modules
     opt = torch.optim.AdamW([dict(params=g_['params'], scale=g_['scale']) for g_ in groups], lr=a.lr, betas=(0.9, 0.98), weight_decay=0.01)
     sched = lambda s: min(1., (s + 1) / a.warmup) * (0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * min(1., s / a.steps))))
     step = 0; gn_hist = []
