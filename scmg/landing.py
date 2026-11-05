@@ -46,7 +46,7 @@ def apply_cond(cond, spec=None):
             return torch.as_tensor(np.asarray(arr), dtype=ref.dtype, device=ref.device)
         return np.asarray(arr, dtype=np.asarray(ref).dtype)
 
-    for kv in spec.split(','):
+    for kv in filter(None, (x.strip() for x in spec.split(','))):
         if '=' not in kv:
             raise ValueError(f'SCMG_COND item {kv!r}: expected key=value')
         k, v = (x.strip() for x in kv.split('=', 1))

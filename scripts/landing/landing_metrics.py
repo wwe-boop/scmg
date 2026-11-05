@@ -15,7 +15,8 @@ Per label (gen and, where meaningful, the GT of the same clips):
   overspeed     frames with arm speed above the clip's human p95 speed (human = 5 % by construction; >> 5 % = flailing)
   speed         mean over clips of mean gen arm speed / mean GT arm speed
   amp_upper / amp_wrist   median over clips of mean_joint std_gen / std_gt (1 = like the human; << 1 = rigid)
-  style (L3, per clip: amp = mean arm-joint std, spd = mean arm speed, pose = mean arm pose [14])
+  style (L3, per clip: amp = mean arm-joint std over 128-frame windows (the persona window length, so amp is comparable
+                with the persona descriptor), spd = mean arm speed, pose = mean arm pose [14])
                 cv_amp / cv_spd = coefficient of variation over clips; pose_disp = mean ||pose - mean pose|| (rad);
                 with --persona <persona.json>: d_amp / d_spd = mean |log(x / x_persona)|, d_pose = mean ||pose - pose_persona||
 Speech = feat89 speech-span flag (column 'valid': first unit onset .. last unit offset of each utterance), val view.
@@ -39,6 +40,8 @@ def val_voiced():
 
 def files(d):
     g = sorted(glob.glob(d + '/gen_H*_*.npy'), key=lambda p: int(p.rsplit('_', 1)[1][:-4]))
+    tags = {os.path.basename(p).rsplit('_', 1)[0] for p in g}
+    if len(tags) > 1: raise SystemExit(f'{d}: several horizons {sorted(tags)} -- one export per directory')
     return [(int(p.rsplit('_', 1)[1][:-4]), p, f'{d}/gt_{p.rsplit("_", 1)[1]}') for p in g]
 
 
@@ -82,7 +85,8 @@ def main():
                 amp_u.append(float(np.mean(sd(g, UPPER) / np.maximum(sd(t, UPPER), 1e-3))))
                 amp_w.append(float(np.mean(sd(g, WRIST) / np.maximum(sd(t, WRIST), 1e-3))))
                 for w, x in (('gen', g), ('gt', t)):
-                    sty[w]['amp'].append(float(x[:, 4:18].std(0).mean())); sty[w]['spd'].append(float(arm_speed(x).mean()))
+                    nw = max(1, len(x) // 128)
+                    sty[w]['amp'].append(float(np.mean([x[k * 128:(k + 1) * 128, 4:18].std(0).mean() for k in range(nw)]))); sty[w]['spd'].append(float(arm_speed(x).mean()))
                     sty[w]['pose'].append(x[:, 4:18].mean(0))
                 n_clips += 1
         r = dict(label=lab, dirs=ds, clips=n_clips, envelope=a.envelope)

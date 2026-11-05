@@ -22,12 +22,12 @@ COLS = list(range(18))                      # waist 2, head 2, arms 2 x 7 (finge
 ap = argparse.ArgumentParser(); ap.add_argument('out'); ap.add_argument('--stride', type=int, default=4)
 a = ap.parse_args()
 meta = json.load(open(P(VIEW + '/META.json'))); names = meta['joints'][:18]
-items = json.load(open(P(VIEW + '/train.json'))); val = set(json.load(open(P(VIEW + '/SPLIT.json')))['val_ids'])
+items = json.load(open(P(VIEW + '/train.json'))); train = set(json.load(open(P(VIEW + '/SPLIT.json')))['train_ids'])
 q = np.load(P(VIEW + '/train_q.npy'), mmap_mode='r'); mask = np.load(P(MASK), mmap_mode='r')
 if len(mask) != len(q): raise SystemExit(f'ARM_MASK rows {len(mask)} != train_q rows {len(q)}')
 rows = {}                                   # source -> (all-frame rows, clean rows)
 for it in items:
-    if it['id'] in val: continue
+    if it['id'] not in train: continue
     r = np.arange(it['offset'], it['offset'] + it['frames'], a.stride)
     rows.setdefault(it['source'], []).append(r)
 out = dict(view=VIEW, mask=MASK, mask_rows=int(len(mask)), stride=a.stride, quantiles=QS, joints=names, clean_sources=list(CLEAN),
