@@ -34,10 +34,12 @@ CTL_MODES = {
     'point': 'POINT tokens only, target + hand (amplitude masked): the spatial benchmark input',
     'shuffle': 'gt, POINT target / hand from another dev POINT token (seeded derangement), amplitude bins random',
     'amp0': 'gt, every amplitude bin forced to 0 (small)', 'amp2': 'gt, every amplitude bin forced to 2 (large)',
-    'shift': 'gt, annotation tokens moved +1.0 s (t, a, b, apex; dropped past the clip end - 0.3 s)'}
+    'shift': 'gt, annotation tokens moved +1.0 s (t, a, b, apex; dropped past the clip end - 0.3 s)',
+    'pred': 'semantic-class tokens (no values) predicted from the prefix-causal text by g1_sem_predictor.py (deployable)',
+    'predlex': 'pred + the lexical tokens (deployable)'}
 
 
-def ctl_plan(d, mode, stems, dur):
+def ctl_plan(d, mode, stems, dur, pred=None):
     """stem -> list of token dicts (scmg/ctl.py token format) for the chosen mode (deterministic, before sharding)."""
     import copy
     from scmg import ctl
@@ -48,9 +50,14 @@ def ctl_plan(d, mode, stems, dur):
     rng = np.random.default_rng(20261105)
     pts = [(x, i) for x in stems for i, t in enumerate(raw.get(x, [])) if t['type'] == ctl.POINT]
     perm = rng.permutation(len(pts)); donor = {pts[perm[i]]: pts[perm[(i + 1) % len(pts)]] for i in range(len(pts))}
+    if mode in ('pred', 'predlex'):
+        if not pred: raise SystemExit('--ctl-mode pred / predlex needs --ctl-pred')
+        P = json.loads(Path(pred).read_text())
     for x in stems:
         ts = copy.deepcopy(raw.get(x, []))
         if mode == 'none': ts = []
+        elif mode in ('pred', 'predlex'):
+            ts = copy.deepcopy(P.get(x, [])) + ([t for t in ts if not ann(t)] if mode == 'predlex' else [])
         elif mode == 'ann': ts = [t for t in ts if ann(t)]
         elif mode == 'lex': ts = [t for t in ts if not ann(t)]
         elif mode == 'auto':
@@ -115,6 +122,7 @@ def main():
     ap.add_argument('--ctl-tokens', default=None, help='CTL.json dir of scripts/semantic/g1_ctl_tokens.py (dev split tokens)')
     ap.add_argument('--ctl-mode', default='gt', choices=list(CTL_MODES), help='which tokens are given (see CTL_MODES)')
     ap.add_argument('--cfg-ctl', type=float, default=None, help='separate control-token guidance (Streamer cfg_ctl); None = joint CFG')
+    ap.add_argument('--ctl-pred', default=None, help='PRED.json of scripts/semantic/g1_sem_predictor.py (text-only predicted semantic tokens; modes pred / predlex)')
     a = ap.parse_args()
     if EMBODIMENT != 'g1': raise SystemExit('run with SCMG_J=39')
     if a.ctl_tokens: a.save50 = True                # the control metrics are measured on the 50 Hz output
@@ -145,7 +153,7 @@ def main():
         order = sorted(stems, key=lambda x: (view.clips[idx[x]]['frames'], x))
         donor = {x: order[(i + 1) % len(order)] for i, x in enumerate(order)}
         if a.text_swap_map: donor = {x: json.loads(Path(a.text_swap_map).read_text())[x] for x in stems}
-    ctl_toks = ctl_plan(a.ctl_tokens, a.ctl_mode, stems, {x: view.clips[idx[x]]['frames'] / 50. for x in stems}) if a.ctl_tokens else {}
+    ctl_toks = ctl_plan(a.ctl_tokens, a.ctl_mode, stems, {x: view.clips[idx[x]]['frames'] / 50. for x in stems}, a.ctl_pred) if a.ctl_tokens else {}
     si, sn = (int(x) for x in a.shard.split('/'))
     stems = stems[si::sn]
     t0 = time.time(); log = []
