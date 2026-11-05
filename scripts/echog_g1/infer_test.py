@@ -72,6 +72,7 @@ def main():
     si, sn = (int(x) for x in a.shard.split('/'))
     stems = stems[si::sn]
     t0 = time.time(); log = []
+    ticks = []                                   # 11-05: per-chunk compute time (s), Streamer.timing (cuda-synchronised)
     for k, stem in enumerate(stems):
         o = out / f'{stem}.pt'
         if o.exists(): continue
@@ -88,6 +89,7 @@ def main():
         cmd, _, tk = generate(m, vae, s['feat'], cond, stats, nch, H=H, steps=a.steps, seed=a.seed, standby=qm, ctx_t=m.ctx_t,
                               cfg_w=a.cfg_w, cfg_t=a.cfg_t, noise_scale=a.noise_scale, **kw)
         if cmd.shape[0] < L or cmd.shape[1] != J or not np.isfinite(cmd).all(): raise ValueError(f'{stem}: generated {cmd.shape}')
+        if k > 0: ticks.extend(float(x) for x in tk)           # first clip excluded (CUDA warm-up)
         q50 = cmd[:L].astype(np.float64)
         for opt, ch in ((a.smooth, g1.JOINTS), (a.smooth_legs, g1.LEGS)):
             if opt:
@@ -106,6 +108,12 @@ def main():
         if k % 20 == 0: print(f'{k + 1}/{len(stems)} {stem} L50={L} n30={n30} {time.time() - t0:.0f}s', flush=True)
     with (out / f'GEN_LOG.{si}of{sn}.jsonl').open('a') as f:
         for r in log: f.write(json.dumps(r) + '\n')
+    if ticks:
+        tt = np.asarray(ticks) * 1000.
+        (out / f'TIMING_{si}of{sn}.json').write_text(json.dumps(dict(
+            n_ticks=int(len(tt)), chunk_ms=CHUNK_FRAMES * 20, ms_mean=float(tt.mean()), ms_p50=float(np.percentile(tt, 50)),
+            ms_p95=float(np.percentile(tt, 95)), ms_max=float(tt.max()), rtf_p95=float(np.percentile(tt, 95) / (CHUNK_FRAMES * 20)),
+            protocol=a.protocol, horizon_80ms=hz, steps=a.steps, cfg_w=a.cfg_w, cfg_t=a.cfg_t, gpu=torch.cuda.get_device_name(0)), indent=1))
     print('INFER_DONE', len(stems), f'{time.time() - t0:.0f}s')
 
 
