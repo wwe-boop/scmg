@@ -34,7 +34,14 @@ for lane in sorted(x for x in R.iterdir() if x.is_dir()) if R.exists() else []:
     if ts.exists():
         t = json.loads(ts.read_text())
         for k in ('swap', 'notext'):
-            if k in t: rows.setdefault(f'{lab}-offline', {})[f'text_{k}_ratio'] = t[k]['upper']['ratio']
+            if k in t:
+                rr = rows.setdefault(f'{lab}-offline', {})
+                rr[f'text_{k}_d'] = t[k]['upper']['d_swap']; rr[f'text_{k}_ratio'] = t[k]['upper']['ratio_of_means']
+    wsf = lane / 'ts' / 'WINDOW_SENS.json'
+    if wsf.exists():
+        for k, v in json.loads(wsf.read_text()).items():
+            r = rows.setdefault(f'{lab}-offline' if k == 'base' else f'{lab}-{k}', {})
+            r.update(ws_r_text=v['r_text'], ws_r_audio=v['r_audio'], ws_diff=v['diff'], ws_ci=[round(c, 3) for c in v['ci95']])
     ce = lane / 'ctl' / 'CTL_EVAL.json'
     if ce.exists():
         for k, v in json.loads(ce.read_text()).items():
@@ -50,11 +57,17 @@ if rep.exists():
     for src, t in rp['table'].items():
         rows.setdefault(src, {})['pair_win'] = t['pair_win']['mean']
     for pr, per in rp['pairs'].items():
-        x = pr.split(':')[0]
-        if per: rows.setdefault(x, {})['pw_diff_vs_ctrl'] = [round(v['pair_win']['diff'], 4) for v in per.values()]; \
-            rows[x]['pw_ci_vs_ctrl'] = [[round(c, 4) for c in v['pair_win']['ci95']] for v in per.values()]
+        x, y = pr.split(':')
+        if not per: continue
+        key = 'pw_gain_over_notext' if y.endswith('-notext') else 'pw_diff_vs_ctrl'
+        rows.setdefault(x, {})[key] = round(float(sum(v['pair_win']['diff'] for v in per.values()) / len(per)), 4)
+        rows[x][key + '_ci'] = [[round(c, 3) for c in v['pair_win']['ci95']] for v in per.values()]
+        rows[x]['det_auc_' + key] = round(float(sum(v['det_auc']['diff'] for v in per.values()) / len(per)), 4)
+    for src, t in rp['table'].items():
+        if 'det_auc' in t: rows.setdefault(src, {})['det_auc'] = t['det_auc']['mean']
 (O / 'SUMMARY.json').write_text(json.dumps(rows, indent=1))
-cols = ['FGD', 'dDiv', 'dBA', 'pair_win', 'pw_diff_vs_ctrl', 'text_swap_ratio', 'text_notext_ratio', 'point_stg', 'point_score_a',
+cols = ['FGD', 'dDiv', 'dBA', 'pair_win', 'det_auc', 'pw_diff_vs_ctrl', 'pw_gain_over_notext', 'pw_gain_over_notext_ci', 'ws_r_text', 'ws_r_audio',
+        'ws_diff', 'ws_ci', 'text_swap_d', 'text_notext_d', 'text_swap_ratio', 'text_notext_ratio', 'point_stg', 'point_score_a',
         'point_score_b', 'amp_hit', 'act_03', 'dq_span_rad']
 print('| output | ' + ' | '.join(cols) + ' |'); print('|' + '---|' * (len(cols) + 1))
 fmt = lambda v: '' if v is None else (f'{v:.3f}' if isinstance(v, float) else str(v))

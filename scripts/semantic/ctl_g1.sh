@@ -6,7 +6,10 @@
 #                        on the token clips (shuffle, amp0, amp2, shift, point, gt_novals, gt + cfg_ctl CFGCTL); control metrics
 #                        (scripts/semantic/g1_ctl_eval.py: STG, amplitude hit, +-0.3 s action rate, |dq| vs the no-token run)
 #   CFGT_LANES : cfg_t sweep (separate text guidance, inference only) offline: CFGT values
-#   TS_LANES   : text sensitivity (scripts/echog_g1/text_sensitivity.py: text-swap and no-text vs inference seed 1)
+#   TS_LANES   : text sensitivity (scripts/echog_g1/text_sensitivity.py: text-swap and no-text vs inference seed 1) and the semantic-window
+#                text-vs-audio contribution (scripts/semantic/sem_window_sens.py; no-text AND no-audio runs, 11-06 criterion 1);
+#                with CFGT_LANES also per cfg_t value (+ its seed-1 run)
+#   cfg: CT / CP / SH (sem_head + sem_cond) / FT (flow_text_xattn) / CTFT / empty (adsc)
 #   every official-benchmark output: semantic recognition pair_win (3 recognisers rec-sem-hos-seed*, trained on the train split)
 # 'ctrl' = the existing sf0 dev model (no training, INIT_CTRL). Lanes (LANES, space-separated label|cfg|sc-fragment|data, cfg:
 #   CT = adsc + ctl + ctl_flow, CP = adsc + ctl (planner text-stream route only), empty = adsc; sc fragment = comma-joined JSON members):
@@ -56,13 +59,19 @@ post() {    # gpu label ckpt ctl(0/1)
     SCMG_J=39 ${BENCH_PY:-$PYX} scripts/semantic/g1_ctl_eval.py --ctl $CTL --view $HV --out $L/ctl/CTL_EVAL.json --pair-none $L/bench/offline/seed_000 \
       none-offline=$L/bench/offline/seed_000 none-engine=$L/bench/engine/seed_000 "${ev[@]}" > $L/ctl/ctl_eval.log 2>&1 || log "CTL_EVAL_FAILED $lab"
   fi
-  case " ${CFGT_LANES:-} " in *" $lab "*)
-    for ctv in ${CFGT:-2.5 4.0 6.0}; do bench $g $ck $L/cfgt/ct$ctv/seed_000 offline 0 --cfg-t $ctv; sp+=($lab-ct$ctv=$L/cfgt/ct$ctv/seed_000); done;; esac
   case " ${TS_LANES:-} " in *" $lab "*)
     bench $g $ck $L/ts/seed1/seed_001 offline 1; bench $g $ck $L/ts/swap/seed_000 offline 0 --text-swap
-    bench $g $ck $L/ts/notext/seed_000 offline 0 --modality audio; sp+=($lab-notext=$L/ts/notext/seed_000 $lab-swap=$L/ts/swap/seed_000)
+    bench $g $ck $L/ts/notext/seed_000 offline 0 --modality audio; bench $g $ck $L/ts/noaudio/seed_000 offline 0 --modality text
+    sp+=($lab-notext=$L/ts/notext/seed_000 $lab-swap=$L/ts/swap/seed_000 $lab-noaudio=$L/ts/noaudio/seed_000)
     ${BENCH_PY:-$PYX} scripts/echog_g1/text_sensitivity.py --out $L/ts/TEXT_SENS.json swap=$L/bench/offline/seed_000,$L/ts/swap/seed_000,$L/ts/seed1/seed_001 \
-      notext=$L/bench/offline/seed_000,$L/ts/notext/seed_000,$L/ts/seed1/seed_001 > $L/ts/ts.log 2>&1 || log "TS_FAILED $lab";; esac
+      notext=$L/bench/offline/seed_000,$L/ts/notext/seed_000,$L/ts/seed1/seed_001 > $L/ts/ts.log 2>&1 || log "TS_FAILED $lab"
+    local ws=(base=$L/bench/offline/seed_000,$L/ts/seed1/seed_001,$L/ts/notext/seed_000,$L/ts/noaudio/seed_000);;
+  *) local ws=();; esac
+  case " ${CFGT_LANES:-} " in *" $lab "*)    # separate text guidance (inference only); no-text / no-audio runs are shared (no text = no cfg_t)
+    for ctv in ${CFGT:-2.5 4.0 6.0}; do bench $g $ck $L/cfgt/ct$ctv/seed_000 offline 0 --cfg-t $ctv; sp+=($lab-ct$ctv=$L/cfgt/ct$ctv/seed_000)
+      if [ ${#ws[@]} -gt 0 ]; then bench $g $ck $L/cfgt/ct$ctv-s1/seed_001 offline 1 --cfg-t $ctv
+        ws+=(ct$ctv=$L/cfgt/ct$ctv/seed_000,$L/cfgt/ct$ctv-s1/seed_001,$L/ts/notext/seed_000,$L/ts/noaudio/seed_000); fi; done;; esac
+  [ ${#ws[@]} -gt 0 ] && { ${BENCH_PY:-$PYX} scripts/semantic/sem_window_sens.py --ctl $CTL --out $L/ts/WINDOW_SENS.json "${ws[@]}" > $L/ts/ws.log 2>&1 || log "WS_FAILED $lab"; }
   score $g "${sp[@]}" && log "SEM_DONE $lab" || log "SEM_FAILED $lab"
   log "POST_DONE $lab"
 }
@@ -90,7 +99,8 @@ i=0
 CT='{"adsc": true, "ctl": true, "ctl_flow": true}'
 for spec in ${LANES:-'ctrl||' 'ctl|CT|"ctl_w":1.0,"ctl_field_drop":0.2|c'}; do   # label|cfg (CT / CP / empty)|sc fragment|data flags
   IFS='|' read -r lab cfr scr dt <<< "$spec"
-  case $cfr in CT) cf=$CT;; CP) cf='{"adsc": true, "ctl": true}';; *) cf='{"adsc": true}';; esac
+  case $cfr in CT) cf=$CT;; CP) cf='{"adsc": true, "ctl": true}';; SH) cf='{"adsc": true, "sem_head": true, "sem_cond": true}';;
+    FT) cf='{"adsc": true, "flow_text_xattn": true}';; CTFT) cf='{"adsc": true, "ctl": true, "ctl_flow": true, "flow_text_xattn": true}';; *) cf='{"adsc": true}';; esac
   sc="{$S}"; [ -n "$scr" ] && sc="{$S, ${scr//,/, }}"
   g=${GL[$((i % ${#GL[@]}))]}; i=$((i + 1))
   lane $g $lab "$cf" "$sc" "${dt:-}" &
@@ -99,7 +109,9 @@ done
 wait
 # ground truth + floors on the same events, then the table
 PAIRS= score ${GL[0]} gt=- gt-mismatch=$SB/outputs-dev/gt-mismatch gt-shift2s=$SB/outputs-dev/gt-shift2s
-pairs=$(for f in $O/sem/*--dev.json; do b=$(basename $f --dev.json); echo ${b#*--}; done | sort -u | grep -v '^gt' | grep -v '^ctrl-offline$' | sed 's/$/:ctrl-offline/' | paste -sd,)
-${BENCH_PY:-$PYX} scripts/semantic/sem_report.py --scores $O/sem --rec-prefix rec-sem-hos- --split dev --pairs "$pairs" --out $O/sem/REPORT.json >> $O/sem.log 2>&1
+srcs=$(for f in $O/sem/*--dev.json; do b=$(basename $f --dev.json); echo ${b#*--}; done | sort -u | grep -v '^gt')
+pairs=$( (echo "$srcs" | grep -v '^ctrl-offline$' | sed 's/$/:ctrl-offline/'
+          for x in $srcs; do case $x in *-notext) b=${x%-notext}; echo "$srcs" | grep -qx "$b-offline" && echo "$b-offline:$x";; esac; done) | paste -sd,)
+${BENCH_PY:-$PYX} scripts/semantic/sem_report.py --scores $O/sem --rec-prefix rec-sem-hos- --split dev --pairs "$pairs" --cluster recording --out $O/sem/REPORT.json >> $O/sem.log 2>&1
 ${PYX} scripts/semantic/ctl_summary.py $O > $O/SUMMARY.txt 2>&1
 log "CTL_G1_DONE"
