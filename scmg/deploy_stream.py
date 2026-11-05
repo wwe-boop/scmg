@@ -65,6 +65,26 @@ NAMES34 = [
     'right_2_3_joint', 'right_3_1_joint', 'right_3_2_joint',
 ]
 SOURCE_ID = 5           # semsynth_r7p1 (synthetic speech), closest training source to TTS
+# landing options (Claude 11-05), both OFF unless set -- unset = the stream is bit-identical to before:
+#   SCMG_ARM_ENVELOPE=<HUMAN_ENVELOPE.json>  human-quantile soft limit of arm joints 1-3 / 5-7 on every emitted frame
+#                                            (scmg/landing.py ArmEnvelope: stateless, zero latency, never adds speed)
+#   SCMG_PERSONA=<dir>/<name>                fixed reference motion <name>_ref.npy ([128, 34] normalised) + speaker
+#                                            embedding <name>_spk.npy ([192]) for every sentence (make_persona.py)
+ARM_ENVELOPE = os.environ.get('SCMG_ARM_ENVELOPE', '').strip() or None
+PERSONA = os.environ.get('SCMG_PERSONA', '').strip() or None
+
+
+def persona_cond(device):
+    """(spk, spk_valid, ref, ref_valid) tensors: null style (deployment default) or the SCMG_PERSONA files."""
+    import torch
+    if PERSONA is None:
+        return (torch.zeros(192, device=device), torch.tensor(0., device=device),
+                torch.zeros(128, 34, device=device), torch.tensor(0., device=device))
+    ref = np.load(PERSONA + '_ref.npy').astype(np.float32); spk = np.load(PERSONA + '_spk.npy').astype(np.float32)
+    if ref.shape != (128, 34) or spk.shape != (192,) or not (np.isfinite(ref).all() and np.isfinite(spk).all()):
+        raise ValueError(f'SCMG_PERSONA {PERSONA}: need finite ref [128, 34] and spk [192], got {ref.shape} / {spk.shape}')
+    return (torch.as_tensor(spk, device=device), torch.tensor(1., device=device),
+            torch.as_tensor(ref, device=device), torch.tensor(1., device=device))
 
 
 def emit(row):
@@ -126,7 +146,13 @@ class Model:
         self.sha = self._sha(CKPT)
         self.cfg = dict(ckpt=str(CKPT), vae=str(VAE), stats=str(STATS), cfg_w=2.5, steps=10, H=2,
                         trim_start=True, cfg_null_fix=True, text_mode='x2', x2_rate=15.0, x2_lag=0.15,
-                        source=SOURCE_ID, speaker='null')
+                        source=SOURCE_ID, speaker='null' if PERSONA is None else 'persona:' + PERSONA,
+                        reference='null' if PERSONA is None else 'persona:' + PERSONA, arm_envelope=ARM_ENVELOPE)
+        self.envelope = None
+        if ARM_ENVELOPE:
+            from scmg.landing import ArmEnvelope
+            self.envelope = ArmEnvelope(ARM_ENVELOPE)
+            self.cfg['arm_envelope_cfg'] = self.envelope.cfg
 
     @staticmethod
     def _sha(p):
@@ -143,9 +169,10 @@ class Model:
         from scmg.infer import Streamer
         from scmg.common import U80
         T = 32
+        spk, spk_v, ref, ref_v = persona_cond('cpu')
         cond = dict(text_c=torch.zeros(4, 768), ttime=torch.full((4,), float('nan')),
-                    tmask=torch.ones(4, dtype=torch.bool), spk=torch.zeros(192), spk_valid=torch.tensor(0.),
-                    source=torch.tensor(SOURCE_ID), ref=torch.zeros(128, 34), ref_valid=torch.tensor(0.))
+                    tmask=torch.ones(4, dtype=torch.bool), spk=spk, spk_valid=spk_v,
+                    source=torch.tensor(SOURCE_ID), ref=ref, ref_valid=ref_v)
         s = Streamer(self.m, self.vae, torch.zeros(T, 89), cond, self.stats, H=2 * U80, steps=10,
                      standby=self.qm, ctx_t=self.m.ctx_t, cfg_w=2.5, text_mode='x2', x2_rate=15., x2_lag=.15,
                      deploy_timing=True, trim_start=True, cfg_null_fix=True)
@@ -174,12 +201,13 @@ class Utt:
         self.offs = offs
         self.n_tok = len(ids)
         self.ttime = np.full(self.n_tok, np.nan, np.float32)
+        spk, spk_v, ref, ref_v = persona_cond('cuda')
         cond = dict(text_c=torch.as_tensor(feats, device='cuda').float(),
                     ttime=torch.as_tensor(self.ttime, device='cuda').float(),
                     tmask=torch.ones(self.n_tok, dtype=torch.bool, device='cuda'),
-                    spk=torch.zeros(192, device='cuda'), spk_valid=torch.tensor(0., device='cuda'),
+                    spk=spk, spk_valid=spk_v,
                     source=torch.tensor(SOURCE_ID, device='cuda'),
-                    ref=torch.zeros(128, 34, device='cuda'), ref_valid=torch.tensor(0., device='cuda'))
+                    ref=ref, ref_valid=ref_v)
         self.s = Streamer(model.m, model.vae, torch.zeros(1, 89, device='cuda'), cond, model.stats,
                           H=2 * U80, steps=10, standby=model.qm, ctx_t=model.m.ctx_t, cfg_w=2.5,
                           text_mode='x2', x2_rate=15., x2_lag=.15, deploy_timing=True,
@@ -287,6 +315,8 @@ class Utt:
         if fr is None or len(fr) == 0:
             return
         q = np.asarray(fr.detach().cpu().numpy(), np.float32)
+        if self.model.envelope is not None and np.all(np.isfinite(q)):
+            q = self.model.envelope(q).astype(np.float32)
         if not np.all(np.isfinite(q)):
             emit(dict(uid=self.uid, type='error', stage='scmg', error='non-finite frame'))
             self.cancel = True

@@ -15,23 +15,25 @@ Per label (gen and, where meaningful, the GT of the same clips):
   overspeed     frames with arm speed above the clip's human p95 speed (human = 5 % by construction; >> 5 % = flailing)
   speed         mean over clips of mean gen arm speed / mean GT arm speed
   amp_upper / amp_wrist   median over clips of mean_joint std_gen / std_gt (1 = like the human; << 1 = rigid)
-Speech = raw 'voiced' prosody column > 0.5 with gaps <= 0.3 s closed, from the val view (same clips as the export).
+  style (L3, per clip: amp = mean arm-joint std, spd = mean arm speed, pose = mean arm pose [14])
+                cv_amp / cv_spd = coefficient of variation over clips; pose_disp = mean ||pose - mean pose|| (rad);
+                with --persona <persona.json>: d_amp / d_spd = mean |log(x / x_persona)|, d_pose = mean ||pose - pose_persona||
+Speech = feat89 speech-span flag (column 'valid': first unit onset .. last unit offset of each utterance), val view.
 """
 import argparse, glob, json, os
 import numpy as np
 from scmg.common import P, CPFS, PROSODY_COLS, FPS
-from scmg.landing import (UPPER, WRIST, load_envelope, arm_speed, speech_mask, stillness, freeze_segments,
-                          out_of_envelope, ARMS14)
+from scmg.landing import UPPER, WRIST, load_envelope, arm_speed, stillness, freeze_segments, out_of_envelope
 
 VIEW = CPFS + '/dataset/zehan/gesture/train-v1-20261101/views/data-v36_1'
 
 
 def val_voiced():
-    """ci -> raw voiced column of the val-view clip (the View class builds clips from SPLIT val_ids in train.json order)."""
+    """ci -> raw speech-span flag of the val-view clip (the View class builds clips from SPLIT val_ids in train.json order)."""
     from scmg.data import View
     st = json.load(open(P(CPFS + '/dataset/zehan/gesture/scmg/STATS_v36_1.json')))
     v = View(VIEW, 'val', None, st, mmap=True)
-    col = PROSODY_COLS['voiced']
+    col = PROSODY_COLS['valid']
     return v, lambda ci, n: np.asarray(v.f[v.clips[ci]['start']:v.clips[ci]['start'] + n, col], np.float64)
 
 
@@ -43,7 +45,12 @@ def files(d):
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('out'); ap.add_argument('specs', nargs='+')
     ap.add_argument('--envelope', default=os.environ.get('HUMAN_ENVELOPE', '/home/xr-25b7/bulk/landing-1105/HUMAN_ENVELOPE.json'))
+    ap.add_argument('--persona', default=None, help='persona .json (make_persona.py): distance of every clip style to it')
     a = ap.parse_args()
+    pers = None
+    if a.persona:
+        pj = json.load(open(a.persona)); dsc = np.asarray(pj['descriptor'])      # style_descriptor: [14 std, 14 mean, speed]
+        pers = dict(name=pj['name'], amp=float(dsc[:14].mean()), spd=float(dsc[28]), pose=dsc[14:28])
     e, qs, q = load_envelope(a.envelope)
     col = lambda p: q[:, qs.index(p)]
     lo, hi = col(0.1), col(99.9)
@@ -53,6 +60,7 @@ def main():
         lab, ds = spec.split('=', 1)
         acc = {w: dict(frames=0, wrist=0, upper=0, still=0, over=0, spk=0, frz=0, nseg=0) for w in ('gen', 'gt')}
         sp_ratio, amp_u, amp_w, n_clips = [], [], [], 0
+        sty = {w: dict(amp=[], spd=[], pose=[]) for w in ('gen', 'gt')}
         for d in ds.split('+'):
             fl = files(d)
             if not fl: raise SystemExit(f'{lab}: no gen_H*_*.npy in {d}')
@@ -60,7 +68,7 @@ def main():
                 g = np.load(pg).astype(np.float64); t = np.load(pt).astype(np.float64)
                 n = min(len(g), len(t)); g, t = g[:n], t[:n]
                 if view.clips[ci]['frames'] < n: raise SystemExit(f'{lab}: clip {ci} export longer than the view clip')
-                speech = speech_mask(voiced(ci, n) > 0.5)
+                speech = voiced(ci, n) > 0.5
                 st = arm_speed(t); med, p95 = float(np.median(st)), float(np.percentile(st, 95))
                 for w, x in (('gen', g), ('gt', t)):
                     A = acc[w]; s = arm_speed(x)
@@ -73,6 +81,9 @@ def main():
                 sd = lambda x, c: x[:, c].std(0)
                 amp_u.append(float(np.mean(sd(g, UPPER) / np.maximum(sd(t, UPPER), 1e-3))))
                 amp_w.append(float(np.mean(sd(g, WRIST) / np.maximum(sd(t, WRIST), 1e-3))))
+                for w, x in (('gen', g), ('gt', t)):
+                    sty[w]['amp'].append(float(x[:, 4:18].std(0).mean())); sty[w]['spd'].append(float(arm_speed(x).mean()))
+                    sty[w]['pose'].append(x[:, 4:18].mean(0))
                 n_clips += 1
         r = dict(label=lab, dirs=ds, clips=n_clips, envelope=a.envelope)
         for w, A in acc.items():
@@ -83,6 +94,15 @@ def main():
         r['still_gap'] = round(abs(r['gen']['still'] - r['gt']['still']), 4)
         r['speed'] = round(float(np.mean(sp_ratio)), 3)
         r['amp_upper'] = round(float(np.median(amp_u)), 3); r['amp_wrist'] = round(float(np.median(amp_w)), 3)
+        for w, S in sty.items():
+            amp, spd, pose = np.asarray(S['amp']), np.asarray(S['spd']), np.stack(S['pose'])
+            r[w]['style'] = dict(amp=round(float(amp.mean()), 4), spd=round(float(spd.mean()), 4),
+                                 cv_amp=round(float(amp.std() / amp.mean()), 4), cv_spd=round(float(spd.std() / spd.mean()), 4),
+                                 pose_disp=round(float(np.linalg.norm(pose - pose.mean(0), axis=1).mean()), 4))
+            if pers:
+                r[w]['style'].update(persona=pers['name'], d_amp=round(float(np.abs(np.log(amp / pers['amp'])).mean()), 4),
+                                     d_spd=round(float(np.abs(np.log(spd / pers['spd'])).mean()), 4),
+                                     d_pose=round(float(np.linalg.norm(pose - pers['pose'], axis=1).mean()), 4))
         print(json.dumps(r), flush=True); fo.write(json.dumps(r) + '\n'); fo.flush()
 
 
