@@ -15,7 +15,7 @@ B=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg; C=/mnt/cpfs/zbl-cpfs-new/datas
 DEC=${DEC:-$B/echog-g1-decft-1105/decft-w3d0m05/final.pt}
 S='"p_stream": 0.67, "p_async": 1.0, "p_async_seg": 0.0'
 GL=(${GPUS:-0 1 2 3}); i=0
-export PROFILE=g1 G1_BENCH=1 G1_BENCH_SEEDS=0 SNAP=1000000 TRAIN_SEED=0
+export PROFILE=g1 G1_BENCH=1 G1_BENCH_SEEDS="${G1_BENCH_SEEDS:-0}" SNAP=1000000 TRAIN_SEED=${TRAIN_SEED:-0}
 for spec in ${SETTINGS:-ctrl: sf0:\"self_force_p\":0 sfs10:\"self_force_steps\":10 sfm:\"self_force_steps\":10,\"self_force_cfg\":2.5}; do
   lab=${spec%%:*}; frag=${spec#*:}
   sc="{$S}"; [ -n "$frag" ] && sc="{$S, ${frag//,/, }}"
@@ -24,7 +24,7 @@ for spec in ${SETTINGS:-ctrl: sf0:\"self_force_p\":0 sfs10:\"self_force_steps\":
     g=${GL[$((i % ${#GL[@]}))]}; i=$((i + 1))
     echo "$(date -Is) lane $side/$lab gpu $g sc $sc" >> $O/sf.log
     if [ $side = test ]; then
-      ( INIT=$B/echog-g1-arch-1104/fix-base/best.pt VAE=$DEC bash scripts/r4_lane.sh $g $O/test $lab '{"adsc": true}' "$sc" 2000 > $O/lane-test-$lab.log 2>&1 ) &
+      ( INIT=${INIT_TEST:-$B/echog-g1-arch-1104/fix-base/best.pt} VAE=$DEC bash scripts/r4_lane.sh $g $O/${TEST_SUB:-test} $lab '{"adsc": true}' "$sc" 2000 > $O/lane-${TEST_SUB:-test}-$lab.log 2>&1 ) &
     else
       A=$B/echog-g1-hos-assets
       ( INIT=$B/echog-g1-arch-1104/hos-base/best.pt VAE=$DEC G1_VIEW=$B/views/echog-g1-v1-hos G1_BENCH_STEMS=$A/dev_stems.txt \
