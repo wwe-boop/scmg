@@ -5,7 +5,7 @@
 # (ex002_stream.sh rows stream_prefix / stream_ramp / stream_frozen x seeds 0 1 + snapshots, EX002 FGD v2).
 set -euo pipefail
 : "${DLC_JOB_ID:?real DLC job required}"
-REL=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+REL=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd -P)   # release root
 P=/mnt/cpfs/zbl-cpfs-new/USERS/zehan/baselines/echog-official/reference/dlc-package-r3
 E=/mnt/cpfs/zbl-cpfs-new/USERS/zehan/envs/echog
 W=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/echog-official
@@ -13,7 +13,7 @@ VIEW=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/train-v1-20261101/views/data-v
 NG=$(nvidia-smi -L | wc -l)
 printf '%s\n' "0f67be85c526451bc7d17d4cfefb44357781fc50789c3aec268c024706f471a5  $P/FILES.sha256" | sha256sum -c -
 (cd "$P" && sha256sum -c FILES.sha256 --quiet)
-test -s "$REL/GIT_COMMIT"
+test -s "$REL/GIT_COMMIT" || { echo "GIT_COMMIT missing under $REL"; exit 4; }
 echo "$(date -Is) R2ZH_START gpus=$NG"
 
 # ---- 1 full-data-r2 (skipped when already complete)
