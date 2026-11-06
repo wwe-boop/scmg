@@ -12,7 +12,7 @@ B=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg; C=/mnt/cpfs/zbl-cpfs-new/datas
 CZ=${CZ:-$B/causal-train-1105}; DEC=${DEC:-$B/echog-g1-decft-1105/decft-w3d0m05/final.pt}
 A=${HOS_ASSETS:-$B/echog-g1-hos-assets}; HV=$B/views/echog-g1-v1-hos
 SC='"p_stream": 0.67, "p_async": 1.0, "p_async_seg": 0.0, "self_force_p": 0'
-CSC='"causal_front": true, "causal_spk": true, "causal_text": true'
+CSC='"causal_front": true, "causal_spk": true, "causal_text": true'${EXTRA_SC:+, $EXTRA_SC}
 export PROFILE=g1 SNAP=1000000 TRAIN_SEED=${TRAIN_SEED:-0} CAMPPLUS=$CZ/campplus PSTATS=$CODE/scripts/echog_g1/PROSODY_STATS_echog_g1_hos_train.json
 log() { echo "$(date -Is) [$cmd] $*" >> $O/causal.log; }
 dev_env() { export G1_VIEW=$HV G1_BENCH_STEMS=$A/dev_stems.txt REF_DIR=$A/motion_39d_30fps WAV_DIR=$A/audio SPLIT=$A/dev_stems.txt \
