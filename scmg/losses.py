@@ -49,6 +49,13 @@ class StageCfg:
                                    # URDF joint limits + calibrated left-right / arm-torso self-collision proxies); 0 = off
     safe_torso_w: float = 0.5      # weight of the weaker arm-torso proxy inside w_safe
                                    # sole xy velocity + lowest-sole height vs ground truth on GT-contact frames, official geometry)
+    w_spec: float = 0.0            # 11-06 Div/BA line (a'): two-sided upper-body velocity spectrum matching on the decoded
+                                   # [ctx | target] one-step estimate (scmg/divba_losses.py spec_loss); 0 = off
+    spec_t_min: float = 0.6        # only instances with noise level t >= spec_t_min (low-t estimates are conditional means)
+    spec_level_w: float = 0.5      # weight of the total-power (level) term next to the band-share (shape) term
+    w_onset: float = 0.0           # 11-06 Div/BA line (b'): density-normalised onset-conditioned motion pauses on the decoded
+                                   # frames (divba_losses.onset_loss; onsets = the batch's own prosody onset channel); 0 = off
+    onset_k: int = 4               # half-width (frames, 50 Hz) of the local mean speed that defines a pause
     w_tdelta: float = 0.0          # 11-04 ECHO-G temporal loss (temporal_loss_weight 0.5 there): squared error of the change of
                                    # the velocity-field error between adjacent steps; with the identity codec (z = STRIDE*J)
                                    # also between adjacent FRAMES inside / across latents (raw-space temporal coherence)
@@ -581,7 +588,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         loss = loss + sc.w_int * out['intent']
 
     # ---- decoded continuity / rhythm
-    if sc.w_cont > 0 or sc.w_rhy > 0 or sc.w_phys > 0 or sc.w_foot > 0 or sc.w_safe > 0:
+    if sc.w_cont > 0 or sc.w_rhy > 0 or sc.w_phys > 0 or sc.w_foot > 0 or sc.w_safe > 0 or sc.w_spec > 0 or sc.w_onset > 0:
         x1hat = torch.where(known[..., None], x1i, xt + (1 - t[..., None]) * v)
         # decode with the context the streamer has: 3 more history chunks before the known context (the decoder looks
         # ~7 latents back) and the next chunk's first latent as look-ahead (inference emits a frame only once the latent
@@ -625,6 +632,19 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         if sc.w_phys > 0:
             out.update(phys_reg(y, fv * w_inst[:, None], qm, qs, sc))
             loss = loss + sc.w_phys * (out['phys_joint'] + sc.phys_dyn_w * out['phys_dyn'] + sc.phys_coll_w * out['phys_coll'])
+        if sc.w_spec > 0 or sc.w_onset > 0:
+            from .divba_losses import spec_loss, onset_loss
+            hi_t = (t[:, -1] >= sc.spec_t_min).float()                                # [M]
+            yr, gr = y.float() * qs + qm, gt_frames.float() * qs + qm                   # radians
+            if sc.w_spec > 0:
+                sp = spec_loss(yr, gr, (fv.min(1).values > 0).float() * hi_t, sc.spec_level_w)
+                out.update(sp); loss = loss + sc.w_spec * sp['spec']
+            if sc.w_onset > 0:
+                on = batch['feat'][:, :K * CHUNK_FRAMES, PROSODY_COLS['onset']].float().clamp(min=0)
+                onp = torch.cat([on.new_zeros(B, CHUNK_FRAMES), on], 1)                  # window of chunk k = frames 16(k-1) .. 16(k+1)
+                idx = torch.arange(K, device=dev)[:, None] * CHUNK_FRAMES + torch.arange(2 * CHUNK_FRAMES, device=dev)[None]
+                ol = onset_loss(yr, gr, onp[:, idx].flatten(0, 1), fv * hi_t[:, None], sc.onset_k)
+                out.update(ol); loss = loss + sc.w_onset * ol['onset']
         if sc.w_rhy > 0:
             yt = y[:, CHUNK_FRAMES:].reshape(B, K * CHUNK_FRAMES, Jn)
             gt = gt_frames[:, CHUNK_FRAMES:].reshape(B, K * CHUNK_FRAMES, Jn)
