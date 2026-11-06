@@ -12,6 +12,7 @@ prefix-causal e5 features (--text-causal = the G1 causal cache of the SAME text 
 deploy timing (token times only once voiced), audio look-ahead H = 2 x 80 ms = 160 ms past the chunk start. Individual
 switches (--text-mode / --horizon / --x2-rate / --x2-lag / --deploy-timing) override the protocol preset.
 """
+import zlib
 import argparse, json, os, sys, time
 from pathlib import Path
 import numpy as np
@@ -25,11 +26,22 @@ from scmg.model import INF
 from scmg import g1
 
 
+def clip_seed(seed, mode, stem):
+    """Noise seed of one clip. 'run' = the run seed for every clip (old behaviour: all clips share the noise draws);
+    'per_clip' = seed + crc32(stem) (independent draws per clip, reproducible, independent of shard / clip order)."""
+    if mode == 'run': return seed
+    if mode == 'per_clip': return (seed + zlib.crc32(stem.encode())) % (2 ** 63)
+    raise ValueError(f'seed mode {mode}')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--ckpt', required=True); ap.add_argument('--vae', required=True); ap.add_argument('--stats', required=True)
     ap.add_argument('--view', required=True); ap.add_argument('--text-cache', required=True); ap.add_argument('--out', required=True)
     ap.add_argument('--stems', default=None); ap.add_argument('--n', type=int, default=0)
+    ap.add_argument('--seed-mode', default='run', choices=['run', 'per_clip'],
+                    help="run (old default): every clip of the run uses --seed, so all clips share the same noise draws; "
+                         "per_clip (11-06 protocol for all new SCMG evaluations): clip seed = seed + crc32(stem)")
     ap.add_argument('--seed', type=int, default=0); ap.add_argument('--steps', type=int, default=10); ap.add_argument('--cfg-w', type=float, default=1.0); ap.add_argument('--cfg-t', type=float, default=None, help='separate TEXT guidance (Streamer cfg_t: v_u + w (v_a - v_u) + t (v_at - v_a)); None = joint CFG')
     ap.add_argument('--split', default='test', help="view split: 'test' (val_common view) | 'val' (held-out dev, for choosing inference settings)")
     ap.add_argument('--shard', default='0/1', help='i/n: this process handles clips i, i+n, ...')
@@ -116,7 +128,7 @@ def main():
                                      'titime', 'tseg', 'tiseg', 'tiend', 'text_c') if kk in s}
         kw = {} if proto is None else dict(text_mode=tm, x2_rate=a.x2_rate, x2_lag=a.x2_lag, deploy_timing=dt)
         mkw = dict(audio_off=True) if a.modality == 'text' else {}     # passed only when set (default call unchanged)
-        cmd, _, tk = generate(m, vae, s['feat'], cond, stats, nch, H=H, steps=a.steps, seed=a.seed, standby=qm, ctx_t=m.ctx_t,
+        cmd, _, tk = generate(m, vae, s['feat'], cond, stats, nch, H=H, steps=a.steps, seed=clip_seed(a.seed, a.seed_mode, stem), standby=qm, ctx_t=m.ctx_t,
                               cfg_w=a.cfg_w, cfg_t=a.cfg_t, noise_scale=a.noise_scale, **kw, **mkw)
         if cmd.shape[0] < L or cmd.shape[1] != J or not np.isfinite(cmd).all(): raise ValueError(f'{stem}: generated {cmd.shape}')
         if k > 0: ticks.extend(float(x) for x in tk)           # first clip excluded (CUDA warm-up)
@@ -129,7 +141,7 @@ def main():
         r30 = g1.to30(q50, n30).astype(np.float32)
         torch.save(dict(robot_repr=torch.from_numpy(r30), real_num_frames=n30, fps=30.0, representation_units='physical',
                         representation_schema='projecthermes-g1-39d-standard-v2', source=stem,
-                        generator=dict(ckpt=str(a.ckpt), seed=a.seed, steps=a.steps, cfg_w=a.cfg_w, cfg_t=a.cfg_t, frames50=L, noise_scale=a.noise_scale, no_spk=a.no_spk, smooth=a.smooth, smooth_legs=a.smooth_legs,
+                        generator=dict(ckpt=str(a.ckpt), seed=a.seed, **({'seed_mode': a.seed_mode, 'clip_seed': clip_seed(a.seed, a.seed_mode, stem)} if a.seed_mode != 'run' else {}), steps=a.steps, cfg_w=a.cfg_w, cfg_t=a.cfg_t, frames50=L, noise_scale=a.noise_scale, no_spk=a.no_spk, smooth=a.smooth, smooth_legs=a.smooth_legs,
                                        **({} if (a.modality, a.text_swap) == ('both', False) else
                                           dict(modality=a.modality, text_swap=donor.get(stem))),
                                        resample='scmg/g1.py to30 (cubic / heading spline / RotationSpline)',
