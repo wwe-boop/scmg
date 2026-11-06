@@ -144,9 +144,9 @@ def perturb(d, k, mode_lag=0.):
     g = np.random.default_rng(1000 + k)
     w2 = d['wave'].copy(); w2[n:] = g.normal(0, max(1e-3, float(d['wave'].std())), len(w2) - n).astype(np.float32)
     p2 = np.clip(np.round(w2 * 32768.), -32768, 32767).astype(np.int16)
-    # a word counts as ended by t_k with the SAME predicate as the visibility rule (causal_feat.visible_words: end <= now + ahead
-    # + 1e-9; word times carry float noise such as 2.7200000000000006 for a word ending exactly on the block boundary 2.72 s)
-    kw_ = [i for i, w in enumerate(d['words']) if w['end_time'] <= tk / 50. + 1e-9]; words2 = [d['words'][i] for i in kw_]
+    # a word counts as ended by t_k with the SAME predicate as every causal rule (causal_feat.ended: end <= t + WORD_EPS; word
+    # times carry float noise such as 2.7200000000000006 for a word ending exactly on the block boundary 2.72 s)
+    kw_ = [i for i, w in enumerate(d['words']) if CF.ended(w['end_time'], tk / 50.)]; words2 = [d['words'][i] for i in kw_]
     remap = np.full(len(d['words']) + 1, -1, np.int64); remap[kw_] = np.arange(len(kw_))
     span = CF.text_extras(d['it'], d['words'], tokz, d['kn'], len(d['s']['tmask']))['tword']
     keep = np.array([r[0] >= 0 and all(remap[j] >= 0 for j in range(r[0], r[1] + 1)) for r in span])

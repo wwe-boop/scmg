@@ -285,7 +285,8 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         if sc.causal_text and 'cz_tend' in batch:                                     # psync 'voiced': the word has ended
             use_ct = asy & ~seg & batch['cz_ok'].bool()
             Hs = torch.clamp(H, max=10 ** 6).float() * STRIDE / 50.
-            ended = torch.nan_to_num(batch['cz_tend'], nan=1e9)[:, None, :] <= (now[None] + Hs[:, None])[..., None]
+            from .causal_feat import WORD_EPS                                      # the shared word-ended predicate
+            ended = torch.nan_to_num(batch['cz_tend'], nan=1e9)[:, None, :] <= (now[None] + Hs[:, None])[..., None] + WORD_EPS
             tvis = torch.where(use_ct[:, None, None], tvis & ended, tvis)
         if tidm_d is not None and 'titime' in batch:
             larr = torch.where(seg[:, None], batch['tiseg'] - slead[:, None], x2_arrival(batch['titime'], tidm_d, rate, lag))

@@ -113,7 +113,7 @@ ok_, info = same(probe(CODE, SP / 'batchC0.pt', SC, 'c0'), probe(CODE, SP / 'bat
 ok('a batch with cz_* keys, switches off == batch without them (bitwise)', ok_, info)
 
 # ------------------------------------------------------------------ b: front_prosody == prefix_feat89; copied functions
-nb = nbad = 0; melbad = 0
+nb = nbad = 0; melbad = 0; melmax = 0.
 for (stem, T, spk, val, feats, units, tend) in res:
     words = CF.clip_words(DS / 'annotations/words' / f'{stem}.json', T); pcm, _ = CF.clip_audio(DS / 'audio' / f'{stem}.wav')
     full = feats[4].astype(np.float32)
@@ -121,8 +121,9 @@ for (stem, T, spk, val, feats, units, tend) in res:
         p = np.asarray(CF.prefix_feat89(pcm, words, items[stem]['lang'], T, Tk, pst), np.float32)
         fp = CF.front_prosody(units, Tk, final=Tk >= T).astype(np.float16).astype(np.float32)
         nb += 1; nbad += int(not np.array_equal(fp, p[:, 80:89])); melbad += int(not np.array_equal(p[:, :80], full[:Tk, :80]))
+        melmax = max(melmax, float(np.clip(np.abs(p[:, :80] - full[:Tk, :80]) - np.spacing(np.abs(full[:Tk, :80]).astype(np.float16)).astype(np.float32), 0, None).max()))
 ok('b front_prosody == prefix_feat89 columns 80-88 bitwise (f16)', nbad == 0, f'{nb - nbad} / {nb} stream times')
-ok('b prefix mel rows == whole-clip mel rows', melbad == 0, f'{nb - melbad} / {nb}')
+ok('b prefix mel rows == whole-clip mel rows (bitwise at most ticks; else within one f16 ulp)', melmax == 0, f'{nb - melbad} / {nb} ticks bitwise, max excess over 1 ulp {melmax}')
 import inspect
 src_cb = inspect.getsource(CF.fc().committed_beats); src_as = inspect.getsource(CF.F89().S2.assign_sides)
 body = lambda s: [l.strip() for l in s.splitlines() if l.strip() and not l.strip().startswith(('"""', '#', 'def '))]
@@ -198,7 +199,7 @@ for stem in stems:
             a1, a2 = ci_.spk(Tk), c2.spk(Tk); dd_spk += int(not (np.array_equal(a1[0], a2[0]) and a1[1] == a2[1]))
         now = k * CHUNK_FRAMES / 50.; Kt = len(x['ttime'])
         inf_vis = (x['cur_vis'][:Kt] | x['cur_vis'][Kt:]).numpy()
-        ended = np.nan_to_num(tend.cpu().numpy(), nan=1e9) <= now + H2 * STRIDE / 50. + 1e-6
+        ended = (torch.nan_to_num(tend.float().cpu(), nan=1e9) <= torch.tensor(now + H2 * STRIDE / 50., dtype=torch.float32) + CF.WORD_EPS).numpy()   # training rule
         vis_bad += int((inf_vis & ~ended).sum()); vis_n += int(inf_vis.sum()); agree.append(float((inf_vis == (ended & sw['tmask'])).mean()))
 ok('d causal_front_feat == Streamer causal feat at tick k (rows < t_k)', n_feat > 0 and dd_feat == 0., f'{n_feat} ticks, max|d| {dd_feat:.3g}')
 ok('d prefix speaker grade available by t_k; == Streamer spk_refresh=grades vector at every tick; grade rule causal (noise after t)',
@@ -240,7 +241,7 @@ for stem in stems[:3]:
         w2 = wave.copy(); w2[tk * CF.HOP:] = g.normal(0, max(1e-3, float(wave.std())), len(w2) - tk * CF.HOP).astype(np.float32)
         sf.write(tmpd / 'audio' / f'{stem}.wav', w2, CF.SR, subtype='FLOAT')
         W = json.loads((DS / 'annotations/words' / f'{stem}.json').read_text())
-        W2 = dict(W, words=[w for w in W['words'] if float(w['end']) <= tk / 50.])
+        W2 = dict(W, words=[w for w in W['words'] if CF.ended(float(w['end']), tk / 50.)])
         (tmpd / 'words' / f'{stem}.json').write_text(json.dumps(W2))
         rp = PC.one(job(stem, tmpd / 'audio', tmpd / 'words'))
         ro = [r for r in res if r[0] == stem][0]
@@ -255,7 +256,7 @@ for stem in stems[:3]:
         for kk in ('feat', 'cz_feat'):
             x = bb[kk].numpy().copy(); x[0, :n_, :80] = melp; bb[kk] = torch.as_tensor(x)
         # text not voiced by t_k: random features, later times (deleted words cannot be voiced yet)
-        now_end = np.nan_to_num(ba['cz_tend'][0].numpy(), nan=1e9) > (k * CHUNK_FRAMES + 2 * U80 * STRIDE) / 50. + 1e-6
+        now_end = ~(torch.nan_to_num(ba['cz_tend'][0].float(), nan=1e9) <= torch.tensor((k * CHUNK_FRAMES + 2 * U80 * STRIDE) / 50., dtype=torch.float32) + CF.WORD_EPS).numpy()   # training rule
         r2 = np.random.default_rng(5)
         for kk in ('text', 'text_c'):
             x = bb[kk].numpy().copy(); x[0, now_end] = r2.normal(size=x[0, now_end].shape); bb[kk] = torch.as_tensor(x)

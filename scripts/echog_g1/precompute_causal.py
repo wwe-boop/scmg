@@ -157,9 +157,27 @@ def cmd_slim(a):
     (dst / 'META.json').write_text(json.dumps(m, indent=1)); print('SLIM', dst)
 
 
+def cmd_fixwords(a):
+    """11-06: rewrite UNITS.npy column word_end with causal_feat.unit_word (by time) -- precomputes written before that fix
+    mapped units to words by char index, which drifts after apostrophe / hyphen words. Needs --words-dir. In place
+    (the old file is kept as UNITS.charmap.npy)."""
+    from scmg import causal_feat as CF
+    d = Path(a.out); idx = json.loads((d / 'INDEX.json').read_text()); U = np.load(d / 'UNITS.npy'); U2 = U.copy(); nd = 0
+    for stem, e in idx.items():
+        u0, un = e['units']
+        if not un: continue
+        words = CF.clip_words(Path(a.words_dir) / f'{stem}.json', e['frames'])
+        U2[u0:u0 + un, 5] = [words[i]['end_time'] for i in CF.unit_word(U[u0:u0 + un, 6], words)]
+        nd += int((U2[u0:u0 + un, 5] != U[u0:u0 + un, 5]).sum())
+    if not (d / 'UNITS.charmap.npy').exists(): np.save(d / 'UNITS.charmap.npy', U)
+    np.save(d / 'UNITS.npy', U2)
+    m = json.loads((d / 'META.json').read_text()); m['units_word_map'] = f'by time (causal_feat.unit_word), {nd} of {len(U)} rows changed'
+    (d / 'META.json').write_text(json.dumps(m, indent=1)); print('FIXWORDS', nd, 'of', len(U))
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument('cmd', choices=['run', 'merge', 'slim']); ap.add_argument('--out', required=True); ap.add_argument('--to')
+    ap.add_argument('cmd', choices=['run', 'merge', 'slim', 'fixwords']); ap.add_argument('--out', required=True); ap.add_argument('--to')
     ap.add_argument('--view'); ap.add_argument('--split', default='train')
     ap.add_argument('--audio-dir'); ap.add_argument('--words-dir'); ap.add_argument('--pstats')
     ap.add_argument('--campplus', default='/home/xr-25b7/bulk/models-ro/campplus')
@@ -167,7 +185,7 @@ def main():
     ap.add_argument('--tokenizer', default='/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/models/scmg/multilingual-e5-base')
     ap.add_argument('--shard', default='0/1'); ap.add_argument('--limit', type=int, default=0); ap.add_argument('--workers', type=int, default=1)
     a = ap.parse_args()
-    {'run': cmd_run, 'merge': cmd_merge, 'slim': cmd_slim}[a.cmd](a)
+    {'run': cmd_run, 'merge': cmd_merge, 'slim': cmd_slim, 'fixwords': cmd_fixwords}[a.cmd](a)
 
 
 if __name__ == '__main__':
