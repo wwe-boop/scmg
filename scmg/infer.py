@@ -23,12 +23,20 @@ from .data import require_causal_text
 WIN, LOOK = 16, 2
 
 
+def sde_step(x, v, t, dt, gamma, generator):
+    """One Euler-Maruyama step of the marginal-preserving SDE of the rectified flow x_t = t x1 + (1-t) n (t: 0 noise -> 1 data):
+    dx = [v - gamma n0] dt + sqrt(2 gamma (1-t)) dW with n0 = x - t v = E[n | x_t] (score = -n0 / (1-t), g^2 = 2 gamma (1-t))."""
+    n0 = x - t * v
+    eps = torch.randn(x.shape, device=x.device, dtype=x.dtype, generator=generator)
+    return x + (v - gamma * n0) * dt + (2 * gamma * (1 - t) * dt) ** 0.5 * eps
+
+
 class Streamer:
     def __init__(self, model, vae, feat, cond, stats, H=INF, steps=10, temperature=1.0, n_future=0, seed=0, noise_scale=1.0,
                  standby=None, device='cuda', hist_measured=False, ctx_t=1.0, cfg_w=1.0, cfg_text=True, cfg_t=None,
                  text_mode='final', x2_rate=15.0, x2_lag=0.15, seg_lead=0.3, deploy_timing=False,
                  elastic=None, window_lm_text=False, g_override=None, trim_start=True, cfg_null_fix=True, still_refresh=None,
-                 audio_off=False, causal_inputs=None, asr_lag=0.5, trace=None):
+                 audio_off=False, causal_inputs=None, asr_lag=0.5, trace=None, sde_eta=0.0):
         """feat [T, 89] normalised (whole utterance; access is restricted to what has arrived);
         cond: dict(text [K,768], ttime [K] absolute s, tmask [K], spk [192], spk_valid, source, ref [R,J], ref_valid)
         (+ tts_h [T/4, 2048], tts_hm [T/4] for models with cfg.tts_h: TTS hidden rows aligned to feat frame 0, row r = frames
@@ -54,6 +62,12 @@ class Streamer:
         self.qm = torch.tensor(stats['q_mean'], device=device); self.qs = torch.tensor(stats['q_std'], device=device)
         self.H, self.steps, self.temp, self.n_future = H, steps, temperature, n_future
         self.noise_scale = float(noise_scale)   # 11-04: scale of the initial flow noise (1 = standard sampling; <1 = lower diversity)
+        # 11-06 stochastic sampler (Div/BA line): marginal-preserving SDE of the rectified flow x_t = t x1 + (1-t) n,
+        #   dx = [v - gamma n0] dt + sqrt(2 gamma (1-t)) dW,  n0 = x - t v = E[n | x_t]  (score = -n0 / (1-t), g^2 = 2 gamma (1-t)),
+        # Euler-Maruyama on every step but the last (plain Euler there). gamma = 0 is the Euler ODE; the default path does not
+        # enter the branch, so it stays bit-identical. Fresh noise comes from the streamer's own generator (seeded).
+        self.sde_eta = float(sde_eta)
+        if self.sde_eta < 0: raise ValueError(f'sde_eta {sde_eta} < 0')
         self.g = torch.Generator(device=device).manual_seed(seed)
         self.lat = []                     # committed latents (normalised), one [z] per latent step
         self.frames = []                  # emitted joint frames (rad)
@@ -394,7 +408,10 @@ class Streamer:
                         v = v_u + self.cfg_w * (v_a - v_u) + self.cfg_t * (v - v_a)
                     else:
                         v = v_u + self.cfg_w * (v - v_u)
-                x = torch.where(known[..., None], x, x + v / self.steps)
+                if self.sde_eta > 0 and s < self.steps - 1:
+                    x = torch.where(known[..., None], x, sde_step(x, v, tval, 1.0 / self.steps, self.sde_eta, self.g))
+                else:
+                    x = torch.where(known[..., None], x, x + v / self.steps)
             new = x[0, cfg.ctx:]
             lat[kw] = new
             out.append(new)
