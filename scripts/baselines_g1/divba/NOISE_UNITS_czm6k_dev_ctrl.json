@@ -1,0 +1,29 @@
+{
+ "control": "czm6k_dev_ctrl",
+ "inputs": {
+  "psync": [
+   "/home/xr-25b7/bulk/divba-1106/post/zt/ctrl_psync_seed_000/diag.json",
+   "/home/xr-25b7/bulk/divba-1106/post/zt/ctrl_psync_seed_001/diag.json"
+  ],
+  "offline": [
+   "/home/xr-25b7/bulk/divba-1106/post/zt/ctrl_offline_seed_000/diag.json",
+   "/home/xr-25b7/bulk/divba-1106/post/zt/ctrl_offline_seed_001/diag.json"
+  ]
+ },
+ "T1_ba_lift": {
+  "control": 0.0012987178180256902,
+  "unit": 0.0015706005117677756
+ },
+ "T2_shape_l1": {
+  "control": 0.21006359446424594,
+  "unit": 0.1797172705196804
+ },
+ "T3_div_gap": {
+  "control": 0.26261490070873783,
+  "unit": 0.20418070132631136
+ },
+ "div_psync": 1.7349571957964636,
+ "div_offline": 1.4723422950877258,
+ "ba_null_psync": 0.6064718101496731,
+ "total_power_rel_gt_psync": 0.6368416078441379
+}
