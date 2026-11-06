@@ -14,14 +14,20 @@ NG=$(nvidia-smi -L | wc -l)
 printf '%s\n' "0f67be85c526451bc7d17d4cfefb44357781fc50789c3aec268c024706f471a5  $P/FILES.sha256" | sha256sum -c -
 (cd "$P" && sha256sum -c FILES.sha256 --quiet)
 test -s "$REL/GIT_COMMIT" || { echo "GIT_COMMIT missing under $REL"; exit 4; }
-echo "$(date -Is) R2ZH_START gpus=$NG"
+# Keep numba/librosa caches on the pod's local disk. The shared env lives on CPFS
+# (USERS/zehan/envs/echog); r2 (dlc140g6izut8i1j) hit OSError 116 stale file handle
+# when many condition workers concurrently read numba's cache index while importing librosa.
+export NUMBA_CACHE_DIR=/tmp/numba-$DLC_JOB_ID
+mkdir -p "$NUMBA_CACHE_DIR"
+echo "$(date -Is) R2ZH_START gpus=$NG NUMBA_CACHE_DIR=$NUMBA_CACHE_DIR"
 
 # ---- 1 full-data-r2 (skipped when already complete)
 if [ ! -f "$W/full-data-r2/FULL_DATA_COMPLETE.json" ]; then
   ( export PATH="$E/bin:$PATH" PYTHONPATH="$P/official/src:$P/code" PYTHONDONTWRITEBYTECODE=1 HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1 USE_TF=0 USE_FLAX=0
     export XDG_CACHE_HOME=$W/dlc-cache/$DLC_JOB_ID HF_HOME=$W/dlc-cache/$DLC_JOB_ID/hf TORCH_HOME=$W/dlc-cache/$DLC_JOB_ID/torch
     export TMPDIR=$XDG_CACHE_HOME/tmp OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 TOKENIZERS_PARALLELISM=false MUJOCO_GL=disable
-    mkdir -p "$TMPDIR"
+    export NUMBA_CACHE_DIR=/tmp/numba-$DLC_JOB_ID
+    mkdir -p "$TMPDIR" "$NUMBA_CACHE_DIR"
     python "$P/code/gate_check.py" --package "$P"
     python "$P/code/prepare_full.py" --output "$W/full-data-r2" --view "$VIEW" --code "$P/code" --workers "${PREP_WORKERS:-6}" \
       --gpus "$NG" --per-gpu "${PREP_PER_GPU:-6}" --claim-round "$DLC_JOB_ID" )
@@ -29,7 +35,7 @@ fi
 test -f "$W/full-data-r2/FULL_DATA_COMPLETE.json"
 echo "$(date -Is) DATA_DONE"
 
-# ---- 2 streaming fine-tune + evaluation
+# ---- 2 streaming fine-tune + evaluation (inherits NUMBA_CACHE_DIR)
 cd "$REL"
 GL=$(seq -s ' ' 0 $((NG - 1)))
 TAG=r2zh INIT=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/echog-stream-weights-20261106/ex002/final.pt DATA="$W/full-data-r2" \
