@@ -1,5 +1,6 @@
 #!/bin/bash
-# dlc_infer.sh (generic copy of dlc_zt.sh): REL, OUT, CKS (checkpoint sha prefix) and CONFIGS ("name|steps|infer extra" lines) from env.
+# dlc_infer.sh (generic copy of dlc_zt.sh): REL, OUT, CKS (checkpoint sha prefix) and CONFIGS ("name|steps|infer extra[|ckpt]" lines)
+# from env; COMMON_EXTRA is appended to every config (11-06: "--seed-mode per_clip"); GPUS = bench.sh shard GPU list.
 # zehan-scmg-g1-divba-zt-1106 / -sde-1106: zero-training Div/BA candidates on the D-spk DEV split only (400 clips; criteria fixed before the
 # run in scripts/baselines_g1/divba/CRITERIA.md, commit ac2289c). Model czm6k dev (hos-base + causal-matched 6000 steps).
 # Configs: ctrl (10 steps, noise 1.0) | st16 (16 ODE steps) | ns09 / ns08 (initial-noise scale 0.9 / 0.8);
@@ -25,12 +26,12 @@ cd $REL && echo "release commit $(cat GIT_COMMIT) host $(hostname) nproc $(nproc
 nvidia-smi --query-gpu=index,name,memory.used,memory.total --format=csv
 ( while true; do echo "$(date -Is) load=$(cut -d' ' -f1-3 /proc/loadavg) gpu=$(nvidia-smi --query-gpu=index,memory.used,utilization.gpu --format=csv,noheader | paste -sd';')"; sleep 30; done ) > $L/MONITOR.log 2>&1 &
 MON=$!
-while IFS='|' read -r cfg ST EX; do
+while IFS='|' read -r cfg ST EX CKC; do
   [ -z "$cfg" ] && continue
   for p in psync offline; do for sd in 0 1; do
     P=$O/$cfg/$p/seed_00$sd; [ -f $O/$cfg/$p/benchmark_seed_00$sd.json ] && continue
-    echo "$(date -Is) START $cfg $p s$sd steps $ST extra '$EX'"
-    STEPS=$ST INFER_EXTRA="$EX" GPUS="${GPUS:-0 0 0 0 1 1 1 1}" CFGW=2.5 bash scripts/echog_g1/bench.sh scmg $CK $DEC $P $p $sd > $O/bench_${cfg}_${p}_s$sd.log 2>&1 \
+    echo "$(date -Is) START $cfg $p s$sd steps $ST extra '$EX ${COMMON_EXTRA:-}' ckpt ${CKC:-$CK}"
+    STEPS=$ST INFER_EXTRA="$EX ${COMMON_EXTRA:-}" GPUS="${GPUS:-0 0 0 0 1 1 1 1}" CFGW=2.5 bash scripts/echog_g1/bench.sh scmg ${CKC:-$CK} $DEC $P $p $sd > $O/bench_${cfg}_${p}_s$sd.log 2>&1 \
       && echo "$(date -Is) DONE $cfg $p s$sd $(grep -h 'G1-emageFGD' $O/bench_${cfg}_${p}_s$sd.log | tail -1)" || echo "$(date -Is) FAILED $cfg $p s$sd"
   done; done
 done <<< "${CONFIGS:?configs}"
