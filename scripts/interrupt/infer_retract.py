@@ -133,15 +133,15 @@ class RetractStreamer(Streamer):
         mu, _ = self.vae.encode(((seq - self.qm) / self.qs)[None])
         z = ((mu - self.m.lat_mean) / self.m.lat_std)[0]
         l0 = len(F) // STRIDE - back // STRIDE                  # first encoded latent (F = the frames emitted so far)
-        t_settle = self.t_int + (self.tr if self.retract == 'tr' else self.tr - 0.08 - 1e-6 if self.retract in ('tr2', 'tr2h') else 0.)
+        t_settle = self.t_int + (self.tr if self.retract == 'tr' else self.tr - 0.08 - 1e-6 if self.retract in ('tr2', 'tr2h', 'tr2hd') else 0.)
         self.tgt = {l0 + i: z[i] for i in range(z.shape[0]) if l0 + i >= self.l_r and (l0 + i) * STRIDE / 50. >= t_settle - 1e-9}
 
     def _positions(self):
         """target-chunk positions (0..CHUNK-1) replaced in the chunk about to be generated, with their target latents"""
         a0 = self.o + self.k * CHUNK                            # absolute index of the chunk's first latent
         sel = dict(end=[CHUNK - 1], mid=[1, CHUNK - 1], all=list(range(CHUNK)), tr=list(range(CHUNK)), ramp=list(range(CHUNK)),
-                   tr2=list(range(CHUNK)), tr2h=list(range(CHUNK)))[self.retract]
-        if self.retract in ('tr2', 'tr2h'):
+                   tr2=list(range(CHUNK)), tr2h=list(range(CHUNK)), tr2hd=list(range(CHUNK)))[self.retract]
+        if self.retract in ('tr2', 'tr2h', 'tr2hd'):
             # 11-06: only the two latents ending at t_i + T_r (weights w/2, w: a short ramp onto the rest pose); tr2h also pins the
             # last latent of every later chunk to the rest pose (stay down)
             T = self.t_int + self.tr; out = {}
@@ -150,7 +150,7 @@ class RetractStreamer(Streamer):
                 if a not in self.tgt: continue
                 if abs(ta - T) < 0.04: out[i] = (self.tgt[a], self.w)
                 elif abs(ta - (T - 0.08)) < 0.04: out[i] = (self.tgt[a], 0.5 * self.w)
-                elif self.retract == 'tr2h' and ta > T and i == CHUNK - 1: out[i] = (self.tgt[a], self.w)
+                elif self.retract in ('tr2h', 'tr2hd') and ta > T and i == CHUNK - 1: out[i] = (self.tgt[a], self.w)
             return out
         def wt(i):
             if self.retract != 'ramp': return self.w
@@ -272,7 +272,7 @@ def main():
     ap.add_argument('--audio', default='end', choices=['end', 'silence', 'off']); ap.add_argument('--limit', type=int, default=0)
     ap.add_argument('--every', type=int, default=1, help='use every n-th clip of the interrupt list (dev screening subsets)')
     ap.add_argument('--restart', default='latent', choices=['latent', 'chunk']); ap.add_argument('--react-delay', type=float, default=0.04)
-    ap.add_argument('--retract', default=None, choices=[None, 'end', 'mid', 'all', 'tr', 'ramp', 'tr2', 'tr2h'])
+    ap.add_argument('--retract', default=None, choices=[None, 'end', 'mid', 'all', 'tr', 'ramp', 'tr2', 'tr2h', 'tr2hd'])
     ap.add_argument('--rest', default='R_sil'); ap.add_argument('--human', default=None, help='human_ref json (rest poses)')
     ap.add_argument('--tr', type=float, default=1.0); ap.add_argument('--w', type=float, default=1.0)
     ap.add_argument('--w0', type=float, default=0., help='ramp: weight at t_i (rises to --w at t_i + T_r)')
