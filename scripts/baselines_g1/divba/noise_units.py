@@ -1,6 +1,6 @@
 """Freeze the noise units of the joint Div/BA/clarity criteria (CRITERIA.md) from a CONTROL's own runs only.
 
-Inputs: diag_beats.py JSONs of the control, psync and offline, inference seeds 0 and 1 (label inside each JSON given by --label).
+Inputs: diag_beats.py JSONs of the control (postproc.sh: one prediction label + GT per file), psync and offline, inference seeds 0 and 1.
 u_i = 2 * sqrt(SE_boot^2 + (x_s0 - x_s1)^2 / 4), SE_boot = mean of the two seeds' clip-bootstrap SEs / sqrt(2) (2-seed mean);
 T3 gap uses SE_boot = sqrt(SE_psync^2 + SE_offline^2) of Div. Refuses to overwrite an existing file (frozen once written).
     python noise_units.py --label L --psync s0.json s1.json --offline s0.json s1.json --out NOISE_UNITS_<control>.json
@@ -9,11 +9,11 @@ import argparse, json, os
 import numpy as np
 
 ap = argparse.ArgumentParser()
-ap.add_argument('--label', required=True); ap.add_argument('--psync', nargs=2, required=True); ap.add_argument('--offline', nargs=2, required=True)
+ap.add_argument('--label', required=True, help='name recorded as the control'); ap.add_argument('--psync', nargs=2, required=True); ap.add_argument('--offline', nargs=2, required=True)
 ap.add_argument('--out', required=True)
 a = ap.parse_args()
 if os.path.exists(a.out): raise SystemExit(f'{a.out} exists: noise units are frozen once written')
-ld = lambda f: json.load(open(f))['labels'][a.label]
+ld = lambda f: next(v for k, v in json.load(open(f))['labels'].items() if k != 'GT')   # the one prediction label of a postproc diag.json
 P = [ld(f) for f in a.psync]; O = [ld(f) for f in a.offline]
 
 
