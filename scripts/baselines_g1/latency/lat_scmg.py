@@ -61,6 +61,8 @@ def main():
     ap.add_argument('--cuda-graph', action='store_true', help='Streamer(cuda_graph=True): Local Flow loop replayed as a CUDA graph (exp/cudagraph)')
     ap.add_argument('--spk-refresh', default='tick', choices=['tick', 'grades'], help='psync CAM++ refresh (CausalInputs spk_refresh)')
     ap.add_argument('--tag', default='', help='suffix of the output name')
+    ap.add_argument('--causal-feat', default='prefix', choices=['prefix', 'inc'], help='psync feat89: prefix recompute | incremental IncFeat89 (efff8e8)')
+    ap.add_argument('--ckpt', default=None, help='override of the model checkpoint (e.g. the causal-matched czm6k)')
     a = ap.parse_args(); eng = a.protocol in ('engine', 'psync'); ps = a.protocol == 'psync'
     mon = LC.GPUMon(); host0 = LC.host_snapshot()
     os.environ.pop('SCMG_TEXT_CAUSAL', None)
@@ -79,7 +81,8 @@ def main():
     taps = np.load('/mnt/cpfs/zbl-cpfs-new/USERS/zehan/scmg/edge-bj50/bj50/rp_taps.npy')
     dev = 'cuda'; clk = LC.Sync()
     stats = json.loads(Path(STATS).read_text()); qm = np.asarray(stats['q_mean'], np.float32)
-    m, vae = load(CKPT, VAE, dev)
+    ck = a.ckpt or CKPT
+    m, vae = load(ck, VAE, dev)
     view = View(VIEW_TEST, 'test', TEXT_TEST, stats)
     idx = {c['items'][0]['id']: i for i, c in enumerate(view.clips)}
     tok = AutoTokenizer.from_pretrained(E5); e5 = AutoModel.from_pretrained(E5, torch_dtype=torch.float16).to(dev).eval()
@@ -115,7 +118,8 @@ def main():
             cond.update(CF.text_extras(it, cw, tokz, kn, len(s['tmask'])))
             pcm16, wave = CF.clip_audio(WAVD / f'{stem}.wav')
             ci_ = CF.CausalInputs(pcm16, wave, cw, it['lang'], L, pst, view.fm, view.fs, enc_spk, Tpad=len(s['feat']), spk=True,
-                                   **({} if a.spk_refresh == 'tick' else dict(spk_refresh=a.spk_refresh)))
+                                   **({} if a.spk_refresh == 'tick' else dict(spk_refresh=a.spk_refresh)),
+                                   **({} if a.causal_feat == 'prefix' else dict(feat_mode=a.causal_feat)))
             f_feat, f_spk = ci_.feat, ci_.spk
             def t_feat(Tk, _f=f_feat):
                 t0 = clk.now(); r = _f(Tk); ct['causal_feat89'] += clk.now() - t0; return r
@@ -179,7 +183,7 @@ def main():
         comp = st['audio_feat'] + st['text_enc'] + st['generate'] + st['decode'] + st.get('causal_feat89', 0.) + st.get('causal_campplus', 0.)
         rows.append(dict(stem=stem, dur=dur, frames50=L, n_ticks=nch, stages=st, compute=comp, schedule=sched, ticks=ticks))
         print(f'{k + 1}/{len(stems)} {stem} dur={dur:.2f} comp={comp:.3f} {st}', flush=True)
-    extra = dict(protocol=a.protocol, cuda_graph=a.cuda_graph, spk_refresh=a.spk_refresh if ps else None, ckpt=CKPT, vae=VAE, steps=10, cfg_w=2.5, dtype='fp32', release=str(REL),
+    extra = dict(protocol=a.protocol, cuda_graph=a.cuda_graph, causal_feat=a.causal_feat if ps else None, ckpt_used=ck, spk_refresh=a.spk_refresh if ps else None, ckpt=CKPT, vae=VAE, steps=10, cfg_w=2.5, dtype='fp32', release=str(REL),
                  frame_fps=50, note_to30='to30 is reported but excluded from compute / e2e (benchmark format only)',
                  host_start=host0, host_end=LC.host_snapshot(), torch=torch.__version__)
     extra.update(LC.cuda_mem()); extra.update(mon.stop())
