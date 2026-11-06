@@ -10,7 +10,7 @@ B=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg; C=/mnt/cpfs/zbl-cpfs-new/datas
 L=$B/baselines-g1-1105/latency; DR=$B/baseline-repro-1104/echog/data_root; A=$B/echog-g1-hos-assets   # dev GT / audio
 PY=${PY:-$L/envs/causal/bin/python}; EPY=/mnt/cpfs/zbl-cpfs-new/USERS/zehan/envs/echog/bin/python
 OFF=/mnt/cpfs/zbl-cpfs-new/USERS/zehan/baselines/echog-official/official
-CK=${CK:-$B/baselines-g1-1105/assets/czm6k/final.pt}   # causal-matched deployment model (runs/test/czm6k); VAE=$B/echog-g1-decft-1105/decft-w3d0m05/final.pt
+CK=${CK:-$B/baselines-g1-1105/assets/czm6k/final.pt}; VAE=$B/echog-g1-decft-1105/decft-w3d0m05/final.pt   # CK: causal-matched deployment model (runs/test/czm6k)
 HOSV=$B/views/echog-g1-v1-hos; TEXT=$C/scmg/text-e5-echog-g1-v1; TEXTC=$B/models/text-e5-causal-echog-g1-v1
 WORDS=$B/causal-train-1105/words-dev; PS=$CODE/scripts/echog_g1/PROSODY_STATS_echog_g1_hos_train.json
 CAMPPLUS=${CAMPPLUS:-$L/snap/campplus}
