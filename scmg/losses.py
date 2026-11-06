@@ -109,6 +109,8 @@ class StageCfg:
     ret_drop: float = 0.5          # 11-06 retrieval route (cfg.ret + batch ret_*): P(sample sees no retrieved exemplar)
     ctl_t_jitter: float = 0.0      # 11-06 interval tokens: annotation-token time += U(-j, +j) s per token (the token says "a gesture of
                                    # this class within this ~2j s span"; the Local Flow places the stroke itself); 0 = exact times
+    ctl_jitter_types: tuple = ()   # 11-06 round 5: only these token types are jittered (scmg/ctl.py TYPE_ID, e.g. (1, 2) deictic / iconic);
+                                   # () = every annotation token (round-3 behaviour)
     ctl_lr_scale: float = 1.0      # 11-06: learning-rate multiplier of the control-token modules (scmg.train param group)
     ctl_cf_p: float = 0.0          # 11-06 counterfactual control: P(sample's kept POINT tokens get ANOTHER token's target, rolled over
                                    # the batch); their segment [a - 0.3, b + 0.3] is removed from the flow loss and only the ray loss
@@ -246,7 +248,9 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         from .ctl import anchor_arrival, visibility
         ct = batch['ctl_t'].float()
         if sc.ctl_t_jitter > 0:
-            ct = ct + (batch['ctl_g'] == 0).float() * (torch.rand(ct.shape, device=dev) * 2 - 1) * sc.ctl_t_jitter
+            jm = (batch['ctl_g'] == 0)
+            if sc.ctl_jitter_types: jm = jm & torch.isin(batch['ctl_type'], torch.tensor(list(sc.ctl_jitter_types), device=dev))
+            ct = ct + jm.float() * (torch.rand(ct.shape, device=dev) * 2 - 1) * sc.ctl_t_jitter
         gdrop = torch.stack([r(sc.ctl_drop), r(sc.ctl_drop)], 1)                    # annotation / lexical groups dropped independently
         cm = (batch['ctl_type'] > 0) & torch.isfinite(ct) & ~torch.gather(gdrop, 1, batch['ctl_g'].long().clamp(0, 1))
         cvm = batch['ctl_vm'].float()
