@@ -10,7 +10,7 @@ B=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg; C=/mnt/cpfs/zbl-cpfs-new/datas
 L=$B/baselines-g1-1105/latency; DR=$B/baseline-repro-1104/echog/data_root; A=$B/echog-g1-hos-assets   # dev GT / audio
 PY=${PY:-$L/envs/causal/bin/python}; EPY=/mnt/cpfs/zbl-cpfs-new/USERS/zehan/envs/echog/bin/python
 OFF=/mnt/cpfs/zbl-cpfs-new/USERS/zehan/baselines/echog-official/official
-CK=${CK:-$B/echog-g1-sf-1105/test/sf0/final.pt}; VAE=$B/echog-g1-decft-1105/decft-w3d0m05/final.pt
+CK=${CK:-$B/baselines-g1-1105/assets/czm6k/final.pt}   # causal-matched deployment model (runs/test/czm6k); VAE=$B/echog-g1-decft-1105/decft-w3d0m05/final.pt
 HOSV=$B/views/echog-g1-v1-hos; TEXT=$C/scmg/text-e5-echog-g1-v1; TEXTC=$B/models/text-e5-causal-echog-g1-v1
 WORDS=$B/causal-train-1105/words-dev; PS=$CODE/scripts/echog_g1/PROSODY_STATS_echog_g1_hos_train.json
 CAMPPLUS=${CAMPPLUS:-$L/snap/campplus}
@@ -20,7 +20,7 @@ s=[l.strip() for l in open('$B/echog-g1-hos-assets/dev_stems.txt') if l.strip()]
 log() { echo "$(date -Is) $*" | tee -a $O/check.log; }
 for proto in offline psync; do
   case $proto in offline) PA=(--protocol offline);;
-    psync) PA=(--protocol psync --text-causal $TEXTC --wav-dir $A/audio --words-dir $WORDS --pstats $PS --campplus $CAMPPLUS);; esac
+    psync) PA=(--protocol psync --text-causal $TEXTC --wav-dir $A/audio --words-dir $WORDS --pstats $PS --campplus $CAMPPLUS --causal-feat ${CAUSAL_FEAT:-inc} --spk-refresh ${SPK_REFRESH:-grades});; esac
   for cg in off on; do
     F=(); [ $cg = on ] && F=(--cuda-graph)
     $PY scripts/echog_g1/infer_test.py --ckpt $CK --vae $VAE --stats $C/scmg/STATS_echog_g1_v1.json --view $HOSV --text-cache $TEXT \
@@ -50,7 +50,7 @@ mkdir -p $O/ds/annotations; ln -sfn $A/audio $O/ds/audio; ln -sfn $WORDS $O/ds/a
 TCS=$(head -3 $O/stems.txt | paste -sd,)
 for G in 0 1; do
   CUDA_GRAPH=$G CK=$B/echog-g1-sf-1105/dev/sf0/final.pt VAE=$VAE STATS=$C/scmg/STATS_echog_g1_v1.json HOSV=$HOSV TEXT=$TEXT TEXTC=$TEXTC \
-    DS=$O/ds TC_STEMS=$TCS PSTATS=$PS CAMPPLUS=$CAMPPLUS BASE_FILE=${BASE_FILE:?} STREAM_CORE=$L/snap/echog_stream/echog_stream/stream_core.py \
+    DS=$O/ds PSTATS=$PS CAMPPLUS=$CAMPPLUS BASE_FILE=${BASE_FILE:?} STREAM_CORE=$L/snap/echog_stream/echog_stream/stream_core.py \
     TC_DEV=$B/echog-g1-hos-assets/dev_stems.txt SP=$O $PY scripts/tests/test_causal_stream.py > $O/test_causal_stream_cg$G.log 2>&1 \
     && log "TEST_CAUSAL_STREAM cuda_graph=$G PASS" || log "TEST_CAUSAL_STREAM cuda_graph=$G FAIL (see log)"
 done
