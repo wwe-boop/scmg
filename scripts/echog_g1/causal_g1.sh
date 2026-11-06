@@ -25,7 +25,7 @@ case $cmd in
     if [ $side = dev ]; then dev_env; INIT=${INIT:-$B/echog-g1-arch-1104/hos-base/best.pt}; export G1_BENCH=${G1_BENCH:-1}
     else INIT=${INIT:-$B/echog-g1-arch-1104/fix-base/best.pt}; export G1_BENCH=${G1_BENCH:-0} WORDS_DIR=$CZ/words-vc; fi
     log "lane $side/$lab steps $st gpu ${GPU:-0} sc $sc init $INIT bench $G1_BENCH protos ${BENCH_PROTOS:-offline psync} seeds ${SEEDS:-0}"
-    INIT=$INIT VAE=$DEC CAUSAL_DIR=$CZ/pre-train-slim BENCH_PROTOS="${BENCH_PROTOS:-offline psync}" G1_BENCH_SEEDS="${SEEDS:-0}" \
+    INIT=$INIT VAE=$DEC CAUSAL_DIR=$CZ/${CAUSAL_SUB:-pre-train-slim} BENCH_PROTOS="${BENCH_PROTOS:-offline psync}" G1_BENCH_SEEDS="${SEEDS:-0}" \
       bash scripts/r4_lane.sh ${GPU:-0} $O/$side $lab '{"adsc": true}' "$sc" $st > $O/lane-$side-$lab.log 2>&1
     log "LANE_END $side/$lab rc $?";;
   ref)

@@ -70,6 +70,9 @@ def main():
                          'length order of the stem list, times rescaled to this clip -- with this clip\'s audio / speaker')
     ap.add_argument('--text-swap-map', default=None, help='with --text-swap: JSON {stem: donor stem} (e.g. shared with the ECHO-G '
                     'probe scripts/echog_g1/echog_textuse.py) instead of the length-order neighbour')
+    ap.add_argument('--causal-feat', default='prefix', choices=['prefix', 'inc'],
+                    help="causal feat89: 'prefix' = recomputed from the arrived PCM every tick (default); 'inc' = incremental "
+                         "(causal_feat.IncFeat89, bitwise equal, scripts/tests/test_causal_inc.py)")
     ap.add_argument('--diag-whole-spk', action='store_true', help='diagnostic: causal inputs with the whole-clip speaker vector')
     ap.add_argument('--spk-refresh', default='tick', choices=['tick', 'grades'],
                     help="causal speaker vector: 'tick' = CAM++ of the prefix every tick (default); 'grades' = refreshed only at the "
@@ -154,7 +157,8 @@ def main():
             if cin:
                 pcm16, wave = CF.clip_audio(Path(a.wav_dir) / f'{stem}.wav')
                 mkw['causal_inputs'] = CF.CausalInputs(pcm16, wave, words, it['lang'], L, pst, view.fm, view.fs, enc,
-                                                       Tpad=len(s['feat']), spk=not a.no_spk, spk_refresh=a.spk_refresh)
+                                                       Tpad=len(s['feat']), spk=not a.no_spk, spk_refresh=a.spk_refresh,
+                                                       feat_mode=a.causal_feat)
                 if a.diag_whole_spk:                     # diagnostic split of the causal-input cost: causal feat89, whole-clip speaker
                     _sv = (np.asarray(s['spk'], np.float32), float(s['spk_valid'])); mkw['causal_inputs'].spk = lambda Tk, _sv=_sv: _sv
         if a.cuda_graph: mkw['cuda_graph'] = True
@@ -172,7 +176,8 @@ def main():
         torch.save(dict(robot_repr=torch.from_numpy(r30), real_num_frames=n30, fps=30.0, representation_units='physical',
                         representation_schema='projecthermes-g1-39d-standard-v2', source=stem,
                         generator=dict(ckpt=str(a.ckpt), seed=a.seed, steps=a.steps, cfg_w=a.cfg_w, cfg_t=a.cfg_t, frames50=L, noise_scale=a.noise_scale, no_spk=a.no_spk, **({'diag_whole_spk': True} if a.diag_whole_spk else {}),
-                                       **({'spk_refresh': a.spk_refresh} if a.spk_refresh != 'tick' else {}), smooth=a.smooth, smooth_legs=a.smooth_legs,
+                                       **({'spk_refresh': a.spk_refresh} if a.spk_refresh != 'tick' else {}),
+                                       **({'causal_feat': a.causal_feat} if a.causal_feat != 'prefix' else {}), smooth=a.smooth, smooth_legs=a.smooth_legs,
                                        **({} if (a.modality, a.text_swap) == ('both', False) else
                                           dict(modality=a.modality, text_swap=donor.get(stem))),
                                        resample='scmg/g1.py to30 (cubic / heading spline / RotationSpline)',

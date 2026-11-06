@@ -34,6 +34,20 @@ import numpy as np
 ROOT = Path(__file__).resolve().parents[1]
 CAMPPLUS = '/home/xr-25b7/bulk/models-ro/campplus'
 FPS, SR, HOP = 50, 16000, 320
+# 11-06 word-ended predicates. Inference text (voiced / asr): end <= t + VOICED_EPS (1e-9, verbatim the ECHO-G stream_core
+# rule; word times carry float noise such as 2.7200000000000006 for a word ending on the 2.72 s block boundary). Training
+# causal_text compares window-relative float32 times: end_f32 <= t_f32 + WORD_EPS (0.1 ms) absorbs the float32 rounding; word
+# times sit on a 10 ms grid, so the two decide every real word identically (all 400 D-spk clips x 4 window starts x 4 horizons
+# x 16 ticks = 3.59M token-ticks: 0 disagreements; 821 without the slack). PROSODY (prefix_feat89 / front_prosody / IncFeat89)
+# keeps feat89.Recording's own float64 filters (end <= Tk / 50, offset <= dur), the same arithmetic on both sides; a word ending
+# within float noise after a block boundary is text-visible at that tick and enters the prosody one tick later, identically
+# in training and inference. Tests perturb with the inference predicate (ended()).
+VOICED_EPS, WORD_EPS = 1e-9, 1e-4
+
+
+def ended(end_s, t_s):
+    """the inference word-ended predicate of the text rules (numpy / float)"""
+    return end_s <= t_s + VOICED_EPS
 _MODS = {}
 
 
@@ -199,10 +213,22 @@ def assign_sides(beats, seed=0):
     return out
 
 
+def unit_word(onsets, words):
+    """index of the view word each unit belongs to, by TIME: the last word whose start <= unit onset (+1e-6). (11-06: the
+    former char-index mapping drifted after words whose apostrophe / hyphen the aligner does not emit, e.g. "aren't",
+    and gave a unit the end of a later word.)"""
+    st = np.asarray([w['start_time'] for w in words], np.float64)
+    return np.clip(np.searchsorted(st, np.asarray(onsets, np.float64) + 1e-6, side='right') - 1, 0, len(words) - 1)
+
+
 def unit_table(units, words, lang):
     """[U, 9] float64 (UNIT_COLS) of the segment units of the whole-clip v2 recording (prefix_feat89(units=True), onset
-    order): word_end = end_time of the view word the unit's first character belongs to (the time prefix_feat89 admits it);
-    syl_* = the beat picker's syllable."""
+    order): word_end = end_time of the view word the unit's first CHARACTER index falls in (char positions of the joined
+    text). NOTE (11-06): this is deliberately the char-index mapping, not the unit's own word by time: feat89's aligner
+    drops apostrophes / hyphens, so after such a word the char indices of later units point one word further -- and
+    exactly as late as the prefix recordings admit those units (a prefix ending at the true word lacks them). With this
+    mapping front_prosody reproduces prefix_feat89 at every tick (20 D-spk clips, 647 ticks, 0 mismatches); the
+    by-time mapping (unit_word) would admit them one word too early (75 / 647 ticks differ)."""
     sep = 1 if lang == 'en' else 0
     starts, pos = [], 0
     for w in words:
@@ -216,7 +242,7 @@ def unit_table(units, words, lang):
     return out
 
 
-def front_prosody(table, Tk, final=False):
+def front_prosody(table, Tk, final=False, admitted=False):
     """Raw feat89 columns FRONT_COLS [Tk, 9] float32 of the causal prefix at Tk frames (= prefix_feat89(Tk)[:, 80:89],
     scripts/tests/test_causal_train.py checks it bitwise after the f16 cast), rebuilt from the whole-clip unit table:
     the prefix recording holds the units whose word ended by Tk / 50 (all of them when final, i.e. Tk >= clip frames)
@@ -227,7 +253,7 @@ def front_prosody(table, Tk, final=False):
     Tk = int(Tk); lim = Tk / 50.
     t = np.asarray(table, np.float64).reshape(-1, len(UNIT_COLS))
     rec = t[:, 1] <= lim
-    if not final: rec &= t[:, 5] <= lim
+    if not (final or admitted): rec &= t[:, 5] <= lim             # admitted: the table holds only admitted units already
     t = t[rec]
     out = np.zeros((Tk, len(FRONT_COLS)), np.float32)
     seg = t[t[:, 0] < lim - 1e-6]
@@ -255,6 +281,75 @@ class CausalFeat89:
     def prefix(self, Tk):
         Tk = int(min(Tk, self.T))
         if Tk not in self.cache: self.cache[Tk] = prefix_feat89(self.pcm, self.words, self.lang, self.T, Tk, self.ps)
+        return self.cache[Tk]
+
+
+class IncFeat89:
+    """Incremental prefix feat89 (11-06; the same values as prefix_feat89, scripts/tests/test_causal_inc.py):
+      mel     only the rows not final yet: logmel of the PCM window [r0 - MARGIN, Tk); the last EDGE rows (computed with the
+              zero padding past Tk) are recomputed next tick. Equal to the prefix mel up to rare 1-ulp f16 flips (the
+              whole-clip view mel the training reads differs from the prefix mel the same way)
+      prosody recomputed only when the set of admitted words changes (end <= Tk / 50, all once final): feat89.Recording over
+              the admitted words (the prefix_feat89 call, so its alignment / filters are identical) with a MEMOISED
+              syllable measurement (fixed statistics: a syllable's energy / f0 / prominence depend only on its own audio),
+              then front_prosody of that recording's units (= prefix_feat89's columns 80-88, the bitwise identity of
+              test_causal_train b); ticks without a new word reuse it.
+    Only pcm[:Tk] and the words ended by Tk are read."""
+    MARGIN, EDGE = 25, 2
+
+    def __init__(self, pcm16, words, lang, T, pstats):
+        self.pcm, self.words, self.lang, self.T, self.ps = pcm16, words, lang, int(T), list(pstats)
+        self.mel = np.zeros((0, 80), np.float32); self.mel_ok = 0
+        self.key = None; self.units = []; self.memo = {}
+        self.cache = {}
+
+    def _mel(self, Tk):
+        from scipy.signal import resample_poly
+        F = F89(); a = max(0, self.mel_ok - self.MARGIN)
+        p = pad_pcm(self.pcm, Tk)[a * HOP:Tk * HOP]
+        m = F.gl_build.logmel(resample_poly(p.astype(np.float32) / 32768., F.gl_build.FS, SR), Tk - a, F.mel())
+        out = np.zeros((Tk, 80), np.float32); out[:self.mel_ok] = self.mel[:self.mel_ok]; out[self.mel_ok:] = m[self.mel_ok - a:]
+        self.mel = out; self.mel_ok = max(self.mel_ok, Tk - self.EDGE)
+        return out
+
+    def _measure(self):
+        """fixed_features with a per-syllable memo (key: onset, offset, char); the measurement reads only the syllable."""
+        base = fc().fixed_features(self.ps); F = F89(); memo = self.memo
+
+        def features(syllables, pcm, fs=24000, cache=None):
+            todo = [s for s in syllables if (s.onset_s, s.offset_s, s.char) not in memo]
+            for s, r in zip(todo, base(todo, pcm, fs) if todo else []): memo[(s.onset_s, s.offset_s, s.char)] = r
+            return [F.Syllable(s.index, s.char, s.onset_s, s.offset_s, *(lambda r: (r.energy_db, r.f0_hz, r.prominence))(memo[(s.onset_s, s.offset_s, s.char)]))
+                    for s in syllables]
+        return features
+
+    def _prosody(self, Tk, final):
+        use = self.words if final else [w for w in self.words if w['end_time'] <= Tk / 50.]
+        key = (len(use), final)
+        if key != self.key:
+            self.key = key; self.units = []
+            if use:
+                F, m = F89(), fc(); old = F.features, F.pick_beats; cap = []
+                pick = m.committed_beats(final)
+                F.features = self._measure(); F.pick_beats = lambda syl, **kw: (cap.extend(syl), pick(syl, **kw))[1]
+                try:
+                    rec = F.Recording(None, None, self.lang, Tk, words=use, pcm_fs=(pad_pcm(self.pcm, Tk), SR))
+                    syl = {int(x.index): x for x in cap}
+                    self.units = [(round(u['onset_s'], 4), round(u['offset_s'], 4), u['prominence'], u['energy_db'], u['f0_hz'], 0.,
+                                   float(syl[int(u['index'])].onset_s), float(syl[int(u['index'])].offset_s), float(syl[int(u['index'])].prominence))
+                                  for u in rec.units]
+                except ValueError:
+                    self.units = []
+                finally:
+                    F.features, F.pick_beats = old
+        tab = np.asarray(self.units, np.float64).reshape(-1, len(UNIT_COLS))
+        return front_prosody(tab, Tk, final=final, admitted=True)   # admission already done by the recording (its word list)
+
+    def prefix(self, Tk):
+        Tk = int(min(Tk, self.T))
+        if Tk not in self.cache:
+            final = Tk >= self.T
+            self.cache[Tk] = np.concatenate([self._mel(Tk), self._prosody(Tk, final)], 1).astype(np.float16)
         return self.cache[Tk]
 
 
@@ -310,8 +405,11 @@ class CausalInputs:
     zeros after (the Streamer zeroes not-arrived rows anyway; rows >= T are zero as in the whole-clip window); spk(Tk) ->
     (spk [192], spk_valid) of the PCM prefix of min(Tk, T) frames (spk=False: always the empty embedding)."""
 
-    def __init__(self, pcm16, wave, words, lang, T, pstats, fm, fs, enc=None, Tpad=None, spk_min_s=1.0, spk=True, spk_refresh='tick'):
-        self.T = int(T); self.Tpad = int(Tpad or T); self.f = CausalFeat89(pcm16, words, lang, T, pstats)
+    def __init__(self, pcm16, wave, words, lang, T, pstats, fm, fs, enc=None, Tpad=None, spk_min_s=1.0, spk=True, spk_refresh='tick',
+                 feat_mode='prefix'):
+        self.T = int(T); self.Tpad = int(Tpad or T)
+        if feat_mode not in ('prefix', 'inc'): raise ValueError(feat_mode)
+        self.f = (IncFeat89 if feat_mode == 'inc' else CausalFeat89)(pcm16, words, lang, T, pstats)
         if self.Tpad < self.T: raise ValueError('Tpad < T')
         self.fm, self.fs = np.asarray(fm, np.float32), np.asarray(fs, np.float32)
         self.sp = SpeakerPrefix(wave, enc, spk_min_s) if spk else None
@@ -357,8 +455,8 @@ def visible_words(token_times, now, ahead, mode, rate, lag, asr_lag=0.5):
     if mode == 'final': return np.ones(len(token_times), bool)
     arr = x2_arrival(token_times[:, 0].astype(np.float64), rate, lag)
     vis = arr <= now + 1e-9
-    if mode == 'voiced': vis &= token_times[:, 1].astype(np.float64) <= now + ahead + 1e-9
-    elif mode == 'asr': vis &= token_times[:, 1].astype(np.float64) + asr_lag <= now + ahead + 1e-9
+    if mode == 'voiced': vis &= ended(token_times[:, 1].astype(np.float64), now + ahead)
+    elif mode == 'asr': vis &= ended(token_times[:, 1].astype(np.float64) + asr_lag, now + ahead)
     elif mode != 'x2': raise ValueError(mode)
     return vis
 
