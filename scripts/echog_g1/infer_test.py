@@ -72,6 +72,10 @@ def main():
     ap.add_argument('--causal-feat', default='prefix', choices=['prefix', 'inc'],
                     help="causal feat89: 'prefix' = recomputed from the arrived PCM every tick (default); 'inc' = incremental "
                          "(causal_feat.IncFeat89, bitwise equal, scripts/tests/test_causal_inc.py)")
+    ap.add_argument('--spk-session', action='store_true',
+                    help='causal inputs: the speaker vector = the whole-clip CAM++ of the most recent EARLIER utterance of the same '
+                         'recording in the split (session enrollment; causal at the conversation level), for every tick; clips '
+                         'without one keep the prefix rule')
     ap.add_argument('--diag-whole-spk', action='store_true', help='diagnostic: causal inputs with the whole-clip speaker vector')
     ap.add_argument('--spk-refresh', default='tick', choices=['tick', 'grades'],
                     help="causal speaker vector: 'tick' = CAM++ of the prefix every tick (default); 'grades' = refreshed only at the "
@@ -111,6 +115,20 @@ def main():
     stems = want if want else [c['items'][0]['id'] for c in view.clips]
     if a.n: stems = stems[:a.n]
     donor = {}
+    sess = {}
+    if a.spk_session:                            # stem -> (spk, valid) of the latest earlier utterance of the same recording
+        import re
+        byrec = {}
+        for st_ in idx:
+            mm = re.match(r'(.*)_utt_(\d+)$', st_)
+            if mm: byrec.setdefault(mm.group(1), []).append((int(mm.group(2)), st_))
+        for rec, lst in byrec.items():
+            lst.sort()
+            for j in range(1, len(lst)):
+                prev = view.clips[idx[lst[j - 1][1]]]['items'][0]['id']
+                row = view.cond.get(str(prev))
+                if row and row[1]: sess[lst[j][1]] = (view.spk_emb[row[0]], 1.)
+        print(f'session enrollment: {sum(1 for x in stems if x in sess)} / {len(stems)} clips have an earlier utterance', flush=True)
     if a.text_swap:                              # derangement over the WHOLE list (before sharding): neighbour in length order
         order = sorted(stems, key=lambda x: (view.clips[idx[x]]['frames'], x))
         donor = {x: order[(i + 1) % len(order)] for i, x in enumerate(order)}
@@ -158,6 +176,8 @@ def main():
                 mkw['causal_inputs'] = CF.CausalInputs(pcm16, wave, words, it['lang'], L, pst, view.fm, view.fs, enc,
                                                        Tpad=len(s['feat']), spk=not a.no_spk, spk_refresh=a.spk_refresh,
                                                        feat_mode=a.causal_feat)
+                if a.spk_session and stem in sess:          # session enrollment: an earlier utterance's whole-clip vector
+                    _sv = (np.asarray(sess[stem][0], np.float32), float(sess[stem][1])); mkw['causal_inputs'].spk = lambda Tk, _sv=_sv: _sv
                 if a.diag_whole_spk:                     # diagnostic split of the causal-input cost: causal feat89, whole-clip speaker
                     _sv = (np.asarray(s['spk'], np.float32), float(s['spk_valid'])); mkw['causal_inputs'].spk = lambda Tk, _sv=_sv: _sv
         cmd, _, tk = generate(m, vae, s['feat'], cond, stats, nch, H=H, steps=a.steps, seed=a.seed, standby=qm, ctx_t=m.ctx_t,
@@ -173,7 +193,7 @@ def main():
         r30 = g1.to30(q50, n30).astype(np.float32)
         torch.save(dict(robot_repr=torch.from_numpy(r30), real_num_frames=n30, fps=30.0, representation_units='physical',
                         representation_schema='projecthermes-g1-39d-standard-v2', source=stem,
-                        generator=dict(ckpt=str(a.ckpt), seed=a.seed, steps=a.steps, cfg_w=a.cfg_w, cfg_t=a.cfg_t, frames50=L, noise_scale=a.noise_scale, no_spk=a.no_spk, **({'diag_whole_spk': True} if a.diag_whole_spk else {}),
+                        generator=dict(ckpt=str(a.ckpt), seed=a.seed, steps=a.steps, cfg_w=a.cfg_w, cfg_t=a.cfg_t, frames50=L, noise_scale=a.noise_scale, no_spk=a.no_spk, **({'diag_whole_spk': True} if a.diag_whole_spk else {}), **({'spk_session': stem in sess} if a.spk_session else {}),
                                        **({'spk_refresh': a.spk_refresh} if a.spk_refresh != 'tick' else {}),
                                        **({'causal_feat': a.causal_feat} if a.causal_feat != 'prefix' else {}), smooth=a.smooth, smooth_legs=a.smooth_legs,
                                        **({} if (a.modality, a.text_swap) == ('both', False) else
