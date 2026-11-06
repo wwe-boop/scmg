@@ -82,3 +82,26 @@ BA, Div and smoothness are optimised jointly. All numbers are on dev, psync, as 
   - (b') onset-conditioned beat loss. Onsets are taken only from **training-set** audio. Inference needs no extra input.
   - (c) chunk-boundary consistency is dropped: there is no boundary artifact to fix.
 - **Rendering:** each passing method gets 6 dev clips rendered side by side (control / candidate / ECHO-G), official MuJoCo for G1, under `/mnt/bulk/zehan/renders/`.
+
+## Protocol change 2026-11-06, about 10:40 (before any per_clip result; coordinator decision with user authorization)
+
+**What changed.** Every SCMG evaluation of this line, and all new SCMG evaluations, now use `infer_test.py --seed-mode per_clip` (exp/divba ebb03ae). The clip seed is seed + crc32(stem).
+
+**Why.** In the old `run` mode every clip of a run starts from the same generator state, so all 400 clips share the same noise draws. Two inference seeds were then effectively 2 samples, not 800. On the czm6k dev control:
+
+| metric | seed 0 | seed 1 |
+|---|---|---|
+| psync shape L1 | 0.299 | 0.121 |
+| offline Div | 1.372 | 1.572 |
+| psync BA | 0.587 | 0.629 |
+
+**Consequences**
+- The old-mode results (jobs dlc1fc5iizdv16u8, dlc148okcrer15da, dlc10x0glnj3dosv, dlc116vua3f481li bench) are reference only.
+- `NOISE_UNITS_czm6k_dev_ctrl.json` (old mode) is superseded. New units are frozen from the per_clip control runs as:
+  - `NOISE_UNITS_czm6k_dev_ctrl_pc.json` for the zero-training control;
+  - `NOISE_UNITS_lane_ctrl_pc.json` for the 2000-step lane control.
+- Criteria, objectives and guards are otherwise unchanged.
+
+**Verdict carried over.** The full-step SDE (gamma 0.5) failed the jerk guard under the old mode (JerkLW 48.6 on both seeds, GT 38.9). That verdict stands and the candidate is not re-run. Early-step SDE variants are judged under per_clip.
+
+**Seed behaviour of the baselines:** see `../SEED_BEHAVIOUR.md`.
