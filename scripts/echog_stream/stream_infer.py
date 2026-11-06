@@ -39,12 +39,28 @@ def batch1(cond, W, dev):
                 time_distance=cond['time_distance'][None], motion_mask=torch.ones(1, W, dtype=torch.bool, device=dev))
 
 
+def ensemble_block(cur, prev, f0, mode):
+    """Temporal ensembling of the committed block (11-06): blend the current window's block with what the PREVIOUS
+    window predicted for the same frames (its tail), decided one block earlier -> causal, no extra latency.
+    'ramp': weight of the current prediction (j + 1) / (L + 1) over the block (hand-over from the previous trajectory),
+    'avg': 0.5. The 320 ms speed sawtooth of block-wise generation (fast block start, slowing block end) is what the
+    blend removes. prev = (abs start frame, [n, D] predictions) or None (first block / no overlap: current only)."""
+    if mode == 'none' or prev is None: return cur
+    ps, pt = prev; a = f0 - ps; L = len(cur)
+    if a < 0 or a + L > len(pt): return cur
+    if mode == 'ramp': w = torch.arange(1, L + 1, device=cur.device, dtype=cur.dtype)[:, None] / (L + 1)
+    elif mode == 'avg': w = torch.full((L, 1), 0.5, device=cur.device, dtype=cur.dtype)
+    else: raise ValueError(mode)
+    return w * cur + (1 - w) * pt[a:a + L]
+
+
 @torch.no_grad()
-def stream_clips(model, sc, clips, fps, steps, *, block_s, ahead, ctx_f, tail_f, text_mode, prefix_audio=None, dev):
+def stream_clips(model, sc, clips, fps, steps, *, block_s, ahead, ctx_f, tail_f, text_mode, prefix_audio=None, dev, ensemble='none'):
     """several clips streamed in lockstep (block k of every active clip in one padded batch; padding is masked as in the
     official batched inference). clip = dict(audio, text, tt, centres, F, noise [F + tail_f, D], wav).
     returns normalised motions [F_i, D] + per-block logs. One clip -> no padding, the exact single-clip computation."""
     D = model.motion_dim; outs = [torch.zeros(c['F'], D, device=dev) for c in clips]; logs = [[] for _ in clips]; k = 0
+    prevs = [None] * len(clips)
     while True:
         f0 = block_start(k, block_s, fps); act = [i for i, c in enumerate(clips) if f0 < c['F']]
         if not act: break
@@ -66,7 +82,9 @@ def stream_clips(model, sc, clips, fps, steps, *, block_s, ahead, ctx_f, tail_f,
             bt['time_distance'][r, :W, :n] = cond['time_distance']; bt['motion_mask'][r, :W] = True
             nz[r, :W] = clips[i]['noise'][ws:fe]; known[r, :f0 - ws] = outs[i][ws:f0]; km[r, :f0 - ws] = True
         y = sample_window_euler(model, bt, nz, known, km, steps, sc.known_xt)
-        for r, (i, f1, ws, fe, cond) in enumerate(items): outs[i][f0:f1] = y[r, f0 - ws:f1 - ws]
+        for r, (i, f1, ws, fe, cond) in enumerate(items):
+            outs[i][f0:f1] = ensemble_block(y[r, f0 - ws:f1 - ws], prevs[i], f0, ensemble)
+            prevs[i] = (f1, y[r, f1 - ws:fe - ws].clone())
         k += 1
     return outs, logs
 
@@ -95,6 +113,8 @@ def main():
     ap.add_argument('--text', choices=['voiced', 'x2', 'final'], default='voiced')
     ap.add_argument('--clip-batch', type=int, default=1, help='clips streamed in lockstep per padded batch (1 = exact single-clip path)')
     ap.add_argument('--shard', default='0/1'); ap.add_argument('--device', default='cuda')
+    ap.add_argument('--ensemble', choices=['none', 'ramp', 'avg'], default='none',
+                    help='temporal ensembling of the committed block with the previous window\'s tail prediction (11-06)')
     a = ap.parse_args()
     dev = torch.device(a.device)
     model, config, mean, std, sc, meta = load_stream_model(a.checkpoint, dev, a.config)
@@ -120,7 +140,7 @@ def main():
     proto = dict(mode='offline' if a.offline else 'stream', block_ms=block_s * 1000, ahead_s=ahead, ctx_frames=ctx_f, tail_frames=tail_f,
                  audio='frozen' if a.offline else a.audio, text='final' if a.offline else a.text, steps=steps,
                  known_xt=sc.known_xt, x2_rate=sc.x2_rate, x2_lag=sc.x2_lag, checkpoint=str(a.checkpoint),
-                 checkpoint_step=meta.get('global_step'), stream_trained='stream' in meta)
+                 checkpoint_step=meta.get('global_step'), stream_trained='stream' in meta, ensemble=a.ensemble)
     t0 = time.time(); log = []; done = 0
     todo = sorted((s_ for s_ in stems if not (a.out / f'{s_}.pt').exists()), key=lambda s_: lengths[s_])   # similar lengths per lockstep group
     G = 1 if a.offline else max(1, a.clip_batch)
@@ -145,7 +165,7 @@ def main():
                                         torch.zeros(1, F, dtype=torch.bool, device=dev), steps, sc.known_xt)[0]]; blogs = [[]]
         else:
             outs, blogs = stream_clips(model, sc, clips, fps, steps, block_s=block_s, ahead=ahead, ctx_f=ctx_f, tail_f=tail_f,
-                                       text_mode=a.text, prefix_audio=pa, dev=dev)
+                                       text_mode=a.text, prefix_audio=pa, dev=dev, ensemble=a.ensemble)
         sec = (time.time() - tc) / len(clips)
         for c, outn, blog in zip(clips, outs, blogs):
             r = (outn.float() * std + mean).cpu().contiguous()

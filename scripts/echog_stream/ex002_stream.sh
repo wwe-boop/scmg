@@ -10,6 +10,8 @@
 #                           EX002 pipeline = official 30 FPS extraction + the recorded 30 -> 50 FPS resampling)
 #        stream_frozen      trained: stream_infer.py --audio frozen (training-time full-chunk features; leak control)
 #        stream_offline     trained: stream_infer.py --offline (offline ability kept?)
+#        stream_ramp        (11-06) stream_prefix + --ensemble ramp (temporal ensembling of the committed block with the previous
+#                           window's tail prediction: removes the 320 ms speed sawtooth; dev FGD v2 100.3 -> 72.7)
 #      + intermediate EMA snapshots (ema_step*.pt): stream_prefix seed 0 (training curve)
 #      every chunk is generated independently (the offline cuts of the official EX002 export; a streaming row restarts cold at
 #      each chunk); every (row, seed) is split into NSLOT = |GPUS| x SPG shards
@@ -80,6 +82,7 @@ job() {  # name seed
     slide_none|slide_inpaint) echo "$o scripts/echog_g1/echog_slide.py --checkpoint $INIT ${CFG[*]} --cond-dir $DEV/condition_50fps --meta $M --stems $STEMS --out $o --seed $sd --audio prefix --text voiced --prefix ${n#slide_} ${SL[*]}";;
     stream_prefix) echo "$o scripts/echog_stream/stream_infer.py --checkpoint $T/final.pt ${COM[*]} --stems $STEMS --out $o --seed $sd --audio prefix ${SL[*]}";;
     stream_frozen) echo "$o scripts/echog_stream/stream_infer.py --checkpoint $T/final.pt ${COM[*]} --stems $STEMS --out $o --seed $sd --audio frozen";;
+    stream_ramp) echo "$o scripts/echog_stream/stream_infer.py --checkpoint $T/final.pt ${COM[*]} --stems $STEMS --out $o --seed $sd --audio prefix --ensemble ramp ${SL[*]}";;
     stream_offline) echo "$o scripts/echog_stream/stream_infer.py --checkpoint $T/final.pt ${COM[*]} --stems $STEMS --out $o --seed $sd --offline";;
     snap_*) echo "$o scripts/echog_stream/stream_infer.py --checkpoint $T/ema_${n#snap_}.pt ${COM[*]} --stems $STEMS --out $o --seed $sd --audio prefix ${SL[*]}";;
   esac

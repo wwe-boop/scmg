@@ -176,6 +176,7 @@ def val_loss(model, ema, batches, dev, temporal, known_xt):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--init', type=Path, required=True, help='official-format SGDiT checkpoint (ema + motion stats + experiment)')
+    ap.add_argument('--init-stats', action='store_true', help='normalise with the init checkpoint motion_mean/std instead of the data root stats')
     ap.add_argument('--config', type=Path, help='official yaml; default: the config embedded in --init')
     ap.add_argument('--data-root', type=Path, required=True); ap.add_argument('--out', type=Path, required=True)
     ap.add_argument('--profile', choices=list(PROFILES), default='g1')
@@ -218,9 +219,12 @@ def main():
     sc = StreamConfig.from_dict(json.loads(a.stream))
     if int(round(sc.ctx_s * fps)) + int(round(sc.block_ms / 1000 * fps)) + 1 + int(round(max(sc.tail_max_s, sc.infer_tail_ms / 1000) * fps)) > config.model.max_t:
         raise SystemExit('ctx + block + tail exceeds the model positional capacity')
-    mean, std = load_motion_stats(a.data_root / config.data.stats_file, config.model.motion_dim)
-    if not (torch.allclose(mean, init['motion_mean'].float()) and torch.allclose(std, init['motion_std'].float())):
-        raise SystemExit('data-root statistics differ from the init checkpoint')
+    if a.init_stats:      # keep the init model's normalisation (fine-tune on a data root whose train statistics differ, 11-06)
+        mean, std = init['motion_mean'].float().clone(), init['motion_std'].float().clone()
+    else:
+        mean, std = load_motion_stats(a.data_root / config.data.stats_file, config.model.motion_dim)
+        if not (torch.allclose(mean, init['motion_mean'].float()) and torch.allclose(std, init['motion_std'].float())):
+            raise SystemExit('data-root statistics differ from the init checkpoint (pass --init-stats to keep the init normalisation)')
     tr = StreamDataset(a.data_root, config.data, config.model, 'train', mean, std, a.max_train, cache=bool(a.cache))
     va = StreamDataset(a.data_root, config.data, config.model, 'val', mean, std, a.max_val)
     wavs = tpa = None
@@ -238,6 +242,8 @@ def main():
         ck = torch.load(resume, map_location='cpu', weights_only=False)
         model.load_state_dict(ck['model']); step = int(ck['global_step'])
         if StreamConfig.from_dict(ck['stream']) != sc: raise SystemExit(f"--stream differs from the resumed run: {ck['stream']}")
+    elif init.get('schema') == STREAM_SCHEMA:      # continue a trained streaming model (its EMA, incl. known_projection)
+        model.load_state_dict(init['ema'], strict=True)
     else:
         load_official_into(model, init['ema'])
     model.to(dev)
