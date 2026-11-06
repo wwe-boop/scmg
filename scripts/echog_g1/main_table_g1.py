@@ -23,8 +23,8 @@ def main():
         ms = [met(f) for f in rest.split(',')]
         r = dict(label=lab, seeds=len(ms), per_seed=ms, **{k: float(np.mean([m[k] for m in ms])) for k in ms[0] if k != 'n'}, n=ms[0]['n'])
         if ex:
-            f, panel = ex.split(':'); e = json.loads(Path(f).read_text())[panel]['summary']
-            r.update(exec_pass=e['pass_rate'] if 'pass_rate' in e else e.get('clips_pass'), exec_frames_any=e.get('frames_any', e.get('any')), exec_raw=e)
+            f, panel = ex.split(':'); e = json.loads(Path(f).read_text())[panel]; e = e.get('summary', e)
+            r.update(exec_pass=e.get('clean_clips', e.get('pass_rate')), exec_frames_any=e.get('any', e.get('frames_any')), exec_raw=e)
         rows.append(r)
     Path(a.out).write_text(json.dumps(rows, indent=1))
     if a.md:
