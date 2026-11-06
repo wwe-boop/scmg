@@ -77,7 +77,7 @@ def speech_mask(stem, n):
 
 cols = [('GT', None)] + [tuple(p.split('=', 1)) for p in a.panels]
 R = {lab: dict(beats=0, frames=0, phase=np.zeros(10), bp=np.zeros(len(BANDS)), bpw=0, sp_b=0, sp_f=0, si_b=0, si_f=0,
-               bd_b=0, spk={}, ba=0.0, ban=0.0, baw=0, clip=[]) for lab, _ in cols}
+               bd_b=0, spk={}, ba=0.0, ban=0.0, baw=0, clip=[], cbp=[], cdiv=[]) for lab, _ in cols}
 nb = len(ba.upper_bodies); dur = 0.0
 for s in stems:
     gr = E.load_repr(f'{a.ref_dir}/{s}.pt', a.fps); prs = [E.load_repr(f'{d}/{s}.pt', a.fps) for _, d in cols[1:]]
@@ -96,10 +96,12 @@ for s in stems:
         ph = ((bt / a.fps) % a.period) / a.period; X['phase'] += np.histogram(ph, bins=10, range=(0, 1))[0]
         bpw = band_power(speed(J))
         if bpw is not None: X['bp'] += bpw * n; X['bpw'] += n
+        X['cbp'].append((bpw * n if bpw is not None else np.zeros(len(BANDS)), n if bpw is not None else 0))
         if sm is not None:
             X['sp_b'] += int(sm[bt].sum()); X['si_b'] += int((~sm[bt]).sum()); X['sp_f'] += int(sm.sum()); X['si_f'] += int((~sm).sum())
         fpc = a.period * a.fps; d = np.minimum((bt % fpc), fpc - (bt % fpc)); X['bd_b'] += int((d <= 1.0).sum())
         fl = J.reshape(n, -1); dv = float(np.abs(fl - fl.mean(0)).mean(1).sum())
+        X['cdiv'].append((float(np.abs(fl - fl.mean(0)).sum()), n))   # official Div = sum / frames (echo_g Div.compute)
         e = X['spk'].setdefault(spk, np.zeros(5)); e[:3] += [len(bt), n, dv]
         if ons is not None:
             b0 = gahr_ba(J, ons); bn = float(np.mean([gahr_ba(J, o) for o in shifts]))
@@ -122,8 +124,18 @@ for lab, _ in cols:
             l = ((C[i, 0] - C[i, 1]) * w).sum() / w.sum(); se.append(l); sd.append(l - ((G[i, 0] - G[i, 1]) * w).sum() / w.sum())
         o['ba_lift_se'] = float(np.std(se)); o['ba_lift_minus_gt_se'] = float(np.std(sd))
         o['clips_ba'] = C.tolist()
+    # spectrum-shape L1 distance to GT (normalised band powers, frame-weighted) and official Div, with clip-bootstrap SE
+    P = np.array([c[0] for c in X['cbp']]); Gp = np.array([c[0] for c in R['GT']['cbp']]); Dv = np.array(X['cdiv'])
+    def shape_d(i):
+        p_ = P[i].sum(0); g_ = Gp[i].sum(0); return float(np.abs(p_ / p_.sum() - g_ / g_.sum()).sum())
+    allidx = np.arange(len(P)); o['shape_l1'] = shape_d(allidx); o['div'] = float(Dv[:, 0].sum() / Dv[:, 1].sum())
+    o['total_power_rel_gt'] = float(P.sum() / max(Gp.sum(), 1e-12))
+    br = np.random.default_rng(1); sh = []; dvb = []
+    for _ in range(2000):
+        i = br.integers(0, len(P), len(P)); sh.append(shape_d(i)); dvb.append(Dv[i, 0].sum() / Dv[i, 1].sum())
+    o['shape_l1_se'] = float(np.std(sh)); o['div_se'] = float(np.std(dvb))
     out['labels'][lab] = o
-    print(f"{lab:14s} BA {o['ba']:.4f} null {o['ba_null']:.4f} lift {o['ba_lift']:+.4f} (se {o.get('ba_lift_se', 0):.4f}) | beats/s {o['beats_per_s_per_body']:.3f} (speech {o['beats_per_s_speech']:.3f} silence {o['beats_per_s_silence']:.3f}) "
+    print(f"{lab:14s} shape L1 {o['shape_l1']:.3f} (se {o['shape_l1_se']:.3f}) Div {o['div']:.4f} (se {o['div_se']:.4f}) | BA {o['ba']:.4f} null {o['ba_null']:.4f} lift {o['ba_lift']:+.4f} (se {o.get('ba_lift_se', 0):.4f}) | beats/s {o['beats_per_s_per_body']:.3f} (speech {o['beats_per_s_speech']:.3f} silence {o['beats_per_s_silence']:.3f}) "
           f"| phase max/min {o['phase_max_min']:.2f} | at chunk boundary {100 * o['beat_share_at_chunk_boundary_pm1f']:.1f}% "
           f"| band power rel GT " + ' '.join(f'{lo}-{hi}Hz {x:.2f}' for (lo, hi), x in zip(BANDS, o['band_power_rel_gt'])))
     print('    per speaker beats/s: ' + '  '.join(f"{k} {v['beats_per_s']:.3f} (BA {v['ba']:.3f} lift {v['ba_lift']:+.4f})" for k, v in o['per_speaker'].items()))

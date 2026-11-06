@@ -1,4 +1,4 @@
-# Div / BA / perceived-quality candidates: acceptance criteria (fixed 2026-11-06, before any candidate run)
+# Div / BA / perceived-quality candidates: acceptance criteria (fixed 2026-11-06, before any candidate run; joint version 11-06, still before any candidate result)
 
 The coordinator approved these on 11-06. They replace the first draft's "|ΔBA| down >= 30%" criterion.
 
@@ -30,17 +30,50 @@ The clip-bootstrap SE of the lift is 0.0007. "Raise dev BA" therefore means "add
   - Training candidates: a 2000-step lane from hos-base with the same causal recipe, the same seed and the new loss off.
 - **Evaluation:** official `eval_g1_motion_cls.py` (FGD, Div, BA, Jerk), `diag_beats.py` (BA lift, BA_null, spectrum), `executability.py` and `safety_run.py` with the `cbf_qp` layer (K = 10).
 
-## Criteria (a candidate passes only if all hold, psync)
+## Criteria: joint version (user 11-06; replaces the per-criterion version above, fixed before any candidate result is read)
 
-| | quantity | pass if |
+BA, Div and smoothness are optimised jointly. All numbers are on dev, psync, as the mean of inference seeds 0 and 1. Offline numbers are reported alongside.
+
+**Three objectives**
+
+| | objective | better if |
 |---|---|---|
-| C1 synchrony | BA lift = BA − BA_null (shifted-onset null, K = 20) | lift ≥ control lift + 0.0015 **and** BA_null ≤ control BA_null + 0.01, so the gain cannot come from density |
-| C2 sharpness | L1 distance between the normalised band-power vectors (0-1/1-2/2-4/4-6/6-10/10-15 Hz) of the mean mmae-normalised upper-body speed, pred vs GT. The measure is scale-free, so it is independent of energy. | distance ≤ 0.7 × control (control psync 0.299, offline 0.239) **and** total power ≤ 1.10 × control |
-| G1 FGD | official FGD | ≤ control + 0.03 |
-| G2 Div | official Div | \|Div − Div_control\| ≤ 0.05, **and** the psync − offline Div gap is not larger than control's |
-| G3 Jerk | official JerkLW | \|JerkLW − GT\| ≤ control's \|JerkLW − GT\|. The raw ΔJerk (JerkLW − GT) is also reported. |
-| G4 safety | after CBF-QP (`cbf_qp`, K = 10): clip-level executability, plus the correction amount (RMSE mean / p99 / max vs the raw output) and the fallback-frame share | executability is not lower than control. Mean correction RMSE ≤ 1.2 × control. Fallback share is not higher than control + 0.5 pp. More safety-layer intervention counts as a side effect. |
-| G5 tests | causal unit tests (`test_causal_stream`, `test_causal_train`, `test_causal_inc`) and the candidate's own unit tests | all ALL_OK. Every training option is default-off, with bitwise-unchanged training and inference when off. |
+| T1 sync | BA lift = BA − BA_null (onsets circularly shifted, K = 20) | higher |
+| T2 clarity | spectrum-shape L1 distance to GT (`diag_beats.py` `shape_l1`) | lower |
+| T3 amplitude | gap = \|Div_psync − Div_offline\| | lower |
+
+- For T3, the amplitude constraint is \|Div − Div_control\| ≤ 0.05 per protocol.
+- Absolute Div is never tuned on dev (§7.28).
+
+**Noise unit u_i, one per objective, computed from the control's own runs only and frozen in `NOISE_UNITS_<control>.json` before any candidate result is read:**
+- u_i = 2 × sqrt(SE_boot² + (x_seed0 − x_seed1)² / 4).
+- SE_boot is the clip-bootstrap SE (2000 resamples, from `diag_beats.py`) of the control's metric. For the T3 gap, SE_boot = sqrt(SE_psync² + SE_offline²) of Div.
+
+**Admission.** A candidate is admitted only if all of the following hold:
+1. All guards pass:
+   - G1: FGD ≤ control + 0.03 (psync).
+   - G3: \|JerkLW − GT\| ≤ control's value. The raw ΔJerk = JerkLW − GT is reported for both protocols.
+   - G4: after CBF-QP (`cbf_qp`, K = 10):
+     - clip executability is not lower than control;
+     - mean correction RMSE ≤ 1.2 × control;
+     - fallback-frame share ≤ control + 0.5 pp;
+     - correction p99 / max are reported.
+   - G5: causal unit tests and the candidate's own tests are ALL_OK. The default path is bit-identical.
+   - Amplitude constraint: \|Div − Div_control\| ≤ 0.05 for both psync and offline.
+2. No objective is worse than control by more than one noise unit u_i.
+3. At least one objective reaches its planned improvement:
+   - T1: lift ≥ control + 0.0015, or
+   - T2: shape_l1 ≤ 0.7 × control.
+
+**Ranking.** Admitted candidates are ranked by score = Σ_i (improvement_i / u_i) over T1, T2 and T3, with the sign chosen so that improvement is positive. The highest score wins. A tie (score difference < 1) goes to the lower psync FGD.
+
+**Other rules**
+- **Combinations** (e.g. decoder spectrum loss + (b')) run as their own quick lane and are judged by the same rules.
+- **Decoder-only candidates** (decoder fine-tuned with a multi-band speed-spectrum loss, encoder frozen) must also keep the dev VAE round trip within limits: joint-angle RMSE ≤ 1.05 × the current decoder (decft-w3d0m05), and contact sliding not worse. The generator is unchanged, so the control is the same generator with the current decoder.
+- **Controls:**
+  - zero-training candidates (16 steps, noise scale, the stochastic sampler `--sde-eta`): czm6k dev with default inference;
+  - training candidates: the 2000-step hos-base lane with the same recipe and the new loss off;
+  - decoder candidates: the generator under test with decft-w3d0m05.
 
 - **Reported but not used for selection:** official BA and Div, beats/s, the phase histogram, per-speaker numbers.
 - **Offline:** offline numbers are reported. A candidate that passes on psync but fails C1 or C2 in the wrong direction offline is reported as "psync only".
