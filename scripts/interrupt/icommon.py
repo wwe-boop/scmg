@@ -54,6 +54,20 @@ def induced_abrupt(P, f, pre=IND_PRE, post=IND_POST):
     return pk, thr, bool(pk > thr)
 
 
+V3_TR = 1.8                       # 11-06 v3 retraction window (s): the human median retraction time (= the B2 T_r), for every method
+V3_RATIO = 1.5                    # 11-06 v3 threshold, chosen a priori (criteria/metric_change_v3_1106.json)
+
+
+def v3_ratio(P, PU, f, tr=V3_TR):
+    """11-06 v3 main abruptness: peak hand jerk of the interrupted motion P over the retraction window [t_i, t_i + T_r] (jerk
+    samples ending in [f, f + T_r*30), i.e. frames f - 3 ..) divided by the same peak of the counterfactual PU (the same method /
+    clip / seed WITHOUT the interruption). Windows clipped to the frames both have. None if < 10 samples."""
+    b = min(len(P), len(PU), f + int(round(tr * FPS)))
+    a, u = jerk_series(P, f - PRE, b), jerk_series(PU, f - PRE, b)
+    if len(a) < 10 or len(u) < 10: return None
+    return float(a.max() / max(u.max(), 1e-9))
+
+
 def peak_acc(P, a, b):
     H = P[a:b, list(HANDS)]
     if len(H) < 3: return float('nan')
