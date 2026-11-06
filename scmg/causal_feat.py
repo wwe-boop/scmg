@@ -406,7 +406,7 @@ class CausalInputs:
     (spk [192], spk_valid) of the PCM prefix of min(Tk, T) frames (spk=False: always the empty embedding)."""
 
     def __init__(self, pcm16, wave, words, lang, T, pstats, fm, fs, enc=None, Tpad=None, spk_min_s=1.0, spk=True, spk_refresh='tick',
-                 feat_mode='prefix'):
+                 feat_mode='prefix', spk_empty=None):
         self.T = int(T); self.Tpad = int(Tpad or T)
         if feat_mode not in ('prefix', 'inc'): raise ValueError(feat_mode)
         self.f = (IncFeat89 if feat_mode == 'inc' else CausalFeat89)(pcm16, words, lang, T, pstats)
@@ -415,6 +415,7 @@ class CausalInputs:
         self.sp = SpeakerPrefix(wave, enc, spk_min_s) if spk else None
         if spk_refresh not in ('tick', 'grades'): raise ValueError(spk_refresh)
         self.spk_refresh = spk_refresh; self.grade_cache = {}
+        self.spk_empty = None if spk_empty is None else np.asarray(spk_empty, np.float32)   # 11-06 (B2), StageCfg.spk_empty_mean
         self.calls = []
 
     def feat(self, Tk):
@@ -424,6 +425,11 @@ class CausalInputs:
         return out
 
     def spk(self, Tk):
+        v, ok = self._spk(Tk)
+        if self.spk_empty is not None and ok < .5: return self.spk_empty, 1.       # B2: empty -> mean training embedding
+        return v, ok
+
+    def _spk(self, Tk):
         """spk_refresh 'tick': CAM++ of the PCM prefix at every tick. 'grades' (11-05, the training rule of StageCfg
         causal_spk, losses.causal_spk_select): the vector is refreshed only when a precompute grade becomes available --
         prefix 1 / 2 / 4 / 8 s at clip frame min(50 g, T), the whole clip (view rule, SpeakerPrefix.full) at T; the grade

@@ -244,6 +244,7 @@ class View:
                     raise ValueError(f'{d}: whole-clip mel of {i} != view feat mel')
                 nmel += 1
         self.causal['coverage'] = len(cov) / max(1, len(self.clips))
+        if (d / 'SPK_MEAN.npy').exists(): self.causal['spk_mean'] = np.load(d / 'SPK_MEAN.npy').astype(np.float32)
         print(f'View {self.root.name}: causal inputs {d} cover {len(cov)} / {len(self.clips)} clips; SPK_EMB check {nchk}, '
               f'mel check {nmel} clips', flush=True)
         return self.causal['coverage']
@@ -274,8 +275,10 @@ class View:
 
 class WindowDataset(torch.utils.data.IterableDataset):
     def __init__(self, view: View, frames=256, ref_frames=128, max_tokens=128, seed=0, semsynth_share=0.4,
-                 fixed=None, max_ids=160, bagger_share=0.):
+                 fixed=None, max_ids=160, bagger_share=0., p_start0=0.):
         self.v, self.T, self.R, self.K, self.seed = view, frames, ref_frames, max_tokens, seed
+        # 11-06 (B1): P(a training window starts at the clip start); 0 = the original uniform start (no extra draw: bit-identical)
+        self.p_start0 = float(p_start0)
         self.w = view.weights(semsynth_share)
         self.fixed = fixed            # list of (clip_idx, start) for deterministic evaluation
         self.KI = max_ids
@@ -301,6 +304,7 @@ class WindowDataset(torch.utils.data.IterableDataset):
             ci = int(rng.choice(len(self.w), p=self.w))
             L = self.v.clips[ci]['frames']
             s = int(rng.integers(0, max(1, L - self.T + 1))) // STRIDE * STRIDE
+            if self.p_start0 > 0 and rng.random() < self.p_start0: s = 0      # stream starts seen as often as at inference
             sample = self.sample(ci, s, rng)
             if self.bagger is not None:
                 sample['loss_from_chunk'] = np.int64(-1)
@@ -442,7 +446,7 @@ def causal_rows(v, c, s, n, T, f):
     from .causal_feat import FRONT_COLS, front_prosody, stream_lat_grid
     cz = v.causal; it = c['items'][0]; L = c['frames']
     grid = stream_lat_grid(T // CHUNK_FRAMES, cz['horizons'], CHUNK, U80)
-    out = dict(cz_ok=np.bool_(False), cz_feat=f.copy(), cz_pro=np.zeros((len(grid), T, len(FRONT_COLS)), np.float32),
+    out = dict(**({'cz_spkmean': cz['spk_mean']} if 'spk_mean' in cz else {}), cz_ok=np.bool_(False), cz_feat=f.copy(), cz_pro=np.zeros((len(grid), T, len(FRONT_COLS)), np.float32),
                cz_spk=np.zeros((5, SPK), np.float32), cz_spkv=np.zeros(5, np.float32),
                cz_spkt=np.array([min(50 * g, L) for g in (1, 2, 4, 8)] + [L], np.int64))
     e = cz['index'].get(it['id']) if len(c['items']) == 1 else None
@@ -457,6 +461,7 @@ def causal_rows(v, c, s, n, T, f):
         if Tk not in cache: cache[Tk] = front_prosody(tab, Tk, final=Tk >= L).astype(np.float16).astype(np.float32)
         out['cz_pro'][j, :rows] = (cache[Tk][s:s + rows] - fm) / fs
     out['cz_spk'] = cz['spk'][e['clip_row']].astype(np.float32); out['cz_spkv'] = cz['spkv'][e['clip_row']].astype(np.float32)
+    if 'spk_mean' in cz: out['cz_spkmean'] = cz['spk_mean']
     out['cz_ok'] = np.bool_(True)
     return out
 

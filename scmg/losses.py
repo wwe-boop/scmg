@@ -102,6 +102,9 @@ class StageCfg:
                                    # (causal_feat.front_prosody, bitwise = prefix_feat89), rows >= t_k zero
     causal_spk: bool = False       # global condition of chunk k = the longest precomputed prefix CAM++ grade (1/2/4/8 s,
                                    # whole clip) available at t_k (< 1 s: the empty speaker -> spk_null)
+    spk_empty_mean: bool = False   # (11-06, B2) with causal_spk: an EMPTY prefix speaker (no grade available by t_k, or an
+                                   # invalid grade) -> the mean training CAM++ embedding (cz_spkmean, SPK_MEAN.npy of the
+                                   # precompute) with spk_valid 1, as CausalInputs(spk_empty=...) at inference; drop_spk keeps spk_null
     causal_text: bool = False      # streaming async text: a token is visible once its last word has ENDED by now + H (psync
                                    # 'voiced'), on top of the x2 arrival; ADSC text state 2 only once the audio is final
 
@@ -183,13 +186,17 @@ def causal_spk_select(batch, H, K):
     return spk, batch['cz_spkv'][ar, jsel] * has.float(), torch.where(has, jsel, torch.full_like(jsel, -1))   # speaker (zeros, 0)
 
 
-def causal_spk_cond(model, batch, stream, H, drop_spk, src, K):
+def causal_spk_cond(model, batch, stream, H, drop_spk, src, K, sc=None):
     """Per-chunk global condition [B, K, d] (StageCfg.causal_spk): streaming chunk k of a covered sample uses the prefix
     CAM++ grade with the largest availability frame <= t_k (clip frames; ties -> the prefix grade, whose value is the
     inference one; none -> empty speaker, spk_valid 0); everything else the original speaker. drop_spk applies on top."""
     B = stream.shape[0]
     use = (stream & batch['cz_ok'].bool())[:, None].expand(B, K)
     spk_c, val_c, _ = causal_spk_select(batch, H, K)
+    if sc is not None and sc.spk_empty_mean:
+        if 'cz_spkmean' not in batch: raise ValueError('spk_empty_mean needs SPK_MEAN.npy in the causal precompute')
+        empty = val_c < .5
+        spk_c = torch.where(empty[..., None], batch['cz_spkmean'][:, None].to(spk_c.dtype), spk_c); val_c = torch.where(empty, torch.ones_like(val_c), val_c)
     spk = torch.where(use[..., None], spk_c, batch['spk'][:, None].expand(B, K, -1))
     val = torch.where(use, val_c, batch['spk_valid'][:, None].expand(B, K)) * (~drop_spk)[:, None].float()
     g = model.global_cond(spk.reshape(B * K, -1), val.reshape(B * K), src.repeat_interleave(K))
@@ -319,7 +326,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     src = torch.where(r(0.1), torch.zeros_like(batch['source']), batch['source'])
     g = model.global_cond(batch['spk'], batch['spk_valid'] * (~drop_spk), src)
     if sc.causal_spk and 'cz_spk' in batch:
-        g = causal_spk_cond(model, batch, stream, H, drop_spk, src, K)
+        g = causal_spk_cond(model, batch, stream, H, drop_spk, src, K, sc)
 
     # ---- state simulation (stage 4): replaces targets of the selected chunks by recovery trajectories
     seg_q, seg_valid = segments(q, K, CHUNK_FRAMES * 3, CHUNK_FRAMES)                # [B, K, 64, J] normalised

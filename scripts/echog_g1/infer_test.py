@@ -18,6 +18,7 @@ inputs by default (--causal-inputs: feat89 recomputed every tick from the arrive
 --words-dir (official word times) and --pstats. --no-causal-inputs = the whole-clip feat89 / speaker vector of the view
 (leakage control); --causal-inputs also works with the engine protocol.
 """
+import zlib
 import argparse, json, os, sys, time
 from pathlib import Path
 import numpy as np
@@ -31,11 +32,22 @@ from scmg.model import INF
 from scmg import g1
 
 
+def clip_seed(seed, mode, stem):
+    """Noise seed of one clip. 'run' = the run seed for every clip (old behaviour: all clips share the noise draws);
+    'per_clip' = seed + crc32(stem) (independent draws per clip, reproducible, independent of shard / clip order)."""
+    if mode == 'run': return seed
+    if mode == 'per_clip': return (seed + zlib.crc32(stem.encode())) % (2 ** 63)
+    raise ValueError(f'seed mode {mode}')
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--ckpt', required=True); ap.add_argument('--vae', required=True); ap.add_argument('--stats', required=True)
     ap.add_argument('--view', required=True); ap.add_argument('--text-cache', required=True); ap.add_argument('--out', required=True)
     ap.add_argument('--stems', default=None); ap.add_argument('--n', type=int, default=0)
+    ap.add_argument('--seed-mode', default='run', choices=['run', 'per_clip'],
+                    help="run (old default): every clip of the run uses --seed, so all clips share the same noise draws; "
+                         "per_clip (11-06 protocol for all new SCMG evaluations): clip seed = seed + crc32(stem)")
     ap.add_argument('--seed', type=int, default=0); ap.add_argument('--steps', type=int, default=10); ap.add_argument('--cfg-w', type=float, default=1.0); ap.add_argument('--cfg-t', type=float, default=None, help='separate TEXT guidance (Streamer cfg_t: v_u + w (v_a - v_u) + t (v_at - v_a)); None = joint CFG')
     ap.add_argument('--split', default='test', help="view split: 'test' (val_common view) | 'val' (held-out dev, for choosing inference settings)")
     ap.add_argument('--shard', default='0/1', help='i/n: this process handles clips i, i+n, ...')
@@ -72,6 +84,8 @@ def main():
     ap.add_argument('--causal-feat', default='prefix', choices=['prefix', 'inc'],
                     help="causal feat89: 'prefix' = recomputed from the arrived PCM every tick (default); 'inc' = incremental "
                          "(causal_feat.IncFeat89, bitwise equal, scripts/tests/test_causal_inc.py)")
+    ap.add_argument('--spk-empty-mean', default=None, help='11-06 B2: SPK_MEAN.npy -- an empty causal speaker vector becomes this '
+                    'mean training embedding (spk_valid 1), the training rule of StageCfg spk_empty_mean')
     ap.add_argument('--spk-session', action='store_true',
                     help='causal inputs: the speaker vector = the whole-clip CAM++ of the most recent EARLIER utterance of the same '
                          'recording in the split (session enrollment; causal at the conversation level), for every tick; clips '
@@ -175,12 +189,13 @@ def main():
                 pcm16, wave = CF.clip_audio(Path(a.wav_dir) / f'{stem}.wav')
                 mkw['causal_inputs'] = CF.CausalInputs(pcm16, wave, words, it['lang'], L, pst, view.fm, view.fs, enc,
                                                        Tpad=len(s['feat']), spk=not a.no_spk, spk_refresh=a.spk_refresh,
-                                                       feat_mode=a.causal_feat)
+                                                       feat_mode=a.causal_feat,
+                                                       spk_empty=None if not a.spk_empty_mean else np.load(a.spk_empty_mean))
                 if a.spk_session and stem in sess:          # session enrollment: an earlier utterance's whole-clip vector
                     _sv = (np.asarray(sess[stem][0], np.float32), float(sess[stem][1])); mkw['causal_inputs'].spk = lambda Tk, _sv=_sv: _sv
                 if a.diag_whole_spk:                     # diagnostic split of the causal-input cost: causal feat89, whole-clip speaker
                     _sv = (np.asarray(s['spk'], np.float32), float(s['spk_valid'])); mkw['causal_inputs'].spk = lambda Tk, _sv=_sv: _sv
-        cmd, _, tk = generate(m, vae, s['feat'], cond, stats, nch, H=H, steps=a.steps, seed=a.seed, standby=qm, ctx_t=m.ctx_t,
+        cmd, _, tk = generate(m, vae, s['feat'], cond, stats, nch, H=H, steps=a.steps, seed=clip_seed(a.seed, a.seed_mode, stem), standby=qm, ctx_t=m.ctx_t,
                               cfg_w=a.cfg_w, cfg_t=a.cfg_t, noise_scale=a.noise_scale, **kw, **mkw)
         if cmd.shape[0] < L or cmd.shape[1] != J or not np.isfinite(cmd).all(): raise ValueError(f'{stem}: generated {cmd.shape}')
         if k > 0: ticks.extend(float(x) for x in tk)           # first clip excluded (CUDA warm-up)
@@ -193,7 +208,7 @@ def main():
         r30 = g1.to30(q50, n30).astype(np.float32)
         torch.save(dict(robot_repr=torch.from_numpy(r30), real_num_frames=n30, fps=30.0, representation_units='physical',
                         representation_schema='projecthermes-g1-39d-standard-v2', source=stem,
-                        generator=dict(ckpt=str(a.ckpt), seed=a.seed, steps=a.steps, cfg_w=a.cfg_w, cfg_t=a.cfg_t, frames50=L, noise_scale=a.noise_scale, no_spk=a.no_spk, **({'diag_whole_spk': True} if a.diag_whole_spk else {}), **({'spk_session': stem in sess} if a.spk_session else {}),
+                        generator=dict(ckpt=str(a.ckpt), seed=a.seed, **({'seed_mode': a.seed_mode, 'clip_seed': clip_seed(a.seed, a.seed_mode, stem)} if a.seed_mode != 'run' else {}), steps=a.steps, cfg_w=a.cfg_w, cfg_t=a.cfg_t, frames50=L, noise_scale=a.noise_scale, no_spk=a.no_spk, **({'diag_whole_spk': True} if a.diag_whole_spk else {}), **({'spk_session': stem in sess} if a.spk_session else {}), **({'spk_empty_mean': a.spk_empty_mean} if a.spk_empty_mean else {}),
                                        **({'spk_refresh': a.spk_refresh} if a.spk_refresh != 'tick' else {}),
                                        **({'causal_feat': a.causal_feat} if a.causal_feat != 'prefix' else {}), smooth=a.smooth, smooth_legs=a.smooth_legs,
                                        **({} if (a.modality, a.text_swap) == ('both', False) else

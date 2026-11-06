@@ -1,6 +1,6 @@
 #!/bin/bash
 # ECHO-G official benchmark on val_common (or a stem subset), 11-04.
-#   bench.sh scmg <ckpt> <vae> <pred dir> <offline|engine|psync|psyncwhole> <seed> [stem list]
+#   bench.sh scmg <ckpt> <vae> <pred dir> <offline|engine|psync|psyncsess|psyncwhole> <seed> [stem list]
 #       SCMG inference (infer_test.py, sharded over GPUS) with the given protocol, then the official evaluator
 #       -> <pred dir>/../benchmark_<basename pred dir>.json
 #   bench.sh eval <pred dir> <stem list> <tag> <out.json>
@@ -33,6 +33,7 @@ case $1 in
     WD=${WORDS_DIR:-$EG/ds/annotations/words}; PS=${PSTATS:-$CODE/scripts/echog_g1/PROSODY_STATS_echog_g1_hos_train.json}
     case $proto in offline) PA=(--protocol offline);; engine) PA=(--protocol engine --text-causal $TEXT_CAUSAL_TEST);;
       psync) PA=(--protocol psync --text-causal $TEXT_CAUSAL_TEST --wav-dir ${CAUSAL_WAV:-$WAV_DIR} --words-dir $WD --pstats $PS ${CAMPPLUS:+--campplus $CAMPPLUS} ${SPK_REFRESH:+--spk-refresh $SPK_REFRESH} ${CAUSAL_FEAT:+--causal-feat $CAUSAL_FEAT});;
+      psyncsess) PA=(--protocol psync --spk-session --text-causal $TEXT_CAUSAL_TEST --wav-dir ${CAUSAL_WAV:-$WAV_DIR} --words-dir $WD --pstats $PS ${CAMPPLUS:+--campplus $CAMPPLUS} ${SPK_REFRESH:+--spk-refresh $SPK_REFRESH} ${CAUSAL_FEAT:+--causal-feat $CAUSAL_FEAT});;   # psync + session speaker enrollment
       psyncwhole) PA=(--protocol psync --no-causal-inputs --text-causal $TEXT_CAUSAL_TEST --words-dir $WD --pstats $PS);;
       *) echo "protocol $proto"; exit 2;; esac
     GL=(${GPUS:-0}); n=${#GL[@]}; mkdir -p $P
