@@ -1,0 +1,9 @@
+{
+ "written": "2026-11-06, after the v3 re-score of the dev subset and before any confirmation run",
+ "observation": "under v3 neither tr2h nor tr2hd (T_r 1.4) passes (v3 abrupt 41.3 %: the pins add jerk > 1.5x the continuation); R0 rebuilt on the interruption-causal continuation (B3c) passes all gates on the dev subset: yield 99.7 %, v3 abrupt 0.7 %, RKD 0.936 vs B2_p 1.014 (difference -0.078, clip bootstrap 95 % [-0.114, -0.048]), unsafe 0.0 %",
+ "candidate": "R0causal = blend_retract(B3c continuation of the sf0 model, prefix frames from the uninterrupted output; T_r 1.4, T_b 0.5, w0 0.6, tex 1.0 / tau 0.25 / smooth 0.1) + safety_project (smooth 300); parameters unchanged since their dev selection on 11-05",
+ "confirmation (dev only)": {"seed1": "same pipeline with inference seed 1 (continuation + its own uninterrupted counterfactual), dev subset", "full_dev": "seed 0, all 900 dev interruptions",
+                             "pass": "both meet: yield >= 90 %, v3 abrupt <= 10 %, RKD below B2_p of the same set with the bootstrap interval excluding 0, unsafe <= 1 %"},
+ "then": "register in TEST_USAGE, run the test set ONCE: R0causal + causal-protocol B3c (and B2 / B2fast rows from the uninterrupted outputs), score v3 (main) + v1 / v2",
+ "note": "the fallback of the plan (latent restart + long splice) is not run while this candidate is being confirmed"
+}
