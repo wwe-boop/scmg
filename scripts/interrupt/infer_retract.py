@@ -43,6 +43,16 @@ from infer_interrupt import SIL_RAW, spoken_tokens
 UPPER = list(range(10 + 12, 10 + 29))          # waist + arms channels of the 39-d frame
 
 
+def clip_seed(seed, mode, stem):
+    """11-06 protocol: same definition as scripts/echog_g1/infer_test.py --seed-mode (DivBA worktree): 'run' = the run seed for
+    every clip (old behaviour), 'per_clip' = (seed + crc32(stem)) mod 2^63. The interrupted run and its uninterrupted
+    counterfactual of a clip use the same clip seed, so the pre-interruption frames stay bitwise paired."""
+    import zlib
+    if mode == 'run': return seed
+    if mode == 'per_clip': return (seed + zlib.crc32(stem.encode())) % (2 ** 63)
+    raise ValueError(f'seed mode {mode}')
+
+
 class RetractStreamer(Streamer):
     def __init__(self, *args, t_int=None, keep_tok=None, audio='end', fm=None, fs=None, n_total=None, restart='chunk',
                  react_delay=0.04, retract=None, rest=None, tr=1.0, w=1.0, splice=0, w0=0., prefix=None, floor=0, guide=0.,
@@ -282,6 +292,7 @@ def main():
     ap.add_argument('--ref-ckpt', default=None, help='reference model of --diff-guide (e.g. the sf0 checkpoint)')
     ap.add_argument('--floor', type=int, default=0, help='floor state after the interruption (models with cfg.floor; 0 = off)')
     ap.add_argument('--splice', type=int, default=0, help='latent restart: blend the jump at the splice out over n 50 Hz frames (0 = off)')
+    ap.add_argument('--seed-mode', default='run', choices=['run', 'per_clip'], help="clip noise seed: run (all clips share the run seed) | per_clip (seed + crc32(stem))")
     ap.add_argument('--seed', type=int, default=0); ap.add_argument('--steps', type=int, default=10); ap.add_argument('--cfg-w', type=float, default=2.5)
     ap.add_argument('--shard', default='0/1'); ap.add_argument('--protocol', default='engine', choices=['offline', 'engine'])
     ap.add_argument('--text-causal', default=None); ap.add_argument('--x2-rate', type=float, default=15.0); ap.add_argument('--x2-lag', type=float, default=0.15)
@@ -342,9 +353,9 @@ def main():
         comp = None
         if mref is not None and r is not None:      # companion: same inputs / interruption handling, reference model, no guidance
             comp = RetractStreamer(mref, vae, s['feat'], {k_: (v_.copy() if hasattr(v_, 'copy') else v_) for k_, v_ in cond.items()}, stats,
-                                   H=H, steps=a.steps, seed=a.seed, standby=qm, ctx_t=mref.ctx_t, cfg_w=a.cfg_w, cfg_t=None, noise_scale=1.0,
+                                   H=H, steps=a.steps, seed=clip_seed(a.seed, a.seed_mode, stem), standby=qm, ctx_t=mref.ctx_t, cfg_w=a.cfg_w, cfg_t=None, noise_scale=1.0,
                                    **kw, **dict(ikw, retract=None, guide=0., floor=0))
-        st = RetractStreamer(m, vae, s['feat'], cond, stats, H=H, steps=a.steps, seed=a.seed, standby=qm, ctx_t=m.ctx_t,
+        st = RetractStreamer(m, vae, s['feat'], cond, stats, H=H, steps=a.steps, seed=clip_seed(a.seed, a.seed_mode, stem), standby=qm, ctx_t=m.ctx_t,
                              cfg_w=a.cfg_w, cfg_t=None, noise_scale=1.0, comp=comp, diff=a.diff_guide if r is not None else 0., **kw, **ikw)
         if r is None:
             for i in range(n_run):                               # == scmg.infer.generate (robot=None)
@@ -357,13 +368,13 @@ def main():
         if r is None:
             if cmd.shape[0] < L or cmd.shape[1] != J or not np.isfinite(cmd).all(): raise ValueError(f'{stem}: generated {cmd.shape}')
             q50 = cmd[:L].astype(np.float64); r30 = g1.to30(q50, n30).astype(np.float32)
-            gen = dict(ckpt=str(a.ckpt), seed=a.seed, steps=a.steps, cfg_w=a.cfg_w, cfg_t=None, frames50=L, noise_scale=1.0, no_spk=False,
+            gen = dict(ckpt=str(a.ckpt), seed=a.seed, **({'seed_mode': a.seed_mode, 'clip_seed': clip_seed(a.seed, a.seed_mode, stem)} if a.seed_mode != 'run' else {}), steps=a.steps, cfg_w=a.cfg_w, cfg_t=None, frames50=L, noise_scale=1.0, no_spk=False,
                        smooth=None, smooth_legs=None, resample='scmg/g1.py to30 (cubic / heading spline / RotationSpline)',
                        **({} if proto is None else dict(stream=proto)))
             meta = dict(real_num_frames=n30)
         else:
             q50 = cmd.astype(np.float64); r30 = g1.to30(q50, n30o).astype(np.float32)
-            gen = dict(ckpt=str(a.ckpt), seed=a.seed, steps=a.steps, cfg_w=a.cfg_w, stream=proto, interrupt=dict(
+            gen = dict(ckpt=str(a.ckpt), seed=a.seed, seed_mode=a.seed_mode, clip_seed=clip_seed(a.seed, a.seed_mode, stem), steps=a.steps, cfg_w=a.cfg_w, stream=proto, interrupt=dict(
                 t_i=t_i, f_i=r['f_i'], frac=r['frac'], audio=a.audio, restart=a.restart, react_delay=a.react_delay, l_r=st.l_r,
                 o=st.o, k_int=st.k_int, retract=a.retract, rest=a.rest, tr=a.tr, w=a.w, w0=a.w0, splice=a.splice, floor=a.floor, prefix_feats=a.prefix_feats, yield_guide=a.yield_guide, diff_guide=a.diff_guide, ref_ckpt=a.ref_ckpt, n_targets=len(st.tgt or {}),
                 tokens_kept=int(keep.sum()), tokens_total=int(np.asarray(s['tmask']).sum())))
