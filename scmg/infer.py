@@ -36,7 +36,7 @@ class Streamer:
                  standby=None, device='cuda', hist_measured=False, ctx_t=1.0, cfg_w=1.0, cfg_text=True, cfg_t=None,
                  text_mode='final', x2_rate=15.0, x2_lag=0.15, seg_lead=0.3, deploy_timing=False,
                  elastic=None, window_lm_text=False, g_override=None, trim_start=True, cfg_null_fix=True, still_refresh=None,
-                 audio_off=False, causal_inputs=None, asr_lag=0.5, trace=None, sde_eta=0.0):
+                 audio_off=False, causal_inputs=None, asr_lag=0.5, trace=None, sde_eta=0.0, sde_tmax=1.0):
         """feat [T, 89] normalised (whole utterance; access is restricted to what has arrived);
         cond: dict(text [K,768], ttime [K] absolute s, tmask [K], spk [192], spk_valid, source, ref [R,J], ref_valid)
         (+ tts_h [T/4, 2048], tts_hm [T/4] for models with cfg.tts_h: TTS hidden rows aligned to feat frame 0, row r = frames
@@ -67,6 +67,7 @@ class Streamer:
         # Euler-Maruyama on every step but the last (plain Euler there). gamma = 0 is the Euler ODE; the default path does not
         # enter the branch, so it stays bit-identical. Fresh noise comes from the streamer's own generator (seeded).
         self.sde_eta = float(sde_eta)
+        self.sde_tmax = float(sde_tmax)   # SDE steps only while t < sde_tmax (then plain Euler: the late, fine-detail steps stay deterministic)
         if self.sde_eta < 0: raise ValueError(f'sde_eta {sde_eta} < 0')
         self.g = torch.Generator(device=device).manual_seed(seed)
         self.lat = []                     # committed latents (normalised), one [z] per latent step
@@ -408,7 +409,7 @@ class Streamer:
                         v = v_u + self.cfg_w * (v_a - v_u) + self.cfg_t * (v - v_a)
                     else:
                         v = v_u + self.cfg_w * (v - v_u)
-                if self.sde_eta > 0 and s < self.steps - 1:
+                if self.sde_eta > 0 and s < self.steps - 1 and tval < self.sde_tmax:
                     x = torch.where(known[..., None], x, sde_step(x, v, tval, 1.0 / self.steps, self.sde_eta, self.g))
                 else:
                     x = torch.where(known[..., None], x, x + v / self.steps)

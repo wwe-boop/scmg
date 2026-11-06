@@ -55,6 +55,7 @@ def main():
     # 11-04 G1 metric work (inference-only probes, chosen on the dev split): speaker conditioning off (the learned null,
     # drop_spk 0.2 in training) for unseen test speakers; Savitzky-Golay smoothing of the 50 Hz joint channels
     ap.add_argument('--noise-scale', type=float, default=1.0, help='scale of the initial flow noise (1 = standard)')
+    ap.add_argument('--sde-tmax', type=float, default=1.0, help='with --sde-eta: stochastic steps only while t < sde_tmax')
     ap.add_argument('--sde-eta', type=float, default=0.0, help='stochastic sampler gamma: marginal-preserving flow SDE dx = (v - gamma n0) dt + sqrt(2 gamma (1-t)) dW (0 = Euler ODE, the default path)')
     ap.add_argument('--no-spk', action='store_true', help='use the learned null speaker embedding (spk_valid = 0)')
     ap.add_argument('--smooth', default=None, help="'w,o': SG filter on the 29 joint channels at 50 Hz (root channels untouched)")
@@ -162,7 +163,7 @@ def main():
                 if a.diag_whole_spk:                     # diagnostic split of the causal-input cost: causal feat89, whole-clip speaker
                     _sv = (np.asarray(s['spk'], np.float32), float(s['spk_valid'])); mkw['causal_inputs'].spk = lambda Tk, _sv=_sv: _sv
         cmd, _, tk = generate(m, vae, s['feat'], cond, stats, nch, H=H, steps=a.steps, seed=a.seed, standby=qm, ctx_t=m.ctx_t,
-                              cfg_w=a.cfg_w, cfg_t=a.cfg_t, noise_scale=a.noise_scale, **({'sde_eta': a.sde_eta} if a.sde_eta else {}), **kw, **mkw)
+                              cfg_w=a.cfg_w, cfg_t=a.cfg_t, noise_scale=a.noise_scale, **({'sde_eta': a.sde_eta, 'sde_tmax': a.sde_tmax} if a.sde_eta else {}), **kw, **mkw)
         if cmd.shape[0] < L or cmd.shape[1] != J or not np.isfinite(cmd).all(): raise ValueError(f'{stem}: generated {cmd.shape}')
         if k > 0: ticks.extend(float(x) for x in tk)           # first clip excluded (CUDA warm-up)
         q50 = cmd[:L].astype(np.float64)
@@ -174,7 +175,7 @@ def main():
         r30 = g1.to30(q50, n30).astype(np.float32)
         torch.save(dict(robot_repr=torch.from_numpy(r30), real_num_frames=n30, fps=30.0, representation_units='physical',
                         representation_schema='projecthermes-g1-39d-standard-v2', source=stem,
-                        generator=dict(ckpt=str(a.ckpt), seed=a.seed, steps=a.steps, cfg_w=a.cfg_w, cfg_t=a.cfg_t, frames50=L, noise_scale=a.noise_scale, **({'sde_eta': a.sde_eta} if a.sde_eta else {}), no_spk=a.no_spk, **({'diag_whole_spk': True} if a.diag_whole_spk else {}),
+                        generator=dict(ckpt=str(a.ckpt), seed=a.seed, steps=a.steps, cfg_w=a.cfg_w, cfg_t=a.cfg_t, frames50=L, noise_scale=a.noise_scale, **({'sde_eta': a.sde_eta, 'sde_tmax': a.sde_tmax} if a.sde_eta else {}), no_spk=a.no_spk, **({'diag_whole_spk': True} if a.diag_whole_spk else {}),
                                        **({'spk_refresh': a.spk_refresh} if a.spk_refresh != 'tick' else {}),
                                        **({'causal_feat': a.causal_feat} if a.causal_feat != 'prefix' else {}), smooth=a.smooth, smooth_legs=a.smooth_legs,
                                        **({} if (a.modality, a.text_swap) == ('both', False) else

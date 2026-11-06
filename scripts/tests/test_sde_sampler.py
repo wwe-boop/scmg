@@ -45,6 +45,6 @@ t2 = t + dt; want_m, want_s = t2 * m, (t2 * t2 * s * s + (1 - t2) ** 2) ** 0.5
 good = abs(float(y.mean()) - want_m) < 0.01 and abs(float(y.std()) - want_s) < 0.01
 ok &= good; print(f'one-step marginal: mean {float(y.mean()):.4f}/{want_m:.4f} std {float(y.std()):.4f}/{want_s:.4f} {"OK" if good else "FAIL"}')
 src = inspect.getsource(infer.Streamer)
-good = 'if self.sde_eta > 0 and s < self.steps - 1:' in src and 'x = torch.where(known[..., None], x, x + v / self.steps)' in src
+good = 'if self.sde_eta > 0 and s < self.steps - 1 and tval < self.sde_tmax:' in src and 'x = torch.where(known[..., None], x, x + v / self.steps)' in src
 ok &= good; print('default branch = original Euler line:', 'OK' if good else 'FAIL')
 print('ALL_OK' if ok else 'FAILED'); sys.exit(0 if ok else 1)
