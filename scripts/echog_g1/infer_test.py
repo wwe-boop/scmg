@@ -12,7 +12,7 @@ prefix-causal e5 features (--text-causal = the G1 causal cache of the SAME text 
 deploy timing (token times only once voiced), audio look-ahead H = 2 x 80 ms = 160 ms past the chunk start. Individual
 switches (--text-mode / --horizon / --x2-rate / --x2-lag / --deploy-timing) override the protocol preset.
 """
-import argparse, json, os, sys, time
+import argparse, json, os, sys, time, zlib
 from pathlib import Path
 import numpy as np
 import torch
@@ -56,6 +56,14 @@ def env_guard(allow):
     if bad and not allow:
         raise SystemExit(f'non-default global switches in the environment {bad}: pass --allow-env to run with them (recorded in the outputs)')
     return vals
+
+
+def clip_seed(seed, mode, stem):
+    """Noise seed of one clip (ported from exp/divba ebb03ae, same rule). 'run' = the run seed for every clip (old behaviour: all
+    clips share the noise draws); 'per_clip' = seed + crc32(stem) (independent draws per clip, reproducible, shard / order free)."""
+    if mode == 'run': return seed
+    if mode == 'per_clip': return (seed + zlib.crc32(stem.encode())) % (2 ** 63)
+    raise ValueError(f'seed mode {mode}')
 
 
 def ctl_plan(d, mode, stems, dur, pred=None):
@@ -143,6 +151,8 @@ def main():
     ap.add_argument('--cfg-ctl', type=float, default=None, help='separate control-token guidance (Streamer cfg_ctl); None = joint CFG')
     ap.add_argument('--ctl-pred', default=None, help='PRED.json of scripts/semantic/g1_sem_predictor.py (text-only predicted semantic tokens; modes pred / predlex)')
     ap.add_argument('--ret', default=None, help='retrieval dir:query file (scripts/semantic/g1_ret_bank.py, e.g. <dir>:RET_dev-auto.json); model with cfg ret')
+    ap.add_argument('--seed-mode', default='run', choices=['run', 'per_clip'],
+                    help="noise seed per clip: run = --seed for every clip (old default); per_clip = --seed + crc32(stem) (11-06 protocol)")
     ap.add_argument('--allow-env', action='store_true', help='allow non-default SCMG_SEM_SCALE / SCMG_BF16 / SCMG_SEED0 / SCMG_STRIDE')
     a = ap.parse_args()
     genv = env_guard(a.allow_env)
@@ -222,7 +232,7 @@ def main():
             cond.update(ctl_t=np.array([t['t'] for t in used], np.float32), ctl_type=np.array([x[0] for x in tv], np.int64),
                         ctl_v=np.stack([x[1] for x in tv]), ctl_vm=np.stack([x[2] for x in tv]))
             if a.cfg_ctl is not None: mkw['cfg_ctl'] = a.cfg_ctl
-        cmd, _, tk = generate(m, vae, s['feat'], cond, stats, nch, H=H, steps=a.steps, seed=a.seed, standby=qm, ctx_t=m.ctx_t,
+        cmd, _, tk = generate(m, vae, s['feat'], cond, stats, nch, H=H, steps=a.steps, seed=clip_seed(a.seed, a.seed_mode, stem), standby=qm, ctx_t=m.ctx_t,
                               cfg_w=a.cfg_w, cfg_t=a.cfg_t, noise_scale=a.noise_scale, **kw, **mkw)
         if cmd.shape[0] < L or cmd.shape[1] != J or not np.isfinite(cmd).all(): raise ValueError(f'{stem}: generated {cmd.shape}')
         if k > 0: ticks.extend(float(x) for x in tk)           # first clip excluded (CUDA warm-up)
@@ -235,7 +245,7 @@ def main():
         r30 = g1.to30(q50, n30).astype(np.float32)
         torch.save(dict(robot_repr=torch.from_numpy(r30), real_num_frames=n30, fps=30.0, representation_units='physical',
                         representation_schema='projecthermes-g1-39d-standard-v2', source=stem,
-                        generator=dict(ckpt=str(a.ckpt), seed=a.seed, steps=a.steps, cfg_w=a.cfg_w, cfg_t=a.cfg_t, frames50=L, noise_scale=a.noise_scale, no_spk=a.no_spk, smooth=a.smooth, smooth_legs=a.smooth_legs,
+                        generator=dict(ckpt=str(a.ckpt), seed=a.seed, **({'seed_mode': a.seed_mode, 'clip_seed': clip_seed(a.seed, a.seed_mode, stem)} if a.seed_mode != 'run' else {}), steps=a.steps, cfg_w=a.cfg_w, cfg_t=a.cfg_t, frames50=L, noise_scale=a.noise_scale, no_spk=a.no_spk, smooth=a.smooth, smooth_legs=a.smooth_legs,
                                        **({} if (a.modality, a.text_swap) == ('both', False) else
                                           dict(modality=a.modality, text_swap=donor.get(stem))),
                                        resample='scmg/g1.py to30 (cubic / heading spline / RotationSpline)', env=genv,
