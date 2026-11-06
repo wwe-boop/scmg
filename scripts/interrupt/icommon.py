@@ -33,6 +33,27 @@ def peak_jerk(P, a, b):
     return float(np.linalg.norm(j, axis=-1).max() * FPS ** 3)
 
 
+def jerk_series(P, a, b):
+    """per-sample hand jerk (max over the two hands, m/s^3) of the samples whose 4 frames lie in [a, b)"""
+    H = P[max(0, a):b, list(HANDS)]
+    if len(H) < 4: return np.zeros(0)
+    j = H[3:] - 3 * H[2:-1] + 3 * H[1:-2] - H[:-3]
+    return np.linalg.norm(j, axis=-1).max(-1) * FPS ** 3
+
+
+IND_POST, IND_PRE = 15, WIN      # 11-06 induced-abruptness windows: [t_i, t_i + 0.5 s] vs the 2.13 s before t_i
+
+
+def induced_abrupt(P, f, pre=IND_PRE, post=IND_POST):
+    """11-06 main abruptness test: peak hand jerk of the samples ending in [t_i, t_i + 0.5 s] (frames f - 3 .. f + 15, so the
+    sample across t_i counts) above the P95 of the SAME motion's per-sample jerk on the 2.13 s before t_i.
+    Returns (peak post jerk, pre P95, abrupt bool); None if the pre window is too short."""
+    js = jerk_series(P, f - pre, f)
+    if len(js) < 10: return None
+    thr = float(np.percentile(js, 95)); pk = float(jerk_series(P, f - PRE, f + post).max())
+    return pk, thr, bool(pk > thr)
+
+
 def peak_acc(P, a, b):
     H = P[a:b, list(HANDS)]
     if len(H) < 3: return float('nan')

@@ -1,0 +1,9 @@
+{
+ "written": "2026-11-06, decided by the coordinator (user-authorised) AFTER seeing the round-1106b results; recorded before any new method run",
+ "reason": "the old abruptness (peak hand jerk on [t_i - 0.1 s, t_i + 2.13 s] above the human post-speech P95) judges even GT normal speech 81 % abrupt (dev subset, 2.13 s before t_i) and all models 62-72 %: it measures whether the motion is as calm as a human after speech, not whether the interruption handling creates a jerk",
+ "main_abruptness": {"name": "abrupt_induced", "definition": "per interruption: peak hand jerk (max over both hands of |3rd difference| x 30^3, official FK) of the jerk samples ending in [t_i, t_i + 0.5 s] (frames f_i - 3 .. f_i + 15) above the P95 of the SAME method's per-sample hand jerk on the 2.13 s before t_i of the same clip; rate over interruptions", "gate": "<= 10 %"},
+ "secondary_abruptness": {"name": "abrupt_rate (old)", "definition": "unchanged (human post-speech P95 threshold), reported in the main table and the appendix"},
+ "human_reference": "the 79 human retraction windows (speech offset as t_i), same new test; pre window = the 1.5 s available before the offset (segments start 1.5 s before it)",
+ "applies_to": "every method and row, re-scored with the same code (eval_interrupt.py abrupt_induced)",
+ "main_table_gates_now": {"yield_rate_min": 0.90, "abrupt_induced_max": 0.10, "rkd": "below B2_p, clip-bootstrap 95 % interval of the difference excluding 0", "unsafe_max": 0.01}
+}
