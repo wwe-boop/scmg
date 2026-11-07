@@ -164,6 +164,9 @@ class StageCfg:
     # held rest pose after it is supervised. yield_human: human_ref json with rest.R_sil.joints (29).
     yield_cf_p: float = 0.0
     yield_rest_s: float = 1.4
+    yield_mask_rest_p: float = 0.0  # 11-08 duplex ladder (b): P(a counterfactual-yield sample has its post-bridge latents [t_y + rest, end)
+                                    # flagged as known inserted latents, cfg.mask_cond) -> rest insertion at inference is in-distribution;
+                                    # 0 = off (no extra random draw, bit-identical)
     yield_human: str = ''
     ctl_count_thr: float = 0.5918
     # 11-07 EX002 finger commands (default off): soft extended-finger count loss (w_ctl_finger) and counterfactual counts
@@ -752,6 +755,13 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         ins = (gpos >= st_[bb][:, None]) & (gpos < (st_ + ln)[bb][:, None]) & on[bb][:, None] & (gpos >= 0)
         ins[:, :cfg.ctx] &= known[:, :cfg.ctx]                    # a context position is inserted only where it exists
         known = known | ins
+    if sc.yield_mask_rest_p > 0 and ycf is not None and getattr(cfg, 'mask_cond', False):   # 11-08 ladder (b): rest spans as insertions
+        gpr = (kk * CHUNK - cfg.ctx)[:, None] + torch.arange(L, device=dev)[None]
+        bbr = torch.arange(B, device=dev).repeat_interleave(K)
+        selr = ycf['on'] & (torch.rand(B, device=dev) < sc.yield_mask_rest_p)
+        insr = (gpr >= (ycf['ly'] + ycf['nb'])[bbr][:, None]) & selr[bbr][:, None] & (gpr >= 0)
+        insr[:, :cfg.ctx] &= known[:, :cfg.ctx]
+        ins = insr if ins is None else (ins | insr); known = known | insr
     t = logit_normal(M, dev)[:, None].expand(M, L).clone(); t[known] = 1.
     noise = torch.randn_like(x1i)
     xt = torch.where(known[..., None], x1i, t[..., None] * x1i + (1 - t[..., None]) * noise)

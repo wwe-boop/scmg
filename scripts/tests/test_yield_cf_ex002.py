@@ -54,4 +54,24 @@ for i in on.nonzero()[:, 0].tolist():
     te = torch.nan_to_num(b0['cz_tend'][i], nan=1e9); good &= bool((b2['tmask'][i] == (b0['tmask'][i] & (te <= ty + CF.WORD_EPS))).all())
     info.append(f'ly {int(ly[i])} rest-err {dr:.3f} hold-err {dh:.1e}')
 ok('token / motion (waist + arms -> rest, head + fingers held) / text rewrite', good, ' | '.join(info[:5]))
+# d / e (11-08): probes on this batch (needs a GPU and BASE_TREE): default flags == BASE_TREE; yield_mask_rest_p live
+if os.environ.get('BASE_TREE'):
+    import subprocess
+    SP = Path(os.environ['SP']); SP.mkdir(parents=True, exist_ok=True); torch.save(b0, SP / 'bE.pt')
+    CK = B_ + '/ex002-sweep-1107/czm-s12000-lr1e-4-w0.1/train/final.pt'
+    PR = HERE.parent / '_causal_loss_probe.py'
+    def probe(code, cfg, sc, tag):
+        out = SP / f'pE_{tag}.pt'
+        r = subprocess.run([sys.executable, str(PR), str(SP / 'bE.pt'), str(out), CK, B_ + '/trained/vae-r3/final.pt', D_ + '/scmg/STATS_v36_1.json',
+                            json.dumps(cfg), json.dumps(sc)], env=dict(os.environ, PYTHONPATH=str(code)), cwd=str(code), capture_output=True, text=True)
+        if r.returncode: print(r.stderr[-2000:])
+        return torch.load(out, weights_only=False) if r.returncode == 0 else None
+    same = lambda p, q: p is not None and q is not None and all(torch.equal(p['loss'][k], q['loss'][k]) for k in p['loss']) and \
+        all(torch.equal(p['grad'][k], q['grad'][k]) for k in p['grad'])
+    SCb = dict(p_stream=0.67, p_async=1.0, p_async_seg=0.0, self_force_p=0, w_phys=0.1, phys_dyn_w=0, causal_front=True, causal_spk=True, causal_text=True)
+    CT = {'adsc': True, 'ctl': True, 'ctl_flow': True, 'mask_cond': True}
+    ok('d default (ladder flags off) losses + grads == BASE_TREE on the EX002 ctl batch', same(probe(os.environ['BASE_TREE'], CT, SCb, 'b'), probe(CODE, CT, SCb, 'n')))
+    SY = dict(SCb, yield_cf_p=1.0, yield_human=os.environ['HUMAN'])
+    p0 = probe(CODE, CT, SY, 'y0'); p1 = probe(CODE, CT, dict(SY, yield_mask_rest_p=1.0), 'y1')
+    ok('e yield_mask_rest_p live: finite, losses change', p1 is not None and all(bool(torch.isfinite(v).all()) for v in p1['loss'].values()) and not same(p0, p1))
 print('ALL_OK' if not FAIL else f'SOME_FAIL {FAIL}'); sys.exit(1 if FAIL else 0)
