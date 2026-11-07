@@ -168,3 +168,22 @@ ctl2 + override all 100 % executable after CBF; ramp frames over the 1500 rad/s^
 0.15 s override ramps are too steep; reported, not gated (pre-registered as report-only above).
 Plans: PLAN_dev.json sha256 7515bde6…3860, PLAN_dev_sparse.json sha256 76863c5c…aa3f (both in control-token-1105/ex002/).
 Script: scripts/ex002/ex002_ctl_lane4.sh (also checks ctl4 none vs control generations, max |diff|).
+
+## Lane 4 result (dlc6eiyvft9aw7i8, LANE_DONE 2026-11-08 00:11; 3-seed means)
+- True freeze verified: ctl4 none generations == control (sibag-s2 none) bitwise on all 43 clips x 3 seeds (max |diff| 0).
+- Quality gates FAIL: (i) sparse, FGD v2 outside +-1 s 113.45 (gate 100.44; control 91.69); (ii) sparse whole clip 113.35 plain /
+  114.73 override (gate 99.37). Report-only: dense whole clip 199.9 / 198.1; dense outside +-0.5 s 153.0 (ref 104.5); outside +-1 s 218.0
+  (unreliable). FKD dense given 4.07 vs none 1.38.
+- Obedience: STG dense given 0.400 vs none 0.254 (+0.147, passes; shuffle follows 0.398 vs 0.325 against the original); sparse 0.358 vs
+  0.261. Finger hit 0.288 plain (fails) / 1.000 with the override (passes; shuffle follows 1.000 vs 0.058). Executability after CBF
+  100 % of clips (all runs). Override ramp frames over the finger jerk limit 0.55-0.58 (control 0.04-0.05; report-only).
+Diagnosis: with the base bitwise frozen, the token routes alone move the motion FAR from the commands (+21.8 FGD v2 on windows more
+than 1 s from every command, sparse plan) -> the control routes act globally (planner / chunk attention sees every token), not locally.
+## Module 5 (pre-registered 2026-11-08 00:20, before any module-5 number): command-local blend at inference (default off)
+y = (1 - w) * y_none + w * y_given per joint, w(t) = max over the plan's commands of a window that is 1 for |t - t_cmd| <= 0.6 s and
+falls to 0 by a cosine ramp at 0.9 s (all inside the +-1 s mask); y_none / y_given = the same model and per-clip seed without / with
+tokens (ctl4 lane-4 outputs, so no new generation); finger override (module 2) applied after the blend for the "fo" rows. Outside
++-0.9 s the motion is exactly the no-token generation (= the control, bitwise), so gate (i) holds BY CONSTRUCTION and is not counted as
+evidence; the test is gate (ii) (sparse whole clip <= 99.37) with the obedience gates unchanged (STG +0.10 with shuffle follow, finger
+>= 0.9 override allowed, executability after CBF 100 %). Evaluation: the unchanged ex002_ctl_run evaluate + ex002_fgd_outside.py +
+ex002_exec.py on the blended arrays (post-processing of the DLC generations; scored locally, flagged; pai_train login expired).
