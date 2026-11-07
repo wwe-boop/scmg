@@ -200,3 +200,16 @@ peaks at +0.0..+0.4 s (1.06-1.11 rad vs ~0.5 baseline) and stays elevated to abo
 Window: w = 1 on [t - 0.3, t + 0.9] s, cosine ramps of 0.3 s -> 0 outside [t - 0.6, t + 1.2] s (aim and finger alike). The ramp past
 +1.0 s now reaches windows of gate (i), so gate (i) is real evidence again. Same gates, same scoring scripts (ex002_local_blend.py
 gains --pre / --post; the symmetric module-5 call is unchanged).
+## Module 5b result (2026-11-08 ~01:00; blended lane-4 DLC generations, scored locally on the RTX 5090 -> re-score on DLC once the
+## pai_train login is back; host differences of scoring are ~1e-4, generation was on A800)
+- Gate (i) sparse outside +-1 s: 91.72 (91.94 / 87.22 / 96.00; gate 100.44) PASS (real evidence: the +1.2 s ramp end enters it).
+- Gate (ii) sparse whole clip: 94.52 plain (94.28 / 89.46 / 99.83), 96.32 with the override (gate 99.37) PASS.
+- STG dense: 0.357 vs none 0.254 = +0.103 (gate +0.10) PASS, thin margin; per seed 0.353 / 0.358 / 0.360; shuffle follows (0.353 vs
+  0.308 against the original). Sparse 0.338 vs 0.261.
+- Finger hit: override 1.000 PASS (shuffle follows 1.000 vs 0.058); plain 0.288 (fails) -> the passing configuration needs module 2.
+- Executability after CBF 100 % PASS. Override ramp frames over the finger jerk limit 0.54-0.58 (report-only; the 0.15 s ramps).
+- Report-only: dense whole clip 181.5 / 183.9; FKD sparse 1.44 (none 1.38), dense 2.84.
+Verdict: ctl4 (true freeze) + module 5b (asymmetric command-local blend) + module 2 (finger override) passes every pre-registered
+lane-4 gate on dev. Caveats: STG margin 0.003; the 5b window was set from a dev diagnostic (|y_given - y_none| profile, disclosed above);
+offline only (needs commands >= 0.6 s ahead and both a none and a given generation, 2x compute); override ramp jerk to fix (longer
+ramps) before any robot use; dev only, test untouched.
