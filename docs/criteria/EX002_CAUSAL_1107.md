@@ -30,3 +30,8 @@ ends); smoke on 2 dev recordings: training cz_pro == inference CausalInputs pros
 load-time CAM++ check (single-item clips only) uses atol 1e-3 (measured 2-3e-4).
 Evaluator: scripts/ex002/bench_ex002.py (exp/duplex 71f2e04): FGD v2 (two frozen encoders, mean) + FKD over the 43 dev recordings;
 sanity: GT-as-generation 0 / 0, identical to ex002_ctl_run on the same outputs (sibag-s2 91.1268 / 87.1537 / 95.3214).
+Coverage note (11-07 21:5x, after the train step of lane run dlckiwbuzns3km4w, before any bench number): the load_causal log line
+"cover 18171 / 55802 clips" of release 20261107-2210-ex002-czm counted only the item-keyed entries (single-item clips). True
+coverage of pre-train-slim2m on the data-v36_1 train split = 18,171 item entries + 37,631 recording entries = 55,802 / 55,802
+clips (100 %), every entry with frames == the clip frames (recomputed from INDEX.json + train.json with the View grouping and the
+causal_rows lookup); the training gate --causal-min-cov 0.99 uses this total. The log line now prints both parts (exp/duplex).

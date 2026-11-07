@@ -266,7 +266,8 @@ class View:
         self.causal['coverage'] = (len(cov) + nrec) / max(1, len(self.clips))
         self.causal['recordings'] = nrec
         if (d / 'SPK_MEAN.npy').exists(): self.causal['spk_mean'] = np.load(d / 'SPK_MEAN.npy').astype(np.float32)
-        print(f'View {self.root.name}: causal inputs {d} cover {len(cov)} / {len(self.clips)} clips; SPK_EMB check {nchk}, '
+        print(f'View {self.root.name}: causal inputs {d} cover {len(cov) + nrec} / {len(self.clips)} clips ({len(cov)} item entries + '
+              f'{nrec} recording entries); SPK_EMB check {nchk}, '
               f'mel check {nmel} clips', flush=True)
         return self.causal['coverage']
 
