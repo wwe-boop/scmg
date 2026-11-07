@@ -14,10 +14,10 @@ import argparse, json, sys
 from pathlib import Path
 import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'ex002'))
-TOL_CURVE = 0.03          # relative, mean flow / gn over steps 100..300
-TOL_DEV = 0.02            # relative, final dev_flow
-TOL_STILL = 0.010         # absolute share of frames
-TOL_WRIST = 0.10          # relative, wrist speed / amplitude
+TOL_CURVE = 0.005         # relative, mean flow / gn over steps 100..300 (11-08 calibration: run-to-run 4e-5 / 1e-4; pre-fix 5d8f154 -8 % / -17 %)
+TOL_DEV = 0.002           # relative, final dev_flow (run-to-run 5e-6)
+TOL_STILL = 0.003         # absolute share of frames (run-to-run 1.2e-4)
+TOL_WRIST = 0.02          # relative, wrist speed / amplitude (run-to-run 3e-4)
 
 
 def summarise(o):

@@ -4,7 +4,9 @@
 # BAgger 0.33, semsynth 0.6, seed 0, batch 64, 300 steps, lr 1e-4, warmup 200 -> fixed data, fixed RNG), then an offline bench
 # (per_clip seed 0, 10 flow steps, cfg 2.0) of a fixed quarter of the dev clips with the CURRENT bench code, then
 # ref_train_ex002.py summarises loss / grad-norm curves + the 13-point liveliness stats and (CHECK=1) compares them with
-# scripts/tests/ref/REF_TRAIN_EX002.json. Run on an A800 (DLC) for every release before any lane is submitted:
+# scripts/tests/ref/REF_TRAIN_EX002.json (stored 11-08 from release 5d6f017; calibration: a same-code re-run passes with run-to-run
+# differences 4e-5 (flow) / 1e-4 (gn) / 3e-4 (wrist speed); the pre-dcd50fb code 5d8f154, whose self-forced batches gave the planner
+# and the Local Flow no gradient, FAILS on flow -8 % / gn -17 % / wrist speed +5 %). Run on an A800 (DLC) for every release before any lane is submitted:
 #   CUDA_VISIBLE_DEVICES=g TREE=<code tree> BENCH=<release> bash scripts/tests/ref_train_ex002.sh <out dir>
 # TREE = code whose TRAINING is checked (default: the tree holding this script); BENCH = code for inference (default TREE).
 set -uo pipefail
@@ -23,4 +25,6 @@ STEPS=${REF_STEPS:-300}
   --bagger-dir $B/r4-1104/bagger-pai/bagger-data --bagger-share 0.33 > $O/train.log 2>&1 ) || { echo "REF_TRAIN_FAILED $O"; exit 1; }
 [ -f $O/offline/s0/PROTOCOL.json ] || ( cd $BENCH && PYTHONPATH=$BENCH $PY scripts/ex002/bench_ex002.py infer --ckpt $O/train/final.pt \
   --protocol offline --seed 0 --out $O/offline/s0 --shard 0/4 > $O/bench.log 2>&1 ) || { echo "REF_BENCH_FAILED $O"; exit 1; }
-( cd $HERE && PYTHONPATH=$HERE $PY scripts/tests/ref_train_ex002.py summarise $O ${CHECK:+--check scripts/tests/ref/REF_TRAIN_EX002.json} )
+( cd $HERE && PYTHONPATH=$HERE $PY scripts/tests/ref_train_ex002.py summarise $O ${CHECK:+--check scripts/tests/ref/REF_TRAIN_EX002.json} ) || exit 1
+# a release passes only with CHECK=1: the marker is what lane scripts check before training ([ -f $REL/REF_TRAIN_OK.json ] || exit 3)
+[ -n "${CHECK:-}" ] && [ "$TREE" = "$HERE" ] && echo "{\"time\": \"$(date -Is)\", \"commit\": \"$(cat $HERE/GIT_COMMIT 2>/dev/null)\", \"run\": \"$O\"}" > $HERE/REF_TRAIN_OK.json && echo REF_TRAIN_OK $HERE
