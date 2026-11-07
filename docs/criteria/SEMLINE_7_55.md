@@ -122,3 +122,15 @@ by f_mask (as in training); only the 0.3 s ramps are inpainted RePaint-style. Sa
 (count ≥ 0.90, STG ≥ 0.308, boundary jerk ≤ 1.5 on ≥ 90 % of edges, FGD ≤ 1.497 per insertion run, executability after CBF 100 %);
 the base run is this model without insertion. Both variants reported in one table.
 Tests: test_maskcond.py ALL_OK (p_mask 0 bitwise, f_mask trained, no-insertion inference bitwise), test_ctl.py ALL_OK vs HEAD.
+
+## Pointing with control-token look-ahead (written 2026-11-07 before the run; StageCfg / Streamer ctl_lookahead)
+Deployment assumption (stated here): a pointing command comes from the DIALOGUE SYSTEM, not from the speech, so it is available
+before the gesture: an annotation (group-0) control token arrives at the latest 0.5 s before its time and its time is known 0.5 s
+before it is spoken (the voiced rule shifted by 0.5 s). Lexical tokens keep their speech-bound arrival. In the offline protocol all
+tokens are visible anyway, so look-ahead changes only the training of streaming samples and the engine protocol.
+Lane ctlptla = ctlpt (ctlcf recipe without counts, 2000 steps) + sc ctl_lookahead 0.5. Same offline gates as ctlpt: STG(gt) −
+STG(none) ≥ +0.10, shuffle follows the given target, FGD(gt) ≤ 1.497, |ΔBA(gt)| ≤ 0.0120. Reported side by side with ctlpt (no
+look-ahead), plus the engine protocol (x2 text streaming, 160 ms audio look-ahead) STG of gt / none runs: ctlptla with
+--ctl-lookahead 0.5 and ctlpt without.
+Tests: test_lookahead.py ALL_OK (default bitwise, loss changes, offline unchanged, engine change bounded by t − 0.5 s − 3 s),
+test_ctl.py ALL_OK vs HEAD.

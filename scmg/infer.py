@@ -28,7 +28,7 @@ class Streamer:
                  standby=None, device='cuda', hist_measured=False, ctx_t=1.0, cfg_w=1.0, cfg_text=True, cfg_t=None,
                  text_mode='final', x2_rate=15.0, x2_lag=0.15, seg_lead=0.3, deploy_timing=False,
                  elastic=None, window_lm_text=False, g_override=None, trim_start=True, cfg_null_fix=True, still_refresh=None,
-                 audio_off=False, cfg_ctl=None, inpaint=None):
+                 audio_off=False, cfg_ctl=None, inpaint=None, ctl_lookahead=0.0):
         """feat [T, 89] normalised (whole utterance; access is restricted to what has arrived);
         cond: dict(text [K,768], ttime [K] absolute s, tmask [K], spk [192], spk_valid, source, ref [R,J], ref_valid)
         (+ tts_h [T/4, 2048], tts_hm [T/4] for models with cfg.tts_h: TTS hidden rows aligned to feat frame 0, row r = frames
@@ -77,6 +77,7 @@ class Streamer:
         # tokens with the normal window mask); the audio still sets the clip length and the clock. Text-only = audio_off
         # with the text kept (drop_text / drop_audio are sampled independently in training, so it is a trained case).
         self.audio_off = audio_off
+        self.ctl_lookahead = float(ctl_lookahead)   # 11-07: annotation control tokens visible (and timed) >= this many s ahead
         # 11-07 fixed-action library insertion (off = None, bit-identical): RePaint-style latent inpainting inside the Local Flow
         # sampler. inpaint = dict(lat [N, z] NORMALISED target latents on the global latent grid, w [N] soft weights in [0, 1],
         # seed). For every generated position with w > 0: x starts at w eps + (1 - w) x and after every Euler step becomes
@@ -242,7 +243,14 @@ class Streamer:
                      if (self.arr_text is not None and self.text_mode != 'final') else ctl_tt)
             heard_c = (nowc + (self.H * STRIDE / 50. if self.H < INF else 1e9))[None]
             stream_c = torch.tensor([bool((self.deploy_timing or adsc_m) and self.H < INF)], device=self.dev)
+            if self.ctl_lookahead > 0:
+                from .ctl import TYPE_NAMES
+                g0 = (c['ctl_type'] > 0)[None] & (c['ctl_type'] <= len([n for n in TYPE_NAMES[1:] if not n.startswith('lex_')]))[None]
+                arr_c = torch.where(g0, torch.minimum(arr_c.float(), torch.nan_to_num(ctl_tt, 0.) - self.ctl_lookahead), arr_c.float())
             ckeep, ctimed = visibility(cm, ctl_tt, arr_c, torch.tensor([self.text_mode == 'final'], device=self.dev), nowc, heard_c, stream_c)
+            if self.ctl_lookahead > 0:        # its time is known ctl_lookahead s before it is spoken (voiced-rule shifted)
+                early = (torch.nan_to_num(ctl_tt, 1e9)[:, None, :] - self.ctl_lookahead <= heard_c[:, :, None])
+                ctimed = torch.where(g0[:, None, :], ctimed | (ckeep & early), ctimed)
             tt_c, tu_c = m.ctl_text_tokens(ctl_u, ctl_tt)
             ctn = torch.where(cm, ctl_tt, torch.full_like(ctl_tt, float('nan'))); n0 = text.shape[1]
             if dual:

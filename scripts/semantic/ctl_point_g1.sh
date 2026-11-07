@@ -4,7 +4,9 @@
 # counterfactual targets 0.5, ctl lr x10, ctl_focus 0.5) on ctl-tokens-hos (no counts), hos-base warm start, 2000 steps, seed 0.
 # Inference seeds 0 / 1 / 2, per_clip, offline, CFG 2.5, 10 steps: none / gt on the 400 dev clips (official benchmark), shuffle on
 # the annotation clips; g1_ctl_eval.py (STG, Score_a / Score_b) per seed. 3 GPUs: train on GPU0, then one seed per GPU.
-#   ctl_point_g1.sh <out dir>     env PY
+#   ctl_point_g1.sh <out dir>     env PY; NAME (lane dir, default ctlpt), SC_EXTRA (extra sc JSON members, e.g. '"ctl_lookahead": 0.5'),
+#                                 CK_EXISTING (skip training, evaluate this checkpoint), ENGINE (1: also engine-protocol gt runs,
+#                                 with --ctl-lookahead $ENGINE_LA if set)
 set -uo pipefail
 O=$1; CODE=$(cd "$(dirname "$0")/../.." && pwd); cd $CODE; mkdir -p $O
 B=/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg; C=/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture
@@ -29,21 +31,29 @@ infer() {   # gpu ckpt outdir stems seed extra...
     --out $P --stems $st --seed $sd --seed-mode per_clip --steps 10 --cfg-w 2.5 --split val --save50 --protocol offline "$@" >> $O/infer.log 2>&1 \
     || log "INFER_FAILED $P"
 }
-mkdir -p $O/ctlpt
-[ -f $O/ctlpt/train/DONE.json ] || { CUDA_VISIBLE_DEVICES=0 SCMG_TEXT_CAUSAL=$TEXT_CAUSAL_TEST $PY -m scmg.train --out $O/ctlpt/train --init $INIT \
+N=${NAME:-ctlpt}; X=${SC_EXTRA:+, $SC_EXTRA}
+mkdir -p $O/$N
+if [ -n "${CK_EXISTING:-}" ]; then CK=$CK_EXISTING; else
+[ -f $O/$N/train/DONE.json ] || { CUDA_VISIBLE_DEVICES=0 SCMG_TEXT_CAUSAL=$TEXT_CAUSAL_TEST $PY -m scmg.train --out $O/$N/train --init $INIT \
     --view $HV --stats $STATS --text-cache $TEXT_TEST --vae $DEC --workers 8 --batch 64 --stage base --steps 2000 --lr 1e-4 --warmup 200 \
     --eval-every 1000 --snap-every 1000000 --seed 0 --ctl-tokens $CTL0 --ctl-focus 0.5 --cfg '{"adsc": true, "ctl": true, "ctl_flow": true}' \
-    --sc '{"p_stream": 0.67, "p_async": 1.0, "p_async_seg": 0.0, "self_force_p": 0, "ctl_w": 4.0, "w_ctl_aux": 3.0, "ctl_field_drop": 0.2, "ctl_cf_p": 0.5, "ctl_lr_scale": 10.0}' \
-    > $O/ctlpt/train.log 2>&1 || { log "TRAIN_FAILED"; exit 1; }; }
-log "TRAINED"
-CK=$O/ctlpt/train/final.pt
+    --sc "{\"p_stream\": 0.67, \"p_async\": 1.0, \"p_async_seg\": 0.0, \"self_force_p\": 0, \"ctl_w\": 4.0, \"w_ctl_aux\": 3.0, \"ctl_field_drop\": 0.2, \"ctl_cf_p\": 0.5, \"ctl_lr_scale\": 10.0$X}" \
+    > $O/$N/train.log 2>&1 || { log "TRAIN_FAILED"; exit 1; }; }
+log "TRAINED $N"
+CK=$O/$N/train/final.pt; fi
 for sd in 0 1 2; do (
-  for m in none gt; do bench $sd $CK $O/ctlpt/$m/seed_00$sd $sd --ctl-tokens $CTL0 --ctl-mode $m & done
-  [ -f $O/ctlpt/shuffle/seed_00$sd/DONE ] || { infer $sd $CK $O/ctlpt/shuffle/seed_00$sd $CTL0/dev_ann_stems.txt $sd --ctl-tokens $CTL0 --ctl-mode shuffle \
-      && touch $O/ctlpt/shuffle/seed_00$sd/DONE; } &
+  if [ -z "${CK_EXISTING:-}" ]; then
+  for m in none gt; do bench $sd $CK $O/$N/$m/seed_00$sd $sd --ctl-tokens $CTL0 --ctl-mode $m & done
+  [ -f $O/$N/shuffle/seed_00$sd/DONE ] || { infer $sd $CK $O/$N/shuffle/seed_00$sd $CTL0/dev_ann_stems.txt $sd --ctl-tokens $CTL0 --ctl-mode shuffle \
+      && touch $O/$N/shuffle/seed_00$sd/DONE; } &
+  fi
+  EP=(); if [ "${ENGINE:-0}" = 1 ]; then for m in none gt; do EP+=(eng_$m=$O/$N/eng_$m/seed_00$sd)
+    [ -f $O/$N/eng_$m/seed_00$sd/DONE ] || { infer $sd $CK $O/$N/eng_$m/seed_00$sd $CTL0/dev_ann_stems.txt $sd --ctl-tokens $CTL0 --ctl-mode $m \
+      --protocol engine --text-causal $TEXT_CAUSAL_TEST ${ENGINE_LA:+--ctl-lookahead $ENGINE_LA} && touch $O/$N/eng_$m/seed_00$sd/DONE; } & done; fi
   wait
-  $PY scripts/semantic/g1_ctl_eval.py --ctl $CTL0 --view $HV --out $O/ctlpt/CTL_EVAL_s$sd.json gt=- none=$O/ctlpt/none/seed_00$sd \
-    gt_run=$O/ctlpt/gt/seed_00$sd shuffle=$O/ctlpt/shuffle/seed_00$sd >> $O/ctl_eval.log 2>&1 || log "CTL_EVAL_FAILED s$sd"
+  OP=(); [ -z "${CK_EXISTING:-}" ] && OP=(none=$O/$N/none/seed_00$sd gt_run=$O/$N/gt/seed_00$sd shuffle=$O/$N/shuffle/seed_00$sd)
+  $PY scripts/semantic/g1_ctl_eval.py --ctl $CTL0 --view $HV --out $O/$N/CTL_EVAL_s$sd.json gt=- "${OP[@]}" "${EP[@]}" \
+    >> $O/ctl_eval.log 2>&1 || log "CTL_EVAL_FAILED s$sd"
   log "SEED_DONE s$sd" ) &
 done; wait
 log "LANE_DONE"

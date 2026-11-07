@@ -101,6 +101,10 @@ class StageCfg:
     # mask_span seconds anywhere in the window; its latents are known (clean, t = 1) in every chunk instance that sees them, flagged
     # by model.f_mask, and excluded from the loss -> library insertion at inference becomes in-distribution inpainting
     p_mask: float = 0.0
+    # 11-07 control-token look-ahead (default 0): annotation (group-0) control tokens -- commands from the dialogue system, not
+    # from speech -- arrive ctl_lookahead s before their time at the latest and their time is known ctl_lookahead s before it is
+    # spoken (the voiced rule shifted by ctl_lookahead; streaming samples)
+    ctl_lookahead: float = 0.0
     mask_span: tuple = (0.5, 2.0)
     # 11-06 modality-balanced gradient modulation (OGM-GE, Peng et al. CVPR 2022; default off): every step the flow loss is also
     # evaluated (no grad, same noise / times / history) with the audio dropped and with the text dropped; their increase over the
@@ -293,7 +297,13 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         nowk = torch.arange(K, device=dev).float() * CHUNK_FRAMES / 50.
         if sc.p_async > 0:                # arrives with the word it is attached to; time known once voiced (streaming samples)
             arr_c = anchor_arrival(arr, batch['ttime'], tvalid, ct)
+            if sc.ctl_lookahead > 0:
+                g0 = batch['ctl_g'] == 0
+                arr_c = torch.where(g0, torch.minimum(arr_c, torch.nan_to_num(ct, 0.).float() - sc.ctl_lookahead), arr_c)
             keep, timed = visibility(cm, ct, arr_c, final, nowk, heard, stream)
+            if sc.ctl_lookahead > 0:          # its time is known ctl_lookahead s before it is spoken (voiced-rule shifted)
+                early = (torch.nan_to_num(ct, 1e9)[:, None, :] - sc.ctl_lookahead <= heard[:, :, None])
+                timed = torch.where(g0[:, None, :], timed | (keep & early), timed)
         else:
             keep = cm[:, None, :].expand(B, K, -1); timed = keep
         tt_c, tu_c = model.ctl_text_tokens(u, ct)

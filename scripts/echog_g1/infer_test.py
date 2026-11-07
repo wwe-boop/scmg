@@ -154,6 +154,8 @@ def main():
     # 11-05 explicit control tokens (models trained with cfg ctl; default = no tokens, the unchanged call)
     ap.add_argument('--ctl-tokens', default=None, help='CTL.json dir of scripts/semantic/g1_ctl_tokens.py (dev split tokens)')
     ap.add_argument('--ctl-mode', default='gt', choices=list(CTL_MODES), help='which tokens are given (see CTL_MODES)')
+    ap.add_argument('--ctl-lookahead', type=float, default=0.0, help='11-07: annotation control tokens visible / timed >= this many s '
+                    'before their time (dialogue-system commands; model trained with sc ctl_lookahead)')
     ap.add_argument('--cfg-ctl', type=float, default=None, help='separate control-token guidance (Streamer cfg_ctl); None = joint CFG')
     ap.add_argument('--ctl-pred', default=None, help='PRED.json of scripts/semantic/g1_sem_predictor.py (text-only predicted semantic tokens; modes pred / predlex)')
     ap.add_argument('--ret', default=None, help='retrieval dir:query file (scripts/semantic/g1_ret_bank.py, e.g. <dir>:RET_dev-auto.json); model with cfg ret')
@@ -253,6 +255,7 @@ def main():
             cond.update(ctl_t=np.array([t['t'] for t in used], np.float32), ctl_type=np.array([x[0] for x in tv], np.int64),
                         ctl_v=np.stack([x[1] for x in tv]), ctl_vm=np.stack([x[2] for x in tv]))
             if a.cfg_ctl is not None: mkw['cfg_ctl'] = a.cfg_ctl
+            if a.ctl_lookahead > 0: mkw['ctl_lookahead'] = a.ctl_lookahead
         lib_used = None
         if lib_plan is not None:
             lib_used = lib_plan.get(stem, dict(given=[], inserts=[]))
@@ -276,7 +279,7 @@ def main():
                                           dict(modality=a.modality, text_swap=donor.get(stem))),
                                        resample='scmg/g1.py to30 (cubic / heading spline / RotationSpline)', env=genv,
                                        **({} if proto is None else dict(stream=proto)),
-                                       **({} if not a.ctl_tokens else dict(ctl_mode=a.ctl_mode, cfg_ctl=a.cfg_ctl, ctl=used)),
+                                       **({} if not a.ctl_tokens else dict(ctl_mode=a.ctl_mode, cfg_ctl=a.cfg_ctl, ctl=used, **({'ctl_lookahead': a.ctl_lookahead} if a.ctl_lookahead > 0 else {}))),
                                        **({} if not a.ret else dict(ret=a.ret, ret_used=rq_)),
                                        **({'prosody_only': True} if a.prosody_only else {}),
                                        **({} if lib_used is None else dict(ctl_mode=f'lib-{a.lib_what}-{a.lib_mode}', ctl=lib_used['given'], lib=a.lib,
