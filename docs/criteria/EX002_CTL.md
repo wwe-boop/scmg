@@ -88,3 +88,6 @@ Lane 2 (same plan / seeds / gates / δ):
 - fo   : module 2 (finger override, pre-registered above) on ctl2 and on lane-1 ex002ctl, modes given / shuffle.
 Code change for lane 2: scmg/data.py collate pads the control arrays of windows without them (BAgger samples) — default path
 (no control tokens) unchanged.
+Host rule (from agent A's bench_ex002 cross-check, exp/duplex 71f2e04): the same code gives bitwise-equal generations on one host
+type but differs by 2e-4–3e-4 rad between DLC A800 and the local RTX 5090 → every EX002 control / semantics number is generated on
+DLC A800 (all lane runs so far are); bench_ex002.py reproduces ex002_ctl_run evaluate to full precision on the same outputs.
