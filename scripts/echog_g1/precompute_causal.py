@@ -33,10 +33,20 @@ def _init(campplus, pstats, tokenizer):
 
 
 def one(job):
-    stem, T, lang, audio_dir, words_dir, text, n_tok = job
+    stem, T, lang, audio_dir, words_dir, text, n_tok = job[:7]
     CF, enc, pst = _W['CF'], _W['enc'], _W['pst']
-    words = CF.clip_words(Path(words_dir) / f'{stem}.json', T)
-    pcm16, wave = CF.clip_audio(Path(audio_dir) / f'{stem}.wav')
+    rec = job[7] if len(job) > 7 else None
+    if rec is None:
+        words = CF.clip_words(Path(words_dir) / f'{stem}.json', T)
+        pcm16, wave = CF.clip_audio(Path(audio_dir) / f'{stem}.wav')
+    else:                                            # 11-07 EX002 recording: its items' audio / words concatenated in order
+        words, pcms, waves, t0 = [], [], [], 0
+        for iid, n_it in rec:
+            p_, w_ = CF.clip_audio(Path(audio_dir) / f'{iid}.wav'); p_ = CF.pad_pcm(p_, n_it); w_ = p_.astype(np.float32) / 32768.
+            for w in CF.clip_words(Path(words_dir) / f'{iid}.json', n_it):
+                words.append(dict(w, start_time=w['start_time'] + t0 / 50., end_time=w['end_time'] + t0 / 50.))
+            pcms.append(p_); waves.append(w_); t0 += n_it
+        pcm16, wave = np.concatenate(pcms), np.concatenate(waves)
     sp = CF.SpeakerPrefix(wave, enc)
     spk = np.zeros((len(GRADES), 192), np.float32); val = np.zeros(len(GRADES), np.uint8); feats = []; units = None
     for j, g in enumerate(GRADES):
@@ -55,6 +65,15 @@ def one(job):
     # token end (s, clip-relative): the end of the LAST view word each e5 cache row overlaps -- a row is 'voiced' once it
     # has ended (causal_feat.token_visible: every word of its span); NaN rows = no word
     tend = np.full(n_tok, np.nan, np.float32)
+    if rec is not None:                              # per item (item-relative s, the loader's causal_tend rule)
+        tends = []
+        for (iid, n_it), (txt, nt) in zip(rec, job[8]):
+            te = np.full(nt, np.nan, np.float32); iw = CF.clip_words(Path(words_dir) / f'{iid}.json', n_it)
+            if nt and iw:
+                try: span = CF.token_word_span(txt, iw, lang, _W['tok'], nt); te = np.asarray([iw[j]['end_time'] for j in span[:, 1]], np.float32)
+                except ValueError as e: print(f'TEND_FAILED {iid}: {e}', flush=True)
+            tends.append((iid, te))
+        return stem, T, spk, val, feats, units, tends
     if n_tok and words:
         try:
             span = CF.token_word_span(text, words, lang, _W['tok'], n_tok)
@@ -72,8 +91,14 @@ def write(out, res):
     for i, (stem, T, spk, val, feats, units, tend) in enumerate(res):
         ent = []
         for f in feats: ent.append([row, len(f)]); rows.append(f); row += len(f)
-        index[stem] = dict(clip_row=i, frames=T, feat=ent, units=[urow, len(units)], tend=[trow, len(tend)])
-        urows.append(units); urow += len(units); trows.append(tend); trow += len(tend)
+        if isinstance(tend, list):                   # 11-07 recording: per-item token ends under the item ids
+            index[stem] = dict(clip_row=i, frames=T, feat=ent, units=[urow, len(units)], tend=[trow, 0], recording=[iid for iid, _ in tend])
+            for iid, te in tend:
+                index[iid] = dict(tend=[trow, len(te)], of=stem); trows.append(te); trow += len(te)
+        else:
+            index[stem] = dict(clip_row=i, frames=T, feat=ent, units=[urow, len(units)], tend=[trow, len(tend)])
+            trows.append(tend); trow += len(tend)
+        urows.append(units); urow += len(units)
     np.save(out / 'SPK_PREFIX.npy', np.stack([r[2] for r in res]) if res else np.zeros((0, 5, 192), np.float32))
     np.save(out / 'SPK_VALID.npy', np.stack([r[3] for r in res]) if res else np.zeros((0, 5), np.uint8))
     np.save(out / 'FEAT_PREFIX.npy', np.concatenate(rows) if rows else np.zeros((0, 89), np.float16))
@@ -92,11 +117,25 @@ def cmd_run(a):
                 if it['id'] in its and int(its[it['id']]['frames']) != int(it['frames']): raise ValueError(f"{it['id']}: frames differ between views")
                 its[it['id']] = it
     its = sorted(its.values(), key=lambda it: it['id'])
-    if a.limit: its = its[:a.limit]
-    si, sn = (int(x) for x in a.shard.split('/')); its = its[si::sn]
     tix = json.loads((Path(a.text_cache) / 'TEXT_INDEX.json').read_text()) if a.text_cache else {}
-    jobs = [(it['id'], int(it['frames']), it['lang'], a.audio_dir, a.words_dir, it.get('text', ''),
-             0 if it.get('text_null') or it['id'] not in tix else int(tix[it['id']][1])) for it in its]
+    ntok = lambda it: 0 if it.get('text_null') or it['id'] not in tix else int(tix[it['id']][1])
+    if a.recording:                                  # 11-07 EX002: one job per recording (view clip key 'clip'), items in offset order
+        g = {}
+        for it in its: g.setdefault(it['clip'], []).append(it)
+        recs = sorted(g.items())
+        if a.limit: recs = recs[:a.limit]
+        si, sn = (int(x) for x in a.shard.split('/')); recs = recs[si::sn]
+        jobs = []
+        for k, lst in recs:
+            lst = sorted(lst, key=lambda it: it['offset'])
+            for x, y in zip(lst, lst[1:]):
+                if x['offset'] + x['frames'] != y['offset']: raise ValueError(f'{k}: items not contiguous in the view')
+            jobs.append((k, sum(int(it['frames']) for it in lst), lst[0]['lang'], a.audio_dir, a.words_dir, '', 0,
+                         [(it['id'], int(it['frames'])) for it in lst], [(it.get('text', ''), ntok(it)) for it in lst]))
+    else:
+        if a.limit: its = its[:a.limit]
+        si, sn = (int(x) for x in a.shard.split('/')); its = its[si::sn]
+        jobs = [(it['id'], int(it['frames']), it['lang'], a.audio_dir, a.words_dir, it.get('text', ''), ntok(it)) for it in its]
     out = Path(a.out) / f'shard_{si}of{sn}'; out.mkdir(parents=True, exist_ok=True)
     t0 = time.time(); res = []
     if a.workers <= 1:
@@ -127,8 +166,11 @@ def cmd_merge(a):
         u = np.load(d / 'UNITS.npy'); te = np.load(d / 'TOKEN_END.npy')
         for stem, e in json.loads((d / 'INDEX.json').read_text()).items():
             if stem in index: raise ValueError(f'{stem} in two shards')
+            if 'feat' not in e:                      # 11-07 recording item entry: token ends only
+                index[stem] = dict(e, tend=[e['tend'][0] + trow, e['tend'][1]]); continue
             index[stem] = dict(clip_row=e['clip_row'] + ci, frames=e['frames'], feat=[[r + row, n] for r, n in e['feat']],
-                               units=[e['units'][0] + urow, e['units'][1]], tend=[e['tend'][0] + trow, e['tend'][1]])
+                               units=[e['units'][0] + urow, e['units'][1]], tend=[e['tend'][0] + trow, e['tend'][1]],
+                               **({'recording': e['recording']} if 'recording' in e else {}))
         spk.append(s); val.append(vv); feat.append(f); units.append(u); tends.append(te)
         row += len(f); urow += len(u); trow += len(te); ci += len(s)
     np.save(out / 'SPK_PREFIX.npy', np.concatenate(spk)); np.save(out / 'SPK_VALID.npy', np.concatenate(val))
@@ -184,6 +226,7 @@ def main():
     ap.add_argument('--text-cache', default=None, help='e5 text cache of the view (TEXT_INDEX.json): token end times')
     ap.add_argument('--tokenizer', default='/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/models/scmg/multilingual-e5-base')
     ap.add_argument('--shard', default='0/1'); ap.add_argument('--limit', type=int, default=0); ap.add_argument('--workers', type=int, default=1)
+    ap.add_argument('--recording', action='store_true', help='11-07 EX002: one entry per recording (view clip), its items concatenated')
     a = ap.parse_args()
     {'run': cmd_run, 'merge': cmd_merge, 'slim': cmd_slim, 'fixwords': cmd_fixwords}[a.cmd](a)
 

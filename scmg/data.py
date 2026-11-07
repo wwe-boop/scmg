@@ -228,7 +228,7 @@ class View:
         if intent_frames is not None or tok_intent is not None:
             raise ValueError(f'intent tracks / word intent labels exist for EX002 only (view {v.name}, embodiment {EMBODIMENT})')
 
-    def load_causal(self, d, horizons, check_spk=True, allow_extended=False):
+    def load_causal(self, d, horizons, check_spk=True, allow_extended=False, spk_atol=1e-5):
         """Training-matched causal inputs (precompute_causal.py output; 11-05). horizons = StageCfg.horizons (80 ms units):
         the stream times of a window whose prefix prosody columns every sample carries (causal_feat.stream_lat_grid).
         Checks (check_spk, off only for tests on perturbed audio): the 'full' speaker grade of up to 64 covered clips equals
@@ -247,12 +247,13 @@ class View:
             self.causal['index'] = {k: v for k, v in self.causal['index'].items() if k not in ext}
             self.causal['extended_dropped'] = len(ext)
         cov = [i for i in ids if i in self.causal['index']]
+        nrec = sum(1 for c in self.clips if len(c['items']) > 1 and 'recording' in self.causal['index'].get(c.get('clip'), {}))   # 11-07 EX002
         nchk = nmel = 0
         F = np.load(d / 'FEAT_PREFIX.npy', mmap_mode='r') if (d / 'FEAT_PREFIX.npy').exists() else None
         for i in cov[:64]:
             row = self.cond.get(str(i)); e = self.causal['index'][i]
             if check_spk and row and row[1]:
-                if not np.allclose(self.spk_emb[row[0]], self.causal['spk'][e['clip_row'], 4], atol=1e-5):
+                if not np.allclose(self.spk_emb[row[0]], self.causal['spk'][e['clip_row'], 4], atol=spk_atol):   # EX002: 1e-3 (criteria)
                     raise ValueError(f'{d}: full-grade CAM++ of {i} != view SPK_EMB row (other audio / view?)')
                 nchk += 1
             if check_spk and F is not None and e['feat'][4][1]:  # the view mel IS the prefix mel (cz_feat columns 0-79)
@@ -261,7 +262,8 @@ class View:
                 if nf != c['frames'] or not np.array_equal(np.asarray(self.f[c['start']:c['start'] + nf, :80]), np.asarray(F[r0:r0 + nf, :80])):
                     raise ValueError(f'{d}: whole-clip mel of {i} != view feat mel')
                 nmel += 1
-        self.causal['coverage'] = len(cov) / max(1, len(self.clips))
+        self.causal['coverage'] = (len(cov) + nrec) / max(1, len(self.clips))
+        self.causal['recordings'] = nrec
         if (d / 'SPK_MEAN.npy').exists(): self.causal['spk_mean'] = np.load(d / 'SPK_MEAN.npy').astype(np.float32)
         print(f'View {self.root.name}: causal inputs {d} cover {len(cov)} / {len(self.clips)} clips; SPK_EMB check {nchk}, '
               f'mel check {nmel} clips', flush=True)
@@ -526,7 +528,10 @@ def causal_rows(v, c, s, n, T, f):
                cz_spk=np.zeros((5, SPK), np.float32), cz_spkv=np.zeros(5, np.float32),
                cz_spkt=np.array([min(50 * g, L) for g in (1, 2, 4, 8)] + [L], np.int64))
     e = cz['index'].get(it['id']) if len(c['items']) == 1 else None
-    if e is None or int(e['frames']) != L: return out
+    if e is None and len(c['items']) > 1:            # 11-07 EX002: a recording entry (precompute_causal --recording)
+        e = cz['index'].get(c.get('clip'))
+        if e is not None and 'recording' not in e: e = None
+    if e is None or 'feat' not in e or int(e['frames']) != L: return out
     cols = list(FRONT_COLS); fm, fs = v.fm[cols], v.fs[cols]
     u0, un = e['units']; tab = cz['units'][u0:u0 + un]
     cache = {}
