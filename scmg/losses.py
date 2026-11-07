@@ -135,6 +135,8 @@ class StageCfg:
     ctl_count_thr: float = 0.5918
     # 11-07 EX002 finger commands (default off): soft extended-finger count loss (w_ctl_finger) and counterfactual counts
     w_ctl_finger: float = 0.0
+    w_ctl_ray_el: float = 0.0      # 11-08 module 7 (default off): extra elevation term 1 - cos(el(ray) - el(wrist -> target)) on the POINT apex frame
+    w_ctl_raise: float = 0.0       # 11-08 module 7 (default off): hinge relu(shoulder z - 0.05 - wrist z) (m) when the target is above the shoulder
     ctl_cf_finger_p: float = 0.0
     w_ctl_aux: float = 0.0         # pointing-ray loss on the decoded apex frame of kept POINT tokens: 1 - cos(elbow->wrist ray,
                                    # wrist->target), official FK (needs the decode path; weighted like w_cont by the noise level)
@@ -682,8 +684,10 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             sf = contract_loss(y.float() * qs + qm, fv * w_inst[:, None])
             out.update(sf); loss = loss + sc.w_safe * (sf['safe_lim'] + sf['safe_lr'] + sc.safe_torso_w * sf['safe_torso'])
         if sc.w_ctl_aux > 0 and ctl is not None:
-            out.update(ctl_ray_loss(y.float() * qs + qm, batch, ctl, fv * w_inst[:, None], B, K))
+            out.update(ctl_ray_loss(y.float() * qs + qm, batch, ctl, fv * w_inst[:, None], B, K, extra=sc.w_ctl_ray_el > 0 or sc.w_ctl_raise > 0))
             loss = loss + sc.w_ctl_aux * out['ctl_ray']
+            if sc.w_ctl_ray_el > 0: loss = loss + sc.w_ctl_ray_el * out['ctl_ray_el']
+            if sc.w_ctl_raise > 0: loss = loss + sc.w_ctl_raise * out['ctl_raise']
         if sc.w_ctl_finger > 0 and ctl is not None:
             if '_upper' not in _EX:
                 import json as _json
@@ -718,7 +722,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     return out
 
 
-def ctl_ray_loss(yp, batch, ctl, fw, B, K):
+def ctl_ray_loss(yp, batch, ctl, fw, B, K, extra=False):
     """yp [M, 2 * CHUNK_FRAMES, J] decoded [ctx | target] frames (physical), fw [M, F] frame weights. For every kept POINT
     token visible to the chunk that contains its GT apex frame: 1 - cos(elbow -> wrist ray, wrist -> target) at that frame."""
     from .common import EMBODIMENT
@@ -745,7 +749,13 @@ def ctl_ray_loss(yp, batch, ctl, fw, B, K):
     tgt = ctl.get('cval', batch['ctl_v'])[bi, ji, :3].float() * POS_SCALE
     cos = F.cosine_similarity(w_ - e_, tgt - w_, dim=-1)
     wt = fw[m, lf]
-    return dict(ctl_ray=((1 - cos) * wt).sum() / wt.sum().clamp(min=1e-3), ctl_ray_n=torch.tensor(float(len(bi)), device=dev))
+    out = dict(ctl_ray=((1 - cos) * wt).sum() / wt.sum().clamp(min=1e-3), ctl_ray_n=torch.tensor(float(len(bi)), device=dev))
+    if extra and EMBODIMENT == 'ex002':                                                       # 11-08 module 7 (default off)
+        el = lambda v: torch.atan2(v[..., 2], v[..., :2].norm(dim=-1).clamp(min=1e-6))
+        d = tgt - w_; out['ctl_ray_el'] = ((1 - torch.cos(el(w_ - e_) - el(d))) * wt).sum() / wt.sum().clamp(min=1e-3)
+        s_ = g['shoulder'][ar, hand]; up = (tgt[:, 2] > s_[:, 2]).float()
+        out['ctl_raise'] = (F.relu(s_[:, 2] - 0.05 - w_[:, 2]) * up * wt).sum() / wt.sum().clamp(min=1e-3)
+    return out
 
 
 def ctl_finger_loss(yp, batch, ctl, fw, B, K, upper):
