@@ -50,3 +50,12 @@ Addendum 11-08 01:4x (coordinator confirmed 1-3 with conditions; before any repo
 - RKD-post: vs all human post-speech windows; not comparable with G1's retraction-window RKD (stated in the paper). The
   retraction-window count is re-reported with all 1044 tails; RKD-retract is a secondary column only if it reaches >= 30.
 - T_r = 1.8 s (G1, same tails), the EX002 human median next to it.
+Addendum 11-08 03:xx (coordinator, after the qualitative review found B3 hands held in front at waist height scored as "yielded";
+before any reported EX002 interruption number): PRIMARY yield = both wrists within 10 cm (3D, base-frame FK) of the human rest wrist
+positions (R_sil of the tails) and staying so for >= 0.5 s (25 frames) inside the window; latency = first frame of that hold
+(icommon_ex002.yield3d). The height-only yield is a secondary column. Sanity control FRONT: damped (T_r) to a fixed pose with both
+wrists within 5 cm of rest height but far from the rest positions (dev GT frame with the largest smaller-wrist distance; partial
+set: recording 37 frame 1200, 0.49 m).
+Sanity (partial human ref, 458 / 1044 tails; scratch, not reported as results): B2 3D 100 % (height 100 %) PASS; FRONT 3D 0 % (height
+97.6 %) FAILS as required; GT continuing to speak 3D 8 % (height 48 %) mostly fails. Pipeline smoke on the method rows: B3 of the
+selected base 3D 39 % vs height 91 %, czm quick lane 41 % vs 86 % -- the height metric overstated retraction.

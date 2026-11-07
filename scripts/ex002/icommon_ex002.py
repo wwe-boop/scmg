@@ -73,6 +73,19 @@ def yield_time(P, t0, z_rest, dz=0.05, horizon=WIN):
     return k / FPS, needed
 
 
+def yield3d(P, t0, rest_P, tol=0.10, hold=25, horizon=WIN):
+    """11-08 primary EX002 yield (pre-registered after the qualitative review): both wrists within `tol` m (3D, base frame) of the
+    human rest wrist positions rest_P [2, 3] and staying so for >= `hold` frames (0.5 s) inside the window; returns (latency s of
+    the first frame of the first such hold or None, needed = not already there at t0)."""
+    d = np.linalg.norm(P[t0:t0 + horizon] - np.asarray(rest_P)[None], axis=-1)           # [n, 2]
+    ok = (d <= tol).all(1); needed = not bool(ok[0]) if len(ok) else False
+    run = 0
+    for k in range(len(ok)):
+        run = run + 1 if ok[k] else 0
+        if run >= hold: return (k - hold + 1) / FPS, needed
+    return None, needed
+
+
 KIN_NAMES = ('log_energy_0_1s', 'log_energy_1_2s', 'hand_dz', 'still_frac', 'log_rel_jerk')
 
 
