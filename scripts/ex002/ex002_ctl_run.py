@@ -29,7 +29,7 @@ def plan(a):
     ev = []
     for ci, c in enumerate(view.clips):
         dur = c['frames'] / FPS; rng = np.random.default_rng(zlib.crc32(f"{c['clip']}".encode()) + 7)
-        ts = np.arange(1.0 + rng.uniform(0, 1.5), dur - 1.0, 1.5 + rng.uniform(0, 0.5))
+        ts = np.arange(1.0 + rng.uniform(0, a.gap), dur - 1.0, a.gap + rng.uniform(0, 0.5))
         for j, t in enumerate(ts):
             if j % 2 == 0:
                 h = int(rng.integers(2)); tgt = pools[h][rng.integers(len(pools[h]))]
@@ -169,6 +169,7 @@ def main():
         p = sub.add_parser(n_); p.add_argument('--view', default=C + '/train-v1-20261101/views/data-v36_1'); p.add_argument('--out', required=True)
         p.add_argument('--stats', default=C + '/scmg/STATS_v36_1.json'); p.add_argument('--text-cache', default=C + '/scmg/text-e5-v36_1')
     sub.choices['plan'].add_argument('--ctl', required=True)
+    sub.choices['plan'].add_argument('--gap', type=float, default=1.5, help='event spacing base (s); 1.5 = lane 1-3 dense plan')
     p = sub.choices['infer']
     for k in ('ckpt', 'vae', 'plan'): p.add_argument('--' + k, required=True)
     p.add_argument('--tok-cache', default=C + '/scmg/tok-qwen25-v36_1'); p.add_argument('--mode', choices=['none', 'given', 'shuffle'], required=True)

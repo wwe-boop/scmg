@@ -118,3 +118,53 @@ given / shuffle x seeds 0-2. Same plan, gates, δ (FGD v2 ≤ 99.37).
 Result of dlc1mjl4p7zdospj: sibling training seeds of the same recipe give FGD v2 86.92 (sibag-s0) / 89.41 (sibag-s1), inference
 seed 0, vs sibag-s2 91.13 -> the control is NOT a favourable outlier; the +33 of the 2000-step continuation at lr 1e-4 is a real
 drift of a converged model under a restarted (warm-up + cosine from 1e-4) schedule. The frozen-base lane 3 is the remedy under test.
+
+## Lane 3 result (one line) and lane 4 (pre-registered 2026-11-07 23:30, before any lane-4 number)
+Lane 3 (dlc1ygzggbtksmlc): ctl3 none FGD v2 131.0 (the "frozen" base at lr 1e-6 still moved: AdamW normalises the step, every base
+weight moves ~lr per step whatever its gradient), given 209.2; STG 0.417 vs none 0.286 (+0.131, passes; shuffle follows 0.415 vs
+0.332); finger hit 0.326, override 1.000 at FGD v2 214. Frozen-base evidence: the token routes alone add +78 FGD v2 (given 209 vs
+none 131) under the dense plan. Lanes 1-3 keep their verdicts (all fail gate 3).
+Rationale for the new quality gates (coordinator 2026-11-07 23:10): an obeyed command is by design not a speech-driven gesture, so
+the harm to bound is the harm to the motion OUTSIDE commands and at a realistic command rate; the dense plan (one command per
+1.5-2.0 s) is a stress test of obedience, and the lane-3 +78 shows a dense whole-clip FGD gate is infeasible for any obedient model.
+Lane 4 (module 4: true freeze): ctl4 = sibag-s2 + control modules, `scmg.train --train-only ctl_` (every parameter whose name does not
+start with ctl_ has requires_grad False; smoke: trainable 1.10M / 117.79M, 0 base tensors changed after 5 steps at lr 1e-3), control
+modules at lr 1e-4 (--lr 1e-4, ctl_lr_scale 1), 2000 steps, otherwise the lane-3 recipe. Expected and checked: mode none reproduces
+the control (sibag-s2 none) up to the A800 host noise, because the base is bitwise sibag-s2 and the control routes add exactly 0
+without tokens.
+Runs (seeds 0 / 1 / 2, DLC A800): dense plan PLAN_dev.json none / given / shuffle and finger-override given / shuffle; sparse plan
+PLAN_dev_sparse.json (`ex002_ctl_run.py plan --gap 6.0`, 301 events, one per ~6.4 s; gap 1.5 reproduces PLAN_dev.json bitwise)
+given / shuffle and finger-override given / shuffle.
+Outside-command FGD v2 (ours): scripts/ex002/ex002_fgd_outside.py — frames within ±R s of every command of the plan are masked; a
+32-frame window is kept only if it holds no masked frame, for the generated clip and its GT alike; R = 0 reproduces evaluate's
+FGD_v2 (checked on the control: 91.13 / 87.15 / 95.32 exactly). Control values (sibag-s2 none, lane1/ctrl, scored 2026-11-07 23:20
+before any lane-4 run), δ = max(0.03 x mean, 2 x SD) as before:
+| plan / R | windows (of 6,031) | control seeds 0/1/2 | mean | δ | gate |
+|---|---|---|---|---|---|
+| dense / 1.0 s | 83 (8 clips have none) | 165.82 / 165.68 / 163.52 | 165.01 | 4.95 | 169.96 |
+| dense / 0.5 s | 537 | 99.24 / 89.05 / 94.71 | 94.33 | 10.21 | 104.54 |
+| sparse / 1.0 s | 3,563 | 91.92 / 87.22 / 95.95 | 91.70 | 8.74 | 100.44 |
+| sparse / 0 (whole clip) | 6,031 | 91.13 / 87.15 / 95.32 | 91.20 | 8.17 | 99.37 |
+Quality gates (both must pass, 3-seed means; for the configuration claimed — with and without the finger override, both reported):
+(i) SPARSE plan, FGD v2 on windows more than 1 s from any command ≤ 100.44. Decision (coordinator 2026-11-07 23:35, made on the
+    control numbers above only, no candidate output existed): the coordinator's first text put (i) on the dense plan, but the dense
+    ±1 s set keeps only clip heads / tails (83 of 6,031 windows, 8 of 43 clips have none) and the control itself scores 165.0 there
+    vs 91.2 whole-clip (small-sample bias of a 32-d covariance from 83 windows), so it is not measurable; the sparse ±1 s set keeps
+    3,563 windows (69 % of frames).
+(ii) sparse plan, whole-clip FGD v2 ≤ 99.37.
+Report-only: dense whole-clip FGD v2; dense outside ±0.5 s (reference 104.54); dense outside ±1 s (reference 169.96, flagged
+UNRELIABLE: 83 windows, 8 clips with none); FKD. If the finger gate needs the override, gates (i) / (ii) are also measured on the
+sparse override runs; override and plain are reported separately. Sanity of the new metric: ex002_fgd_outside.py at R = 0 equals
+evaluate's FGD_v2 to full precision (control, above); the job re-scores the control on DLC as a cross-check.
+These gates are committed (this commit) before any lane-4 output is scored.
+Obedience gates unchanged (dense plan): STG(given) − STG(none) ≥ +0.10 with the shuffle follow check; finger hit ≥ 0.9 (override
+allowed, reported both ways) with the shuffle follow check; boundary jerk of the override ramps reported; executability after CBF
+100 % of clips. The sparse-plan STG / finger hit are reported too.
+Executability / ramp jerk tool: scripts/ex002/ex002_exec.py — CBFFilter (scmg/safety.py limits34, margin 0.03 rad) per clip; a clip
+is executable if after the CBF no frame violates position / velocity / acceleration (jerk is best-effort in the CBF, reported as a
+frame rate); ramp jerk = |3rd difference| x 50^3 of the 16 finger joints on the frames 0.4 < |t - t_cmd| <= 0.55 s of every finger
+command (the override's ramps), the same frames in every run. Smoke on old lane outputs (seed 0, dense plan): control / ctl2 given /
+ctl2 + override all 100 % executable after CBF; ramp frames over the 1500 rad/s^3 finger jerk limit 4.8 % / 9.4 % / 67 % — the
+0.15 s override ramps are too steep; reported, not gated (pre-registered as report-only above).
+Plans: PLAN_dev.json sha256 7515bde6…3860, PLAN_dev_sparse.json sha256 76863c5c…aa3f (both in control-token-1105/ex002/).
+Script: scripts/ex002/ex002_ctl_lane4.sh (also checks ctl4 none vs control generations, max |diff|).
