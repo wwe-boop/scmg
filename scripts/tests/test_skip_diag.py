@@ -47,5 +47,10 @@ dk = sorted(k for k in (diag['loss'] if diag else {}) if k.startswith('_'))
 need = {'_gy_phys_coll', '_gy_phys_dyn', '_gy_phys_joint', '_gy_cont', '_pen_max_cm', '_gt_pen_max_cm'}
 ok('b diagnostics present and finite', diag is not None and need <= set(dk) and all(bool(torch.isfinite(diag['loss'][k])) for k in dk),
    ' '.join(f'{k}={float(diag["loss"][k]):.4g}' for k in dk) if diag else '')
+hub = probe(CODE, dict(SC, phys_coll_huber=1.0), 'huber')
+ok('c phys_coll_huber 1 cm: phys_coll <= squared hinge, finite grads, other terms unchanged',
+   hub is not None and float(hub['loss']['phys_coll']) <= float(new['loss']['phys_coll']) + 1e-6 and all(bool(torch.isfinite(g).all()) for g in hub['grad'].values())
+   and all(torch.equal(hub['loss'][k], new['loss'][k]) for k in new['loss'] if k not in ('loss', 'phys_coll')),
+   f"phys_coll {float(hub['loss']['phys_coll']):.4f} vs {float(new['loss']['phys_coll']):.4f}" if hub else '')
 PROBE.unlink()
 print('ALL_OK' if not FAIL else f'SOME_FAIL {FAIL}'); sys.exit(1 if FAIL else 0)

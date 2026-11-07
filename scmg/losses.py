@@ -73,6 +73,10 @@ class StageCfg:
     phys_dyn_w: float = 1.0        # 11-04 landing L1: weight of the velocity/acc/jerk term inside w_phys (0 = joint limits +
                                    # self-collision only; the full term made the upper arm ~20% smaller than the human)
     phys_coll_w: float = 1.0       # weight of the self-collision term inside w_phys
+    phys_coll_huber: float = 0.0   # 11-08 (cm, > 0): Huber penetration penalty inside phys_coll -- pen^2 up to delta, delta (2 pen - delta)
+                                   # beyond (per-pair gradient bounded by 2 delta); 0 = the squared hinge (bit-identical). Motivation:
+                                   # skipped-step diagnosis (ex002-skipdiag-1108): all skips are gradient spikes driven by deep
+                                   # penetrations of the model's own x1-hat (phys_coll 7.4 vs 0.06), GT penetration unchanged
     skip_diag: bool = False        # 11-08 diagnostic (train.py --skip-log): per-term |d loss / d y| of the physics / continuity
                                    # terms, model and GT max penetration on the same frame / pair subset (no extra random draw);
                                    # '_'-prefixed out keys, not in the loss. Default off = bit-identical
@@ -1066,7 +1070,11 @@ def phys_reg(y, fw, qm, qs, sc, gt=None):
     kin = P['kin']; npair = kin.pairs.shape[0]
     pi = torch.randint(0, npair, (min(sc.phys_pairs, npair),), device=dev)
     pen = kin.penetration(tg[idx], pi, d_safe=0.005) * 100.                          # cm
-    out['phys_coll'] = (pen ** 2).sum(-1).mean() * (npair / len(pi))
+    if sc.phys_coll_huber > 0:
+        hd = sc.phys_coll_huber
+        out['phys_coll'] = torch.where(pen <= hd, pen ** 2, hd * (2 * pen - hd)).sum(-1).mean() * (npair / len(pi))
+    else:
+        out['phys_coll'] = (pen ** 2).sum(-1).mean() * (npair / len(pi))
     if gt is not None:              # skip diagnostic: same frames / pairs on the GT (no extra random draw)
         with torch.no_grad():
             gq = (gt.float() * qs + qm)[:, q.shape[1] // 2:].reshape(-1, q.shape[-1])
