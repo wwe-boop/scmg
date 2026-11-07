@@ -8,7 +8,8 @@ paste its waist + arm channels onto a base prediction (cross-fade), then write e
            choice per (stem, token). Greedy in time: a paste never overlaps the previous one (+ 0.2 s gap).
   paste  : snippet frame of t_src aligned to the query time; channels 22..38 (waist + both arms); blend weight ramps 0 -> 1 -> 0
            over 0.2 s at both ends; the snippet is offset so that its first frame matches the base pose (no jump).
-Caveat (reported): the bank and the semantic recognisers both come from the train-split speakers (not speaker-disjoint).
+Caveat (reported): the bank and the semantic recognisers both come from the train-split speakers (not speaker-disjoint) -- unless
+--bank-split SPLIT_RK.json --bank-half K (11-07): bank from the K speakers only, scored with the R-half recognisers.
     python scripts/semantic/g1_retrieve_paste.py --ctl <dir> --view <hos view> --base <pred dir with q50> --out <dir> --mode auto
 """
 import argparse, json, sys, zlib
@@ -26,7 +27,12 @@ FPS = 50; CH = list(range(22, 39)); PRE, POST, FADE, GAP = 0.6, 0.3, 0.2, 0.2
 def main():
     ap = argparse.ArgumentParser()
     for k in ('ctl', 'view', 'base', 'out'): ap.add_argument('--' + k, required=True)
-    ap.add_argument('--mode', default='auto', choices=['auto', 'gt']); a = ap.parse_args()
+    ap.add_argument('--mode', default='auto', choices=['auto', 'gt'])
+    ap.add_argument('--bank-split', default=None, help="11-07: SPLIT_RK.json of g1_speaker_split.py; with --bank-half K the bank "
+                    "holds only that half's speakers (score with the OTHER half's recognisers: speaker-disjoint bank / recogniser)")
+    ap.add_argument('--bank-half', default='K'); a = ap.parse_args()
+    keep_spk = set(json.loads(Path(a.bank_split).read_text())[a.bank_half]) if a.bank_split else None
+    spk_of = lambda stem: '_'.join(stem.split('_')[1:3])
     raw = json.loads((Path(a.ctl) / 'CTL.json').read_text())
     items = {it['id']: it for it in json.loads((Path(a.view) / 'train.json').read_text())}
     q = np.load(Path(a.view) / 'train_q.npy', mmap_mode='r')
@@ -34,6 +40,7 @@ def main():
     bank = {}
     for s, ts in raw.items():
         if not ts or ts[0]['split'] != 'train': continue
+        if keep_spk is not None and spk_of(s) not in keep_spk: continue
         rec = items[s]['echog']['recording']
         for t in ts:
             if t['type'] not in sem: continue
@@ -67,7 +74,8 @@ def main():
             last_end = hi; n += 1
         b = torch.load(Path(a.base) / f'{s}.pt', map_location='cpu', weights_only=False)
         n30 = int(b['real_num_frames']); r30 = g1.to30(y, n30).astype(np.float32)
-        gen = dict(b['generator'], retrieve_paste=dict(mode=a.mode, base=str(a.base), pastes=n))
+        gen = dict(b['generator'], retrieve_paste=dict(mode=a.mode, base=str(a.base), pastes=n, bank_split=a.bank_split,
+                                                       bank_half=a.bank_half if a.bank_split else None))
         torch.save(dict(b, robot_repr=torch.from_numpy(r30), generator=gen), out / f'{s}.pt')
         np.save(out / f'{s}.q50.npy', y.astype(np.float32)); log.append(dict(stem=s, pastes=n, queries=len(qs)))
     (out / 'PASTE_LOG.json').write_text(json.dumps(dict(n_clips=len(log), pastes=sum(x['pastes'] for x in log),
