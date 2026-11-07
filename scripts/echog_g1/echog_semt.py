@@ -103,20 +103,54 @@ class EGSemDiT(SpeechGroundedDiT):
         return self.output(modulate(self.final_norm(hidden), shift, scale))
 
 
-def build(init, sem_time, dev, cfg_path=None):
+class Prosody:
+    """§7.55 item 2 on ECHO-G: the 8 prosody columns (onset, prominence, energy, logf0, voiced, beat, beat_left, beat_right; SCMG
+    feat89 columns 80:88, normalised) of the SCMG G1 view at 50 Hz, nearest-frame resampled to the ECHO-G 30 fps frames. Replaces
+    the Wav2Vec2 (1024) audio features entirely."""
+    COLS = slice(80, 88); DIM = 8
+
+    def __init__(self, view):
+        import numpy as np
+        v = Path(view); self.np = np
+        self.items = {it['id']: it for it in json.loads((v / 'train.json').read_text())}
+        self.feat = np.load(v / 'train_feat.npy', mmap_mode='r')
+
+    def get(self, stem, F):
+        np = self.np; it = self.items[stem]
+        idx = np.clip(np.round(np.arange(F) * 50. / 30.).astype(int), 0, it['frames'] - 1) + it['offset']
+        return torch.from_numpy(np.asarray(self.feat[idx, self.COLS], np.float32))
+
+
+class ProsDataset(RobotSpeechDataset):
+    def __init__(self, *args, prosody=None, **kw):
+        super().__init__(*args, **kw); self.pros = prosody
+
+    def __getitem__(self, index):
+        s = super().__getitem__(index); s['audio'] = self.pros.get(s['stem'], int(s['frames'])); return s
+
+
+def build(init, sem_time, dev, cfg_path=None, audio='w2v'):
     base, config, mean, std, exp = load_model_and_config(Path(init), Path(cfg_path) if cfg_path else None, dev)
-    if not sem_time: return base, config, mean, std, exp
-    m = EGSemDiT(config.model)
-    with torch.random.fork_rng(devices=[]):   # the module's random init does not move the global RNG
-        torch.manual_seed(20261107); m.semt = SemTimeEG(config.model.text_dim, config.model.hidden_dim)
-    miss, unexp = m.load_state_dict(base.state_dict(), strict=False)
-    if unexp or any(not k.startswith('semt.') for k in miss): raise ValueError(f'state mismatch {miss} {unexp}')
+    if not sem_time and audio == 'w2v': return base, config, mean, std, exp
+    m = EGSemDiT(config.model) if sem_time else SpeechGroundedDiT(config.model)
+    with torch.random.fork_rng(devices=[]):   # the new modules' random init does not move the global RNG
+        torch.manual_seed(20261107)
+        if sem_time: m.semt = SemTimeEG(config.model.text_dim, config.model.hidden_dim)
+        if audio == 'prosody':
+            m.audio_norm = nn.LayerNorm(Prosody.DIM); m.audio_projection = nn.Linear(Prosody.DIM, config.model.hidden_dim)
+    sd = base.state_dict(); new = ('semt.',) + (('audio_norm.', 'audio_projection.') if audio == 'prosody' else ())
+    miss, unexp = m.load_state_dict({k: v for k, v in sd.items() if not k.startswith(new)}, strict=False)
+    if unexp or any(not k.startswith(new) for k in miss): raise ValueError(f'state mismatch {miss} {unexp}')
+    if audio == 'prosody':      # start at the official NULL-audio model: weight 0, bias = official projection of the dropped audio
+        with torch.no_grad():
+            c0 = base.audio_projection(base.audio_norm(torch.zeros(1, config.model.audio_dim, device=next(base.parameters()).device)))[0]
+            m.audio_projection.weight.zero_(); m.audio_projection.bias.copy_(c0.cpu() if not m.audio_projection.bias.is_cuda else c0)
     return m.to(dev), config, mean, std, exp
 
 
 def load_ft(ckpt, dev):
     c = torch.load(ckpt, map_location='cpu', weights_only=False)
-    m, config, mean, std, _ = build(c['init'], c['sem_time'], dev, c['config_path'])
+    m, config, mean, std, _ = build(c['init'], c['sem_time'], dev, c['config_path'], c.get('audio', 'w2v'))
     m.load_state_dict(c['ema'], strict=True); m.eval()
     return m, config, c['motion_mean'].float(), c['motion_std'].float(), c
 
@@ -124,19 +158,24 @@ def load_ft(ckpt, dev):
 def train(a):
     dev = torch.device('cuda'); out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(a.seed); random.seed(a.seed)
-    model, config, mean, std, exp = build(a.init, a.sem_time, dev, a.config)
+    model, config, mean, std, exp = build(a.init, a.sem_time, dev, a.config, a.audio)
     R = Path(a.data_root)
     stems = [s for s in read_stems(R / config.data.train_split) if not s.startswith(HELD)]
     sp = out / 'train_stems.txt'; sp.write_text('\n'.join(stems) + '\n')
     dcfg = dataclasses.replace(config.data, train_split=str(sp.resolve()))
-    ds = RobotSpeechDataset(R, dcfg, config.model, 'train', mean, std)
+    if a.audio == 'prosody':
+        pros = Prosody(a.view); stems_ok = [s for s in stems if s in pros.items]
+        if len(stems_ok) < len(stems): print(f'prosody: {len(stems) - len(stems_ok)} stems without view features dropped')
+        sp.write_text('\n'.join(stems_ok) + '\n')
+        ds = ProsDataset(R, dcfg, config.model, 'train', mean, std, prosody=pros)
+    else: ds = RobotSpeechDataset(R, dcfg, config.model, 'train', mean, std)
     sampler = LengthBucketBatchSampler(ds.lengths, a.batch, a.seed, config.training.bucket_multiplier, shuffle=True, drop_last=True)
     dl = torch.utils.data.DataLoader(ds, batch_sampler=sampler, collate_fn=collate_motion, num_workers=a.workers, pin_memory=True,
                                      persistent_workers=True, prefetch_factor=4)
     opt = torch.optim.AdamW(model.parameters(), lr=a.lr, weight_decay=config.training.weight_decay)
     sched = torch.optim.lr_scheduler.LambdaLR(opt, lambda s: min(1., (s + 1) / a.warmup) * 0.5 * (1 + math.cos(math.pi * min(s, a.steps) / a.steps)))
     ema = {k: v.detach().clone() for k, v in model.state_dict().items()}
-    meta = dict(init=str(a.init), config_path=str(a.config), sem_time=a.sem_time, data_root=str(R), n_train=len(ds), held_out=list(HELD), steps=a.steps, lr=a.lr,
+    meta = dict(init=str(a.init), config_path=str(a.config), sem_time=a.sem_time, audio=a.audio, view=a.view, data_root=str(R), n_train=len(ds), held_out=list(HELD), steps=a.steps, lr=a.lr,
                 warmup=a.warmup, batch=a.batch, accum=a.accum, seed=a.seed, ema_decay=config.training.ema_decay,
                 condition_dropout=config.training.condition_dropout, temporal_weight=config.training.temporal_loss_weight)
     (out / 'config.json').write_text(json.dumps(meta, indent=1))
@@ -178,6 +217,7 @@ def sample(a):
     swap = json.loads(Path(a.swap_map).read_text()) if a.swap_map else None
     if 'swap' in a.modes and swap is None: raise SystemExit('--modes swap needs --swap-map')
     stems = read_stems(Path(a.stems))
+    pros = Prosody(c['view']) if c.get('audio', 'w2v') == 'prosody' else None
 
     def cond(stem):
         cp = R / config.data.condition_dir / f'{stem}.pt'; F = min(lengths[stem], config.data.max_frames)
@@ -185,7 +225,7 @@ def sample(a):
                                 condition_path=cp, condition_manifest=man)
     t0 = time.time()
     for n, stem in enumerate(stems):
-        cc = cond(stem); F = cc['frames']; audio = cc['audio'].to(dev)
+        cc = cond(stem); F = cc['frames']; audio = (cc['audio'] if pros is None else pros.get(stem, F)).to(dev)
         g = torch.Generator(device=dev); g.manual_seed(stable_seed(stem, a.seed))
         noise = torch.randn(F, model.motion_dim, generator=g, device=dev)
         ft = torch.arange(F, device=dev, dtype=torch.float32) / fps
@@ -242,6 +282,16 @@ def test(a):
     with torch.no_grad(): semt.semt.out.weight -= 1e-2 * semt.semt.out.weight.grad.sign()
     semt.zero_grad(); torch.manual_seed(0); tot, _, _ = flow_matching_loss(semt, b, 0.0, 0.5); tot.backward()
     ok['grad_inner'] = all(float(p.grad.abs().sum()) > 0 for n, p in semt.semt.named_parameters() if n.startswith('layers.0.q.weight') or n == 'tp.weight')
+    if a.view:                  # prosody audio: at init exactly the official model with the null (dropped) audio
+        pm = build(a.init, False, dev, a.config, 'prosody')[0].eval(); pr = Prosody(a.view)
+        pa = collate_motion([dict(ds[i], audio=pr.get(ds[i]['stem'], int(ds[i]['frames']))) for i in range(3)])['audio'].to(dev)
+        with torch.no_grad():
+            dd = float((pm(x, t, pa, *args[3:]) - base(x, t, torch.zeros_like(b['audio']), *args[3:])).abs().max())
+            print('prosody init vs null audio max |diff|', dd)   # not bitwise: the null projection is a GEMM of another shape
+            ok['prosody_init_is_null_audio'] = dd < 1e-4
+        pm.train(); torch.manual_seed(0)
+        tot, _, _ = flow_matching_loss(pm, dict(b, audio=pa), 0.0, 0.5); tot.backward()
+        ok['prosody_grad'] = float(pm.audio_projection.weight.grad.abs().sum()) > 0
     print(json.dumps(ok)); print('ALL_OK' if all(ok.values()) else 'SOME_FAIL')
 
 
@@ -254,12 +304,15 @@ def main():
     t.add_argument('--batch', type=int, default=12); t.add_argument('--accum', type=int, default=4)
     t.add_argument('--workers', type=int, default=8); t.add_argument('--seed', type=int, default=0)
     t.add_argument('--bf16', action='store_true')
+    t.add_argument('--audio', default='w2v', choices=['w2v', 'prosody'], help='prosody = §7.55 item 2: Wav2Vec2 replaced by 8 prosody dims')
+    t.add_argument('--view', default=None, help='SCMG G1 view with train.json / train_feat.npy (for --audio prosody)')
     s = sub.add_parser('sample'); s.add_argument('--ckpt', required=True); s.add_argument('--data-root', required=True)
     s.add_argument('--stems', required=True); s.add_argument('--out', required=True); s.add_argument('--modes', nargs='+', default=['own'])
     s.add_argument('--swap-map'); s.add_argument('--seed', type=int, default=0); s.add_argument('--steps', type=int, default=8)
     s.add_argument('--guidance-scale', type=float, default=1.0)
     e = sub.add_parser('test'); e.add_argument('--init', required=True); e.add_argument('--data-root', required=True)
     e.add_argument('--config', required=True); e.add_argument('--tmp', default='/tmp/echog_semt_test')
+    e.add_argument('--view', default=None, help='also test --audio prosody')
     a = ap.parse_args()
     dict(train=train, sample=sample, test=test)[a.cmd](a)
 

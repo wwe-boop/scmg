@@ -59,3 +59,13 @@ P3 quality: FGD of the none AND gt runs ≤ 1.497; ΔBA within the sf0 seed rang
 P4 tests: test_count.py ALL_OK (labels reproduced by the evaluation rule, soft limit = hard count, training reaches the modules),
    test_ctl.py ALL_OK (default paths bitwise vs HEAD).
 Item 3 on ECHO-G is a separate step (needs a token path into the official SGDiT); not part of this run.
+
+## Item 2 on ECHO-G: Wav2Vec2 -> prosody (written 2026-11-07 before the run; echog_semt.py --audio prosody, echog_pros_lane.sh)
+The official audio input (Wav2Vec2, 1024) is replaced by the 8 prosody columns of the SCMG view (onset, prominence, energy, logf0,
+voiced, beat, beat_left, beat_right; normalised, 50 Hz -> 30 fps nearest frame) through a NEW LayerNorm(8) + Linear(8, 768) whose
+weight starts at 0 and bias at the official projection of the dropped (zero) audio, i.e. training starts from the official model with
+null audio (max |velocity diff| 7e-5 at init, GEMM-shape round-off). Same recipe, data, sampler, seeds and recognisers as item 1 on
+ECHO-G; control = egctrl of that run (Wav2Vec2 kept). Passes when ALL hold: 1. pair_win(egpros own) − pair_win(egctrl own) > 0 with the
+recording-bootstrap intervals not crossing 0, OR pair_win(egpros own) − pair_win(egpros notext) ≥ +0.10 with intervals above 0;
+2. swap text sensitivity above egctrl's; 3. FGD(egpros own) ≤ FGD(egctrl own) + 0.05; 4. ΔBA within the egctrl seed range ± spread;
+5. echog_semt.py test ALL_OK.
