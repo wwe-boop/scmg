@@ -101,3 +101,7 @@ Pilot smoke (speech_server, 2 tracks / 22 windows, release 20261107-234556-video
   with still share >= 0.5: 12 %; near-body fraction of the accepted windows 0.70; elbow flare 0.284.
 - Scale-up rule (pre-registered): usable >= 1 h per 100 tracks AND still share <= 0.60 -> FAILS on hours (0.969 < 1.0; still share passes).
   No larger run. G6 stays deferred (built so far 0.647 h + 0.969 h = 1.62 h < 5 h).
+Pilot spot renders (10 newly accepted windows, seed 20261108; robot Isaac front + human stick figure; ~/bulk/video-regate-1107/pilot/pair,
+sheets): 9 / 10 pass (fail: P3100 holds the arms crossed at the chest throughout, the robot keeps the hands low at the hips); gestures with
+the hands away from the body are followed (P0506, P1313, P0359A); 5 / 10 are static or mostly static windows (hands on the thighs or hanging
+at the sides; the robot shows the elbows-out rest or arms down) -- the utterance pipeline then keeps only the speaking parts (still share 0.16).
