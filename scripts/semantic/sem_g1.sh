@@ -24,7 +24,11 @@ if [ $SIDE = dev ]; then
   INIT=${INIT:-$B/echog-g1-arch-1104/hos-base/best.pt}; GEST=${GEST:-$B/models/gest-beat2sem-echog-g1-v1-hos}; TV=$HV; LO=
   SEMDATA=$SB/data-sem-hos; RECS="$SB/rec-sem-hos-seed*"; FLOOR=$SB/outputs-dev; SPL=dev
   VENV=(G1_VIEW=$HV G1_BENCH_STEMS=${BENCH_STEMS:-$A/dev_stems.txt} REF_DIR=$A/motion_39d_30fps WAV_DIR=$A/audio SPLIT=$A/dev_stems.txt
-        VIEW_TEST=$HV VSPLIT=val TEXT_TEST=$C/scmg/text-e5-echog-g1-v1 TEXT_CAUSAL_TEST=$B/models/text-e5-causal-echog-g1-v1)
+        VIEW_TEST=$HV VSPLIT=val TEXT_TEST=$C/scmg/text-e5-echog-g1-v1 TEXT_CAUSAL_TEST=$B/models/text-e5-causal-echog-g1-v1
+        EG=${EG:-$B/baseline-repro-1104/echog/data_root} OFF=${OFF:-/mnt/cpfs/zbl-cpfs-new/USERS/zehan/baselines/echog-official/official}
+        MMAE=${MMAE:-$B/baseline-repro-1104/echog/data_root/eval_assets/mmae/g1_mmae_30body_30fps.npy}
+        FGD_CKPT=${FGD_CKPT:-/mnt/cpfs/zbl-cpfs-new/USERS/zehan/baselines/echog-official/weights/evaluation/g1_fgd_encoder.pt})
+        # 11-07: the official evaluator assets on CPFS (as ctl_count_g1.sh); bench.sh's defaults are the 5090-host paths
 else
   INIT=${INIT:-$B/echog-g1-arch-1104/fix-base/best.pt}; GEST=${GEST:-$B/models/gest-beat2sem-echog-g1-v1}; TV=$C/echog-g1-v1; LO=--labels-only
   SEMDATA=$SB/data-sem; RECS="$SB/rec-sem-v1*"; FLOOR=$SB/outputs-ctl; SPL=test
