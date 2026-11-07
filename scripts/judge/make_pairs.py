@@ -38,8 +38,15 @@ def view_clips():
     v = View(V, 'val', C + '/scmg/text-e5-v36_1', st, mmap=True); return v
 
 
-def words_of(c):
-    """clip-relative words [(t0, t1, text)] from the items' alignment.json (en: char indices -> space-separated words; zh: chars)."""
+CHAR_CAP = 0.3
+
+
+def words_of(c, fixed=False):
+    """clip-relative words [(t0, t1, text)] from the items' alignment.json (en: char indices -> space-separated words; zh: chars).
+    fixed=False is the round-1 SELECTION rule (kept bit-identical so the selected segments do not move); fixed=True (11-08 fix, used
+    for the English subtitles): a word lasts from its first char onset for the sum of its char durations each capped at 0.3 s -- the
+    aligner stretches the last chars of an utterance over trailing silence (e.g. 'the' spanning 0.99-18.75 s), which made one word
+    cover a whole segment."""
     out = []
     for it in sorted(c['items'], key=lambda it: it['offset']):
         if it.get('text_null') in (True, 'True'): continue
@@ -49,15 +56,35 @@ def words_of(c):
         if it['lang'] == 'zh':
             out += [(t0 + a['onset_s'], t0 + a['offset_s'], a['char']) for a in al]
         else:
-            by = {a['index']: a for a in al}; w, s0, s1 = '', None, None
+            by = {a['index']: a for a in al}; w, s0, s1, dur = '', None, None, 0.
             for i, ch in enumerate(text + ' '):
                 if ch == ' ':
-                    if w and s0 is not None: out.append((t0 + s0, t0 + s1, w))
-                    w, s0, s1 = '', None, None
+                    if w and s0 is not None: out.append((t0 + s0, t0 + (s0 + dur if fixed else s1), w))
+                    w, s0, s1, dur = '', None, None, 0.
                 else:
                     w += ch
-                    if i in by: s0 = by[i]['onset_s'] if s0 is None else s0; s1 = by[i]['offset_s']
+                    if i in by:
+                        s0 = by[i]['onset_s'] if s0 is None else s0; s1 = by[i]['offset_s']
+                        dur += min(by[i]['offset_s'] - by[i]['onset_s'], CHAR_CAP)
     return out
+
+
+def check_words(v):
+    """unit check (11-08): for every English dev clip the fixed subtitle words joined in time order equal the clip's transcript words
+    (items in offset order, text_null skipped, words of items without alignment excluded), no word lasts > 2.5 s, and onsets ascend."""
+    bad = []
+    for c in v.clips:
+        if c['items'][0]['lang'] != 'en': continue
+        ws = words_of(c, fixed=True); want = []
+        for it in sorted(c['items'], key=lambda it: it['offset']):
+            if it.get('text_null') in (True, 'True') or not (Path(it['part']) / it['dir'] / 'alignment.json').exists(): continue
+            al = {a['index'] for a in json.loads((Path(it['part']) / it['dir'] / 'alignment.json').read_text())}; pos = 0
+            for w in it['text'].split(' '):
+                if w and any(i in al for i in range(pos, pos + len(w))): want.append(w)
+                pos += len(w) + 1
+        got = [w for _, _, w in ws]
+        if got != want or any(b - a > 2.5 for a, b, _ in ws) or any(ws[k + 1][0] < ws[k][0] - 1e-6 for k in range(len(ws) - 1)): bad.append(c['clip'])
+    print('CHECK_WORDS', 'OK' if not bad else f'FAIL {bad[:5]}'); return not bad
 
 
 def select(v):
@@ -153,13 +180,15 @@ def compose(a, v, clips, pairs):
                 subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', str(video), '-vf', f"select='eq(n\\,{f})'", '-frames:v', '1', '-vsync', '0', f'{td}/{j}.png'], check=True)
                 im = Image.open(f'{td}/{j}.png').convert('RGB'); im = im.crop((0, 0, 640, im.height)).resize((FW, FH)); out.append((t, im))
         return out
+    only = set(a.only.split(',')) if a.only else None
     for i, p in enumerate(pairs):
         src = p if p['type'] != 'swap_duplicate' else [q for q in pairs if q['id'] == p['of']][0]
         s1, s2 = src['sys']; rng = random.Random(20261108 + i); flip = rng.random() < 0.5
         if p['type'] == 'swap_duplicate': flip = not key[p['of']]['flip']
         A, Bs = (s2, s1) if flip else (s1, s2)
         key[p['id']] = dict(A=A, B=Bs, flip=flip, type=p['type'])
-        ws = clips[src['ci']]['words']; sheets = []
+        if only is not None and p['id'] not in only: continue
+        ws = clips[src['ci']]['words'] if src['lang'] == 'zh' else words_of(v.clips[src['ci']], fixed=True); sheets = []
         for lab, s in (('A', A), ('B', Bs)):
             fr = frames(O / 'video' / f"{src['id']}_{s}.mp4", int(SEG * FPS))
             sh = Image.new('RGB', (4 * FW, 50 + 3 * (FH + SUB)), (255, 255, 255)); d = ImageDraw.Draw(sh)
@@ -175,6 +204,7 @@ def compose(a, v, clips, pairs):
         full.save(O / 'pairs' / f"{p['id']}.png")
         meta.append(dict(id=p['id'], lang=src['lang'], clip=src['clip'], segment_s=[src['start'], src['start'] + SEG], questions=src['questions'],
                          control_event=({k: src['event'][k] for k in ('kind', 't', 'hand', 'fingers') if k in src['event']} if 'event' in src else None)))
+    if only is not None: print('RECOMPOSED', sorted(only), '(KEY.json / PAIRS.json untouched)'); return
     (O / 'KEY.json').write_text(json.dumps(dict(note='do not open before the judgements are written', key=key, pairs_full=pairs), indent=1, default=str))
     (O / 'PAIRS.json').write_text(json.dumps(dict(rule=RULE, protocol='refine-logs/EVAL_PROTOCOL.md §4', questions=dict(
         natural='① 更自然、更像人 (A / B / 平)', content='② 与字幕内容更相符 (A / B / 平)', command='③ 更好地执行了指令 (A / B / 平)'), pairs=meta), ensure_ascii=False, indent=1))
@@ -183,8 +213,8 @@ def compose(a, v, clips, pairs):
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('round', choices=['ex002-round1']); ap.add_argument('--out', required=True)
-    ap.add_argument('--render-cmd', default=None); ap.add_argument('--stage', default='all', choices=['all', 'prep', 'render', 'compose'])
-    a = ap.parse_args(); v = view_clips(); clips, pairs = select(v)
+    ap.add_argument('--render-cmd', default=None); ap.add_argument('--only', default=None, help='comma-separated pair ids to recompose (KEY / PAIRS untouched)'); ap.add_argument('--stage', default='all', choices=['all', 'prep', 'render', 'compose'])
+    a = ap.parse_args(); v = view_clips(); assert check_words(v); clips, pairs = select(v)
     if a.stage in ('all', 'prep'): jobs = prep(a, v, clips, pairs)
     if a.stage in ('all', 'render'): render(a, json.loads((Path(a.out) / 'jobs.json').read_text()))
     if a.stage in ('all', 'compose'): compose(a, v, clips, pairs)

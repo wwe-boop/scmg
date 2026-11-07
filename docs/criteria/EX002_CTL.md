@@ -329,3 +329,12 @@ w_ctl_ray_el 6 (elevation 3x in total), w_ctl_raise 5.
 - Override rule (pre-registered): minimum-jerk keeps finger hit >= 0.9 and gate (ii) on both protocols -> it becomes the DEFAULT override.
 VERDICT: the port passes quality, finger, executability and identity, and FAILS the pointing gate (+0.07 < +0.10, CI excludes 0.10) on
 both protocols. Next: module 7 (aim direction, pre-registered) on this base, gated on the median angular error and STG.
+## czm vs sibag-s2 stillness (coordinator request 2026-11-08 ~03:00; static_share.py, dev 43 clips, per_clip seeds 0-2)
+| run | still-frame share | mean wrist speed (m/s) | wrist amplitude (m, per-axis std) | elbow flare |
+|---|---|---|---|---|
+| dev GT | 0.019 | 0.411 | 0.120 | 0.261 |
+| sibag-s2 offline s0 / s1 / s2 | 0.031 / 0.027 / 0.027 | 0.328 / 0.338 / 0.341 | 0.097 / 0.101 / 0.099 | 0.268 / 0.268 / 0.261 |
+| czm offline s0 / s1 / s2 | 0.140 / 0.140 / 0.148 | 0.209 / 0.207 / 0.206 | 0.084 / 0.085 / 0.083 | 0.258 / 0.253 / 0.255 |
+| czm psync s0 / s1 / s2 | 0.200 / 0.195 / 0.181 | 0.166 / 0.173 / 0.173 | 0.074 / 0.076 / 0.074 | 0.234 / 0.241 / 0.236 |
+czm is clearly more static than sibag-s2 (still share x5-7, wrist speed -38 % offline / -50 % psync, amplitude -15 % / -25 %) although its FGD v2
+is lower (offline 67.8 vs 91.2): FGD v2 does not penalise under-motion enough on dev; the judge's "static / held" impression is real.
