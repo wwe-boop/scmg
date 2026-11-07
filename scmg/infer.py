@@ -360,14 +360,20 @@ class Streamer:
                     ct = min(ct, self.still_refresh[1]); self.n_refresh += 1
             if ct < 1: c_ = ct * c_ + (1 - ct) * torch.randn(c_.shape, device=self.dev, generator=self.g)
             x[:, :cfg.ctx] = torch.where(known[:, :cfg.ctx, None], c_, x[:, :cfg.ctx])
-            ip = None
+            ip = None; ikw = {}
             if self.inpaint is not None:                         # target / weights of this window's positions (global latent grid)
                 gl = (c0 + kw) * CHUNK - cfg.ctx + torch.arange(L, device=self.dev)
                 okg = (gl >= 0) & (gl < len(self.inpaint['w']))
-                wv = torch.where(okg, self.inpaint['w'][gl.clamp(0, len(self.inpaint['w']) - 1)], torch.zeros_like(gl, dtype=torch.float))
-                wv = (wv * (~known[0]).float())[None, :, None]
+                wf = torch.where(okg, self.inpaint['w'][gl.clamp(0, len(self.inpaint['w']) - 1)], torch.zeros_like(gl, dtype=torch.float))
+                tg = self.inpaint['lat'][gl.clamp(0, len(self.inpaint['w']) - 1)][None]
+                if hasattr(m, 'f_mask') and bool((wf >= 0.999).any()):
+                    # 11-07 item 5b, mask-conditioned model: the weight-1 core is CLEAN KNOWN latents flagged by f_mask (as in
+                    # training); only the soft ramps are inpainted RePaint-style
+                    core = (wf >= 0.999)[None]
+                    x = torch.where((core & ~known)[..., None], tg, x); known = known | core
+                    ikw = dict(ins=core); wf = wf * (~core[0]).float()
+                wv = (wf * (~known[0]).float())[None, :, None]
                 if bool((wv > 0).any()):
-                    tg = self.inpaint['lat'][gl.clamp(0, len(self.inpaint['w']) - 1)][None]
                     eps = torch.randn(x.shape, device=self.dev, generator=self.inpaint['g'])
                     x = wv * eps + (1 - wv) * x; ip = (wv, tg, eps)
             aw, awm = m.local_audio(a, Hrel, W)
@@ -410,13 +416,13 @@ class Streamer:
                 tval = s / self.steps
                 t = torch.full((1, L), tval, device=self.dev); t[known] = 1.
                 if ct < 1: t[:, :cfg.ctx] = torch.where(known[:, :cfg.ctx], torch.full_like(t[:, :cfg.ctx], ct), t[:, :cfg.ctx])
-                v = m.flow_velocity(x, t, known, hk, g, aw, awm, style_tok, ada, mtk, mtmk, ftext=ft, **ctlkw)
+                v = m.flow_velocity(x, t, known, hk, g, aw, awm, style_tok, ada, mtk, mtmk, ftext=ft, **ctlkw, **ikw)
                 if self.cfg_ctl is not None:
-                    v_full = v; v_c0 = m.flow_velocity(x, t, known, hk_c0, g, aw, awm, style_tok, ada, mtk, mtmk, ftext=ft_c0); v = v_c0
+                    v_full = v; v_c0 = m.flow_velocity(x, t, known, hk_c0, g, aw, awm, style_tok, ada, mtk, mtmk, ftext=ft_c0, **ikw); v = v_c0
                 if self.cfg_w != 1:
-                    v_u = m.flow_velocity(x, t, known, hk_u, g, aw_u, awm_u, style_tok, ada, mtk_u, mtmk_u, ftext=ft_u)
+                    v_u = m.flow_velocity(x, t, known, hk_u, g, aw_u, awm_u, style_tok, ada, mtk_u, mtmk_u, ftext=ft_u, **ikw)
                     if self.cfg_t is not None:
-                        v_a = m.flow_velocity(x, t, known, hk_a, g, aw, awm, style_tok, ada, mtk_a, mtmk_a, ftext=ft_u)
+                        v_a = m.flow_velocity(x, t, known, hk_a, g, aw, awm, style_tok, ada, mtk_a, mtmk_a, ftext=ft_u, **ikw)
                         v = v_u + self.cfg_w * (v_a - v_u) + self.cfg_t * (v - v_a)
                     else:
                         v = v_u + self.cfg_w * (v - v_u)

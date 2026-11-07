@@ -97,6 +97,11 @@ class StageCfg:
     # 11-07 §7.55 item 2: the audio carries only word-content-free signals -- the 80 mel columns of feat89 are zeroed (= the
     # normalised mean) and TTS hidden rows hidden in EVERY training batch; inference must use infer_test.py --prosody-only. Default off.
     audio_prosody_only: bool = False
+    # 11-07 item 5b mask-conditioned Local Flow (cfg.mask_cond; default off): P(sample) of a random clean latent span of
+    # mask_span seconds anywhere in the window; its latents are known (clean, t = 1) in every chunk instance that sees them, flagged
+    # by model.f_mask, and excluded from the loss -> library insertion at inference becomes in-distribution inpainting
+    p_mask: float = 0.0
+    mask_span: tuple = (0.5, 2.0)
     # 11-06 modality-balanced gradient modulation (OGM-GE, Peng et al. CVPR 2022; default off): every step the flow loss is also
     # evaluated (no grad, same noise / times / history) with the audio dropped and with the text dropped; their increase over the
     # full loss = each modality's contribution. scmg.train scales the GRADIENT of the dominant modality's encoder by
@@ -473,6 +478,16 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         has_ctx = torch.where(bm, kk > 0, has_ctx)
         known[bm, :cfg.ctx] = has_ctx[bm, None]
         known[bm, cfg.ctx:] = (~supervise).reshape(M)[bm, None]
+    ins = None
+    if sc.p_mask > 0 and getattr(cfg, 'mask_cond', False):
+        Nw = K * CHUNK; lo_, hi_ = (int(round(s_ * 50 / STRIDE)) for s_ in sc.mask_span)
+        ln = torch.randint(lo_, hi_ + 1, (B,), device=dev); st_ = (torch.rand(B, device=dev) * (Nw - ln).clamp(min=1)).long()
+        on = torch.rand(B, device=dev) < sc.p_mask
+        gpos = (kk * CHUNK - cfg.ctx)[:, None] + torch.arange(L, device=dev)[None]                     # global latent of each position
+        bb = torch.arange(B, device=dev).repeat_interleave(K)
+        ins = (gpos >= st_[bb][:, None]) & (gpos < (st_ + ln)[bb][:, None]) & on[bb][:, None] & (gpos >= 0)
+        ins[:, :cfg.ctx] &= known[:, :cfg.ctx]                    # a context position is inserted only where it exists
+        known = known | ins
     t = logit_normal(M, dev)[:, None].expand(M, L).clone(); t[known] = 1.
     noise = torch.randn_like(x1i)
     xt = torch.where(known[..., None], x1i, t[..., None] * x1i + (1 - t[..., None]) * noise)
@@ -496,7 +511,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             h_flow = model.sem_h(h, gp)
     v = model.flow_velocity(xt, t, known, h_flow.flatten(0, 1), gi, aw, awm, style_tok, state_ada,
                             mtp if cfg.mtc else None, mtpm[:, None].expand(-1, L, -1) if cfg.mtc else None, ftext=ftext,
-                            **({} if ctl_c is None else dict(ctl_c=ctl_c)))
+                            **({} if ctl_c is None else dict(ctl_c=ctl_c)), **({} if ins is None else dict(ins=ins)))
     tgt_valid = lmask.view(B, K, CHUNK).flatten(0, 1)
     if supervise is not None: tgt_valid = tgt_valid & supervise.reshape(M, 1)
     sup = ~known

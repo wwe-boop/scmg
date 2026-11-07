@@ -113,3 +113,12 @@ the same window of the base run, same seed) ≤ 1.5 on ≥ 90 % of edges; FGD �
 CBF-QP 100 % of clips. pair_win (R-half recognisers, the library is K-half) and ΔBA are reported, not gated.
 If a gate fails or passes only marginally, the training-time variant follows (Local Flow with mask conditioning, below) under the
 same gates.
+
+## Item 5b: mask-conditioned Local Flow (written 2026-11-07 before the run; cfg mask_cond, StageCfg p_mask / mask_span)
+Training: sf0 recipe (hos-base warm start, 2000 steps, seed 0) + cfg mask_cond (zero-init f_mask added to the Local Flow input at
+flagged positions) + p_mask 0.3: per sample a random 0.5–2 s latent span is clean known context in every chunk instance that sees it,
+flagged by f_mask, and excluded from the loss. Inference: the weight-1 core of every library insertion is clean known latents flagged
+by f_mask (as in training); only the 0.3 s ramps are inpainted RePaint-style. Same library, plans, runs, metrics and gates as item 5
+(count ≥ 0.90, STG ≥ 0.308, boundary jerk ≤ 1.5 on ≥ 90 % of edges, FGD ≤ 1.497 per insertion run, executability after CBF 100 %);
+the base run is this model without insertion. Both variants reported in one table.
+Tests: test_maskcond.py ALL_OK (p_mask 0 bitwise, f_mask trained, no-insertion inference bitwise), test_ctl.py ALL_OK vs HEAD.

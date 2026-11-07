@@ -109,6 +109,7 @@ class Config:
     # with a per-head Gaussian prior on query time - word time), giving a semantic state per Local Flow position; added zero-init to
     # the Local Flow AdaLN condition and (chunk mean of its target positions) to the planner input. Default off.
     sem_time: bool = False
+    mask_cond: bool = False        # 11-07 item 5b: learned zero-init embedding flagging clean INSERTED latents in the Local Flow
     sem_time_layers: int = 2
     ret: bool = False
     ret_len: int = 30
@@ -473,6 +474,8 @@ class SCMG(nn.Module):
                 nn.init.zeros_(self.ctl_fmlp[-1].weight); nn.init.zeros_(self.ctl_fmlp[-1].bias)
             self.ctl_dt.to(self.f_in.weight.device); self.ctl_fmlp.to(self.f_in.weight.device)
             self.ctl_dt_unk.data = self.ctl_dt_unk.data.to(self.f_in.weight.device)
+        if getattr(cfg, 'mask_cond', False) and not hasattr(self, 'f_mask'):
+            self.f_mask = nn.Parameter(torch.zeros(d, device=self.f_in.weight.device))
         if getattr(cfg, 'sem_time', False) and not hasattr(self, 'semt'):
             with torch.random.fork_rng(devices=[]):
                 torch.manual_seed(20261109)
@@ -660,12 +663,13 @@ class SCMG(nn.Module):
 
     # ------------------------------------------------------------------ local flow
     def flow_velocity(self, xt, t, known, h, g, aw, aw_mask, style_tok=None, state_ada=None, mt=None, mt_mask=None,
-                      ftext=None, ctl_c=None):
+                      ftext=None, ctl_c=None, ins=None):
         """ctl_c [M, L, d]: control-token flow route (None = the unchanged model).
         xt [M, L, z] (known positions hold clean latents); t [M, L] (1 on known); h [M, d]; g [M, d];
         aw [M, W, d] local audio window, aw_mask [M, W]; ftext (flow_text_xattn): (text [Bt, Kt, d], keep [M, Kt],
         token s [Bt, Kt], position s [M, L]) or None (= no text visible)."""
         x = self.f_in(xt) + self.f_role(known.long()) + self.f_pos[None]
+        if ins is not None and hasattr(self, 'f_mask'): x = x + ins[..., None].to(x.dtype) * self.f_mask   # 11-07 inserted clean latents
         c = self.f_t(sincos(t * 1000., self.cfg.d)) + (self.f_plan(h) + g)[:, None]
         if style_tok is not None: c = c + style_tok[:, None]
         if state_ada is not None: c = c + state_ada[:, None]
