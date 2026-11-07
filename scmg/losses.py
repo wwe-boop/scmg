@@ -293,6 +293,10 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         else: rtimed = rm[:, None, :].expand(B, K, -1)
         rc = model.ret_flow_cond(batch['ret_lat'].float(), rt, rtimed, model.flow_seconds(torch.arange(K, device=dev), cfg.ctx + CHUNK, cfg.ctx))
         if rc is not None: ctl_c = rc.flatten(0, 1) if ctl_c is None else ctl_c + rc.flatten(0, 1).to(ctl_c.dtype)
+    st_plan = None
+    if getattr(cfg, 'sem_time', False):                    # 11-07 semantic-first temporal stream (text as the planner reads it)
+        sf_, st_plan = model.sem_time_cond(text, tmask, tvis, tsec, K)
+        if sf_ is not None: ctl_c = sf_.flatten(0, 1) if ctl_c is None else ctl_c + sf_.flatten(0, 1).to(ctl_c.dtype)
     src = torch.where(r(0.1), torch.zeros_like(batch['source']), batch['source'])
     g = model.global_cond(batch['spk'], batch['spk_valid'] * (~drop_spk), src)
 
@@ -354,9 +358,9 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             mt, mt_mask = model.mt_memory(text, tmask, a, amask_k, g, sref, hist, state_tok, K, tvis=tvis)
             mflat, pm = model.planner_memory(mt, mt_mask)
             return model.plan(lat_in, a, amask_k, text, tmask, g, mflat, pm, batch.get('tids'), tidm_d, sref,
-                              tvis=tvis, lvis=lvis, sstate=sstate)
+                              tvis=tvis, lvis=lvis, sstate=sstate, **({} if st_plan is None else dict(padd=st_plan)))
         return model.plan(lat_in, a, amask_k, text, tmask, g, tids=batch.get('tids'), tidm=tidm_d, sref=sref,
-                          tvis=tvis, lvis=lvis, sstate=sstate)
+                          tvis=tvis, lvis=lvis, sstate=sstate, **({} if st_plan is None else dict(padd=st_plan)))
 
     ftext = model.flow_text(text, tmask, tvis, tsec, K)                             # None without flow_text_xattn
     aw, awm = model.local_audio(a, H, K)

@@ -251,6 +251,8 @@ class Streamer:
             _, rtimed = visibility(rmk, ret_tt, arr_r, torch.tensor([self.text_mode == 'final'], device=self.dev), nowr,
                                    (nowr + (self.H * STRIDE / 50. if self.H < INF else 1e9))[None],
                                    torch.tensor([bool((self.deploy_timing or adsc_m) and self.H < INF)], device=self.dev))
+        st_flow = st_plan = None                                     # 11-07 sem_time: conditional branch only (0 without visible words)
+        if getattr(cfg, 'sem_time', False): st_flow, st_plan = m.sem_time_cond(text, tmask, tvis, tsec, W)
         g = m.global_cond(c['spk'][None].float(), c['spk_valid'][None].float(), c['source'][None].long())
         # committed latents of the window chunks (zeros before the start)
         z = cfg.z
@@ -303,7 +305,8 @@ class Streamer:
                 mflat, pm = m.planner_memory(mt, mtm)
                 h = m.plan((plan_lat if j == 0 else lat)[None], a, amask, text, tmask, g, mflat, pm, *self._ids(), sref, tvis=tvis, lvis=lvis, sstate=sstate)
             else:
-                h = m.plan((plan_lat if j == 0 else lat)[None], a, amask, text, tmask, g, tids=self._ids()[0], tidm=self._ids()[1], sref=sref, tvis=tvis, lvis=lvis, sstate=sstate)
+                h = m.plan((plan_lat if j == 0 else lat)[None], a, amask, text, tmask, g, tids=self._ids()[0], tidm=self._ids()[1], sref=sref, tvis=tvis, lvis=lvis, sstate=sstate,
+                           **({} if st_plan is None else dict(padd=st_plan)))
             hk = h[:, kw]
             if self.cfg_ctl is not None:                            # conditional branch without the control tokens
                 hk_c0 = m.plan((plan_lat if j == 0 else lat)[None], a, amask, text, tm_noctl, g, tids=self._ids()[0], tidm=self._ids()[1],
@@ -370,6 +373,8 @@ class Streamer:
                 cc = m.ctl_flow_cond(ctl_u, ctl_tt, ckeep[:, kw:kw + 1], ctimed[:, kw:kw + 1],
                                      m.flow_seconds(torch.tensor([kw], device=self.dev), L, cfg.ctx))
                 if cc is not None: ctlkw = dict(ctl_c=cc[:, 0])
+            if st_flow is not None:
+                ctlkw = dict(ctl_c=st_flow[:, kw] if 'ctl_c' not in ctlkw else ctlkw['ctl_c'] + st_flow[:, kw].to(ctlkw['ctl_c'].dtype))
             if self.has_ret:
                 rc = m.ret_flow_cond(c['ret_lat'][None].float(), ret_tt, rtimed[:, kw:kw + 1],
                                      m.flow_seconds(torch.tensor([kw], device=self.dev), L, cfg.ctx))
