@@ -149,6 +149,8 @@ def cmd_run(a):
                 res.append(r)
                 if (i + 1) % 500 == 0: print(f'{i + 1}/{len(jobs)} {time.time() - t0:.0f}s', flush=True)
     write(out, res)
+    n_ent = sum(1 for e in json.loads((out / 'INDEX.json').read_text()).values() if 'feat' in e)
+    if n_ent != len(res): raise ValueError(f'INDEX holds {n_ent} clip entries != {len(res)} results (key collision?)')   # 11-07 guard
     sec = time.time() - t0
     meta = dict(grades_s=GRADES, view=str(a.view), split=a.split, shard=a.shard, clips=len(res), audio_dir=a.audio_dir,
                 words_dir=a.words_dir, pstats=a.pstats, unit_cols=list(__import__('scmg.causal_feat', fromlist=['x']).UNIT_COLS), text_cache=a.text_cache,
@@ -181,6 +183,8 @@ def cmd_merge(a):
     np.save(out / 'SPK_PREFIX.npy', np.concatenate(spk)); np.save(out / 'SPK_VALID.npy', np.concatenate(val))
     np.save(out / 'FEAT_PREFIX.npy', np.concatenate(feat)); np.save(out / 'UNITS.npy', np.concatenate(units))
     np.save(out / 'TOKEN_END.npy', np.concatenate(tends))
+    nclip = sum(1 for e in index.values() if 'feat' in e)          # 11-07 regression guard: every shard clip / recording survives
+    if nclip != ci: raise ValueError(f'merged INDEX holds {nclip} clip entries != {ci} shard clips (key collision?)')
     (out / 'INDEX.json').write_text(json.dumps(index))
     m0 = json.loads((sh[0] / 'META.json').read_text())
     for d in sh[1:]:                                   # every shard: the same inputs and rules
