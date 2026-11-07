@@ -20,3 +20,13 @@ Data / protocol (frozen here; evaluator entry to be confirmed by the coordinator
   scene.xml (ex002-rm003-v4-20261020/model-r1) with ex002_3f_spec.json limits.
 - Reading (the G1 analogue): the causal match must lower psync FGD v2 vs ncz with non-overlapping seed ranges; offline must not
   rise by more than 5 % of ncz offline. Otherwise: one negatives row, diagnose, next module.
+
+Addendum 11-07 20:30 (coordinator; before any run): all EX002 numbers come from DLC A800 generations (bench_ex002.py is bitwise
+equal to ex002_ctl_run on one host; across GPU types generations differ by ~3e-4 rad, so hosts are never mixed within a table).
+Recipe confirmed (INIT r4 base, sf0 + czm + w_phys 0.03 / phys_dyn_w 0; 2000 then 6000 steps) plus the isolation lane ncz.
+Data finding: EX002 view clips are RECORDINGS (train 55.8k recordings / 73,237 items; dev 43 / 380), so the causal precompute is
+per recording (precompute_causal.py --recording: items' audio16k + alignment units concatenated in offset order, per-item token
+ends); smoke on 2 dev recordings: training cz_pro == inference CausalInputs prosody bitwise, mel within the f16 ulp; the
+load-time CAM++ check (single-item clips only) uses atol 1e-3 (measured 2-3e-4).
+Evaluator: scripts/ex002/bench_ex002.py (exp/duplex 71f2e04): FGD v2 (two frozen encoders, mean) + FKD over the 43 dev recordings;
+sanity: GT-as-generation 0 / 0, identical to ex002_ctl_run on the same outputs (sibag-s2 91.1268 / 87.1537 / 95.3214).
