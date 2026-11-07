@@ -2,7 +2,7 @@
 # 11-07 §7.55 item 2 on ECHO-G (criteria: docs/criteria/SEMLINE_7_55.md, item 2 ECHO-G section, written before this run): the official
 # G1 checkpoint fine-tuned 2000 steps with its Wav2Vec2 audio REPLACED by the 8 prosody dims of the SCMG view (echog_semt.py --audio
 # prosody; new audio projection starts at the official null-audio output), same recipe / data / evaluation as echog_semt_lane.sh;
-# compared with the egctrl lane of that run (its score files are linked, not recomputed).
+# compared with the egctrl lane of that run (its score files are linked once that run is done, not recomputed).
 #   echog_pros_lane.sh <out dir> <egsemt dir (finished)>       env PY, W
 set -uo pipefail
 O=$1; E=$2; CODE=$(cd "$(dirname "$0")/../.." && pwd); cd $CODE; mkdir -p $O
@@ -15,7 +15,6 @@ export PY EG=$D4 OFF=$W/official REF_DIR=$A/motion_39d_30fps WAV_DIR=$A/audio SP
 CFG=$W/official/configs/sgdit_audio_text.yaml; INIT=$W/weights/best.pt; MAP=$E/dev_swap_map.json
 log() { echo "$(date -Is) $*" >> $O/lane.log; }
 log "START commit $(cat GIT_COMMIT 2>/dev/null || git rev-parse HEAD 2>/dev/null)"
-grep -q LANE_DONE $E/lane.log || { log "EGSEMT_NOT_DONE"; exit 1; }
 CUDA_VISIBLE_DEVICES=0 $PY scripts/echog_g1/echog_semt.py test --init $INIT --config $CFG --data-root $R --view $V --tmp $O/test-tmp > $O/test.log 2>&1
 grep -q ALL_OK $O/test.log && log "TEST_ALL_OK" || { log "TEST_FAILED"; exit 1; }
 n=egpros; mkdir -p $O/$n
@@ -31,6 +30,7 @@ for r in own notext swap; do for sd in 0 1 2; do d=$O/$n/${r}_seed_00$sd; f=$O/b
 done; done | xargs -P 4 -I{} bash -c {}
 log "EVAL_DONE"
 specs=(); for r in own notext swap; do for sd in 0 1 2; do specs+=($n-$r-pc-s$sd=$O/$n/${r}_seed_00$sd); done; done
+until grep -q LANE_DONE $E/lane.log; do sleep 120; done; log "EGSEMT_DONE"     # the control's score files exist from here
 S=$O/sem; mkdir -p $S; ln -sf $E/sem/*--egctrl-* $S/ 2>/dev/null
 i=0; for rec in $G/rec-sem-hos-seed0 $G/rec-sem-hos-seed1 $G/rec-sem-hos-seed2; do
   ( PY=$PY bash scripts/semantic/sem_score_dirs.sh $i $G/data-sem-hos "$rec" $S dev "${specs[@]}" >> $O/sem.log 2>&1 ) & i=$((i + 1)); done; wait
