@@ -4,7 +4,7 @@
 # class-lex / class-llm insertions (infer_test.py --lib, official benchmark each); then g1_ctl_eval.py (STG and count hit against the
 # given tokens), lib_boundary_jerk.py (vs base, same seed), R-half recognition (the library is K-half), CBF-QP + executability (seed 0).
 #   lib_g1.sh <out dir>
-#   env: CK DEC ASSETS LIB CTLC PRED VIEW REC_DATA REC_GLOB SAFE PY GPU PAR (+ bench.sh paths REF_DIR WAV_DIR VIEW_TEST TEXT_TEST STATS)
+#   env: CK DEC ASSETS LIB CTLC PRED VIEW REC_DATA REC_GLOB SAFE PY GPU PAR GPU_PER_SEED (1: seed k on GPU k) (+ bench.sh paths REF_DIR WAV_DIR VIEW_TEST TEXT_TEST STATS)
 set -uo pipefail
 O=$1; CODE=$(cd "$(dirname "$0")/../.." && pwd); cd $CODE; mkdir -p $O
 PY=${PY:-python}; ST=$ASSETS/dev_stems.txt
@@ -24,7 +24,8 @@ extra() {
 one() {   # run seed
   local r=$1 sd=$2 P=$O/$1/seed_00$2
   [ -f $O/$r/benchmark_seed_00$sd.json ] && return 0
-  GPUS=${GPU:-0} INFER_EXTRA="--save50 --seed-mode per_clip $(extra $r)" bash scripts/echog_g1/bench.sh scmg $CK $DEC $P offline $sd $ST \
+  local g=${GPU:-0}; [ "${GPU_PER_SEED:-0}" = 1 ] && g=$sd
+  GPUS=$g INFER_EXTRA="--save50 --seed-mode per_clip $(extra $r)" bash scripts/echog_g1/bench.sh scmg $CK $DEC $P offline $sd $ST \
     >> $O/bench_$r.log 2>&1 || log "BENCH_FAILED $r s$sd"
 }
 RUNS="base point-gt count-gt class-gt class-lex class-llm"
