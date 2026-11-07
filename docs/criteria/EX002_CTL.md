@@ -358,3 +358,19 @@ Module 8 (present-count: frontal presentation aims + minimum-jerk override on th
 - Quality: (i) passes (70.96 / 92.13); (ii) FAILS offline 93.59 > 83.89, psync 114.14 > 107.10 (two simultaneous POINT tokens per
   count command move the whole clip). Ramp over-limit 1.7-2.5 % (minjerk).
 - Verdict: FAIL. A presentation pose needs a palm / wrist-orientation target (or a library pose), not only a forearm direction.
+## Modules 7b / 8b (pre-registered 2026-11-08 ~04:20; queued for the base agent A re-selects with liveliness guards; NOT started)
+Common: true freeze (--train-only ctl_) on the re-selected base, its own recipe, 2000 steps; new fresh plans (seed 1110 / shuffle
+20261110), inference seeds 0-2, offline AND psync, each protocol against its own no-token C / δ; 5b blend; minimum-jerk override.
+Liveliness guard added to the quality gates (dev, per protocol, scripts/video/static_share.py on the whole clips): still-frame share
+<= 2 x dev GT (0.019 -> <= 0.038), mean wrist speed >= 0.75 x GT (0.411 -> >= 0.308 m/s), wrist amplitude >= 0.75 x GT (0.120 ->
+>= 0.090 m); for the 5b + override configuration, given runs on the sparse plan.
+- 7b (aim direction, second try): ray loss weighted toward azimuth (w_ctl_aux on the full 1 - cos term as before plus an azimuth term
+  1 - cos(az(ray) - az(target)) at 2x), elevation term weight 2x (w_ctl_ray_el = 2 x w_ctl_aux), raise weight halved (w_ctl_raise 2.5).
+  Gates: median forearm angular error <= 25 deg AND |median elevation error, above-shoulder targets| <= 5 deg AND STG gain >= +0.10
+  with the shuffle follow; quality (i) / (ii) + liveliness guard; executability after CBF 100 %.
+- 8b (present-count, second try): ONE POINT token per count command (the hand with the larger commanded count; ties -> right) toward
+  the frontal presentation target, plus a wrist / palm orientation target: the median wrist joint angles (arm_joint5-7) of the library
+  presentation pose (train-GT frames, K-half speakers, hand raised and >= 1 extended finger) blended in joint space over the command window
+  with the minimum-jerk ramp (like the finger override; arm joints 1-4 untouched). Gates: count hit >= 0.9; hand height >= chest
+  (wrist >= shoulder - 0.20 m) on >= 80 % of command frames; palm-normal angle to forward median <= 45 deg; quality (i) / (ii) +
+  liveliness guard; ramp jerk reported.
