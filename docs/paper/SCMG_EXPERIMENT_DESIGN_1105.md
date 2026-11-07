@@ -5,6 +5,12 @@
 > **论文范围（用户 11-05）**：主线为“同信息因果流式不掉质量”。新贡献两条：**音频说话人风格**（泛化到未见说话人）、**与生成器无关的保质量安全层**。语义继续押，但换机制（19:2x 用户：“1 2 都要”）。打断为分析。
 
 
+## 11-08 补充：EX002 自强制范围（exposure-robust conditioning）
+- 根因：EX002 活跃底座 sibag-s0/1/2 由 dcd50fb 之前的代码训出；那时 autocast 权重缓存使自强制 batch 只更新条件编码器，planner / Local Flow 不更新。dcd50fb 修复后同配方动作被压住；sf0 最静。详见 ops/SCMG_NEGATIVE_RESULTS_1107.md “Root cause 2026-11-08”。
+- 论文写法：sibag-s2 = “self-forcing p = 0.5；因 autocast 缓存 bug，自强制 batch 只更新条件编码器”。不写成“自强制关闭”。
+- 方法开关：StageCfg.self_force_scope = 'encoders'（默认 'all' 不变；与旧代码逐位一致）。EX002 新底座按 docs/criteria/EX002_SFSCOPE_1108.md 选（当前代码 + encoders，±因果匹配）；sf0 / all / encoders 三方对比进补充表。G1 主表不变（sf0）。
+- 回归保护：每个 release 先过 scripts/tests/ref_train_ex002.sh（CHECK=1 写 REF_TRAIN_OK.json）再提交车道；bench_ex002 eval 对每条车道默认输出 13 点活跃度守卫。
+
 ## V9 变更：P4 控制符加目标方向，对上空间指向基准（用户 11-05 22:3x 定；覆盖 V8 中“不带空间目标”）
 **控制符**：`<point>` 可选地带一个目标方向，即指称物相对骨盆的单位方向 + log 距离，与 2610.03105 基线的目标编码相同。
 - 不带方向时，退回 V8 的行为：只控制何时指，方向由模型自己生成。
