@@ -237,3 +237,21 @@ and its FiLM / additive term in ctl_flow) is multiplied by a per-frame window w_
 ramps and 0 elsewhere, so frames outside every window receive exactly zero from the control routes (the no-token motion there up to
 the planner's chunk context, which is checked and reported). Default off, bitwise unchanged when off (unit test); trained like lane 4
 (true freeze, 2000 steps); same gates on fresh plans.
+## Module 5b confirmation result (dlci2zmkrgtpnpye, LANE_DONE 2026-11-08 01:21; all generated and scored on DLC A800)
+Old plans, A800 re-score (selection evidence): identical to the local 5090 scores at the reported precision (STG 0.357 vs 0.254,
+gate (i) 91.72, gate (ii) 94.52 / 96.32, finger override 1.000, executability 100 %) -> no appendix row needed. Bootstrap (43
+recordings, 10,000 draws): forearm STG gain +0.103 [+0.084, +0.122] (P(gain < 0.10) = 0.37; per seed +0.099 / +0.105 / +0.106);
+index ray +0.083 [+0.067, +0.100]; unblended lane 4 +0.147 [+0.124, +0.168].
+FRESH plans (seed 1108) and NEW generations (seeds 3-5), 5b as frozen:
+- STG dense (forearm, official): 0.355 vs none 0.241 = +0.114 (per seed +0.108 / +0.108 / +0.127), bootstrap 95 % CI [+0.094, +0.135],
+  P(gain < 0.10) = 0.08 -> PASS; shuffle follows (0.353 vs 0.296 against the original). Index ray (ours) 0.342 vs 0.244 = +0.098
+  [+0.082, +0.114]. Sparse 0.315 vs 0.242. Unblended lane 4 on the fresh plans +0.153 [+0.132, +0.175].
+- Finger hit: override 1.000 (shuffle follows 1.000 vs 0.082) PASS; plain 0.310.
+- Gate (i) sparse outside +-1 s: 84.75 (82.23 / 88.83 / 83.18) <= C + δ = 84.73 + 7.13 = 91.86 PASS (old absolute 100.44 also met);
+  unblended 101.62.
+- Gate (ii) sparse whole clip: 93.29 plain (91.27 / 96.73 / 91.88), 94.91 with the override (92.68 / 98.45 / 93.60) <= C + δ =
+  89.31 + 5.70 = 95.01 PASS (override margin 0.10; old absolute 99.37 met); unblended 109.83.
+- Executability after CBF 100 % PASS (all runs). Report-only: override ramp frames over the finger jerk limit 0.61-0.66 (none 0.04,
+  5b plain 0.03-0.10); dense whole clip 177.4 / 179.8 (none 89.3); FKD sparse/dense see JSON.
+VERDICT: module 5b (+ module 2 for fingers) PASSES on fresh plans and new generations. Margins: STG CI lower bound 0.094 (< 0.10:
+the gate is met by the mean, not by the CI); gate (ii) with the override 0.10 below its threshold. Module 6 is not triggered.
