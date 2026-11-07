@@ -64,3 +64,26 @@ The near-body remap diagnostic seamless-eval-20261102 (40 Seamless items, releas
 the leg-region fix): strict pass 2 / 40 -> 4 / 40, wrist error stays 10-20 cm on the rejects. The leg-region fix therefore cannot
 recover more than about that, and the robot-side rule of (c)1 already keeps 92 % of the R0 rejects; the 300-item rerun (~30 core-h)
 would not change the decision.
+
+## (c)1 status (coordinator 2026-11-07 ~23:40): curation gate validated physically; training value untested; raw data off-line
+G6 was pre-registered (control / S-full / S-up at a 15 % human-mass share via --anchor-share; expected ~4 h usable after the utterance
+pipeline) but NOT run: 2,602 of the 3,221 selected parents sit in 294 raw tars that were moved to OSS (user 11-03 / 11-04 quota moves),
+and the utterance pipeline needs the wav + transcript inside the tars. Built on the 619 parents still on disk (newdata-1103 rules
+unchanged, scripts/video/sea_build/{select_near,extract,features,gate}.py; CKPT/zehan/gesture-scmg/video-regate-1107/build):
+868 utterances extracted -> 865 with features (3 low-energy CAM++ rejects) -> 774 after the subwindow R4 gate = 0.647 h, 43 speakers,
+383 parents (below the 2 h threshold -> not submitted). OSS restore (option 2) is the user's decision.
+Still-frame share (ours, scripts/video/static_share.py: 6 upper-body FK points, speed / data-v36_1 dev-GT mean speed, still = mean
+< 0.15; NORM_DEV.json) and mean elbow flare (shoulder widths): dev GT 0.019 / 0.261; sibag-s2 dev seed 0 0.031 / 0.268; data-v36_1
+train human sample (600 items) 0.169 / 0.296; the built Seamless utterances 0.166 / 0.293 — at the utterance level (own speech) the
+built set is not more static or more elbows-out than the training data (the static look of the rendered 20 s windows comes from
+listening / resting parts that the utterance pipeline drops).
+
+## Option 3 pilot (approved 2026-11-07 ~23:45, pre-registered before any pilot run)
+100 WHOLE Seamless tracks (all 20 s windows of every valid run >= 5 s, convert_seamless 'all' mode) from tars still on disk,
+Seamless train split only, participants not in Seamless dev/test, not in data-v36_1 (no Seamless there) and not among the speakers
+already built above (one track per participant, seeded 20261107). Same frozen release07 retargeter -> (c)1 robot-side gate (R1-R4 and
+no safety back-off) -> newdata-1103 utterance pipeline (extract / features / subwindow R4 gate) on one DLC CPU pod (<= 88 cores, no GPU).
+Report: usable hours per 100 tracks, speakers, near-body fraction, still-frame share (frame level, definition above) and the share of
+utterances with still share >= 0.5, 10 spot renders.
+Scale-up rule (coordinator): proceed to a larger run only if usable >= 1 h per 100 tracks AND the still-frame share <= 0.60;
+G6 runs only once >= 5 h are built; no larger run before that. Training data only; every evaluation set untouched.
