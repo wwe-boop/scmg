@@ -56,12 +56,17 @@ class PostInterrupt:
     shifted by sh frames (latent restart). feat(Tk) / spk(Tk) take the RE-BASED Tk; feat rows = the streamer's feat rows
     (audio end: n50 - sh, off: unchanged) so the audio-final state is the one of the engine protocol (feat length)."""
 
-    def __init__(self, ci, fresh, n50, sh, rows):
+    def __init__(self, ci, fresh, n50, sh, rows, silence=False):
         self.ci, self.fresh, self.n50, self.sh, self.rows = ci, fresh, int(n50), int(sh), int(rows)
         self.Tpad = ci.Tpad; self.calls = []
+        # 11-07 silence: the stream goes on with DIGITAL SILENCE after t_i (the PCM of `fresh` is zero from n50 on and its word
+        # list holds only the words ended by t_i), so feat89 after t_i is the feature of real silence (training pauses: logmel
+        # ~ -13, digital silence -13.8) instead of not-arrived rows (normalised 0 = f_mean, logmel -8.6 = average speech);
+        # the audio is not final (a pause, as in training). The speaker vector stays that of the speech before t_i.
+        self.silence = bool(silence)
 
     def feat(self, Tk):
-        Ta = min(int(Tk) + self.sh, self.n50); self.calls.append(Ta)
+        Ta = int(Tk) + self.sh if self.silence else min(int(Tk) + self.sh, self.n50); self.calls.append(Ta)
         F = self.fresh.feat(Ta)                      # [Tpad, 89], rows >= Ta zero
         return F[self.sh:self.sh + self.rows]
 
@@ -111,7 +116,6 @@ class RetractStreamer(Streamer):
         l_r = self.l_r; o = l_r % CHUNK if self.restart == 'latent' else 0
         n50 = int(round(self.t_int * 50))
         if self.causal is not None and self.prefix_npz is not None: raise ValueError('--prefix-feats is the engine-protocol path, not psync')
-        if self.causal is not None and self.audio == 'silence': raise ValueError('psync: --audio silence not implemented (no silent PCM)')
         if self.prefix_npz is not None:   # 11-06: feat89 / CAM++ recomputed from the audio before t_i only (prefix_feats.py)
             pf = np.load(self.prefix_npz)
             fz = torch.as_tensor((pf['feat'].astype(np.float32) - self.fm_) / self.fs_, device=self.dev).float()
@@ -148,7 +152,9 @@ class RetractStreamer(Streamer):
         if self.causal is not None:       # psync: inputs of the audio before t_i only, on the re-based clock
             sh = o * STRIDE
             if self.text_mode in ('voiced', 'asr'): self._wt = self._wt - sh / 50.
-            self.causal = PostInterrupt(self.causal, self.fresh_feat(), n50, sh, self.feat.shape[0])
+            sil = self.audio == 'silence'
+            fr = self.fresh_feat(silence_from=n50, T=sh + self.feat.shape[0], t_words=self.t_int) if sil else self.fresh_feat()
+            self.causal = PostInterrupt(self.causal, fr, n50, sh, self.feat.shape[0], silence=sil)
         self.o = o
         self.frames = frames; self.n_emitted = len(frames)
         if self.floor: self.floor_k0 = self.k                   # chunk index in the (possibly re-based) clock
@@ -412,8 +418,15 @@ def main():
             cond.update(CF.text_extras(it, cw, tokz, kn, len(s['tmask'])))
             mkw['asr_lag'] = a.asr_lag
             pcm16, wave = CF.clip_audio(Path(a.wav_dir) / f'{stem}.wav')
-            mk = lambda: CF.CausalInputs(pcm16, wave, cw, it['lang'], L, pst, view.fm, view.fs, enc, Tpad=len(s['feat']), spk=True,
-                                         spk_refresh=a.spk_refresh, feat_mode=a.causal_feat)
+            def mk(silence_from=None, T=None, t_words=None, pcm16=pcm16, wave=wave, cw=cw, it=it, L=L, nf=len(s['feat'])):
+                if silence_from is None:
+                    return CF.CausalInputs(pcm16, wave, cw, it['lang'], L, pst, view.fm, view.fs, enc, Tpad=nf, spk=True,
+                                           spk_refresh=a.spk_refresh, feat_mode=a.causal_feat)
+                # --audio silence after the interruption: PCM zero from frame silence_from on, only the words ended by then,
+                # clip length T (the post-interruption run); the speaker comes from the original instance (PostInterrupt.spk)
+                pz = np.array(pcm16[:silence_from * CF.HOP], np.int16); pz = np.concatenate([pz, np.zeros(max(0, T * CF.HOP - len(pz)), np.int16)])
+                wz = [w for w in cw if CF.ended(w['end_time'], t_words)]
+                return CF.CausalInputs(pz, wave, wz, it['lang'], T, pst, view.fm, view.fs, None, Tpad=T, spk=False, feat_mode=a.causal_feat)
             mkw['causal_inputs'] = mk()
             if r is not None: mkw['fresh_feat'] = mk
         ikw = {}

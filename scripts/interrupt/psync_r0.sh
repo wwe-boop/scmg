@@ -6,6 +6,7 @@
 #   B2       : blend_retract.py --full-clip --tr 1.8 --tb 0.5 --w0 1.0
 #   projection safety_project.py --smooth 300 on R0causal, B2, B3c; scoring eval_interrupt.py (v3 main) + rkd_diff_boot + boot
 #   psync_r0.sh dev|test <ckpt> <tag> [gpus, default "1 1 1 1"]     (all on this host; test registers in TEST_USAGE first)
+#   env AUDIO (end | silence, 11-07; default end), RECORD=1 (--record-plan on the B3c run: end-head inputs, outputs unchanged)
 # Differences to final_test_r0causal.sh: protocol psync instead of engine + prefix_test, inference on this host (local paths).
 set -uo pipefail
 SIDE=$1; CK=$2; TAG=$3; GPUS=(${4:-1 1 1 1})
@@ -37,7 +38,7 @@ for k in $(seq 0 $((n - 1))); do
   ( cd $CODE && CUDA_VISIBLE_DEVICES=${GPUS[$k]} PYTHONPATH=$CODE:$HOME/bulk/pydeps/ort-cpu $PY scripts/interrupt/infer_retract.py "${A[@]}" --shard $k/$n \
       --no-interrupt --stems $W/$O/stems.txt --out $W/$O/no_int > $W/logs/psync_${TAG}_noint_$k.log 2>&1
     CUDA_VISIBLE_DEVICES=${GPUS[$k]} PYTHONPATH=$CODE:$HOME/bulk/pydeps/ort-cpu $PY scripts/interrupt/infer_retract.py "${A[@]}" --shard $k/$n \
-      --interrupts $W/$INT --audio end --restart chunk --out $W/$O/B3c > $W/logs/psync_${TAG}_int_$k.log 2>&1
+      --interrupts $W/$INT --audio ${AUDIO:-end} --restart chunk ${RECORD:+--record-plan} --out $W/$O/B3c > $W/logs/psync_${TAG}_int_$k.log 2>&1
     echo "$(date -Is) PSYNC_DONE $k" >> $W/logs/psync_$TAG.log ) &
 done; wait
 PYH=/home/xr-25b7/bulk/echog-official-ro/official/src
