@@ -314,3 +314,18 @@ direction, computed first, points 23 deg DOWN because the raised set allows the 
 would lower the hand, so it was not used.)
 Module 7 code: scmg/losses.py StageCfg w_ctl_ray_el / w_ctl_raise (default 0 = bitwise unchanged path), run with w_ctl_aux 3,
 w_ctl_ray_el 6 (elevation 3x in total), w_ctl_raise 5.
+## Port result (dlcnd7d3f2iwdfi1, LANE_DONE ~02:50 2026-11-08; DLC A800; fresh plans 1109, seeds 0-2)
+- Identity: ctl-port no-token == czm bitwise, offline and psync, 43 clips x 3 seeds (max |diff| 0).
+- STG gain (forearm, official) FAILS on both protocols: offline 0.355 vs none 0.285 = +0.070, bootstrap [+0.055, +0.085] (per seed
+  +0.064 / +0.067 / +0.081); psync 0.367 vs 0.293 = +0.074 [+0.060, +0.088]. Shuffle follows (offline 0.359 vs 0.310; psync 0.369 vs
+  0.320). Unblended lane-4-style given: offline +0.098, psync +0.096 (below +0.10 too). The czm no-token baseline is higher (0.285 /
+  0.293 vs sibag 0.241-0.254), which eats the margin. Index ray +0.048 / +0.061.
+- Finger hit with the override 1.000 on both protocols (cosine 0.15 s and minimum-jerk 0.3 s alike); plain 0.253 / 0.225.
+- Gate (i): offline 70.92 <= 70.91 + 18.50 = 89.42 PASS; psync 92.08 <= 92.03 + 14.21 = 106.24 PASS.
+- Gate (ii): offline 74.36 plain / 74.86 cos / 75.23 minjerk <= 67.83 + 16.06 = 83.89 PASS; psync 101.68 / 103.30 / 103.95 <= 91.01 + 16.09
+  = 107.10 PASS. (czm's own seed spread is wide: offline 74.99 / 69.35 / 59.15.)
+- Executability after CBF 100 % (all runs). Ramp over-limit share: cosine 0.15 s 0.55-0.60, minimum-jerk 0.3 s 0.010-0.019 (no-token
+  0.016-0.029).
+- Override rule (pre-registered): minimum-jerk keeps finger hit >= 0.9 and gate (ii) on both protocols -> it becomes the DEFAULT override.
+VERDICT: the port passes quality, finger, executability and identity, and FAILS the pointing gate (+0.07 < +0.10, CI excludes 0.10) on
+both protocols. Next: module 7 (aim direction, pre-registered) on this base, gated on the median angular error and STG.
