@@ -22,7 +22,7 @@ def _init(layers, K, device, kw, rg_pairs=False):
     lim = S.Limits(); coll = S.G1Collision()
     if rg_pairs:                     # 11-07: + RoboGesture's collision pairs (penetration) as constraints (scmg/safety_rg.py)
         from scmg.safety_rg import RGCollision, UnionCollision
-        coll = UnionCollision(coll, RGCollision(S.G1_JOINTS))
+        coll = UnionCollision(coll, RGCollision(S.G1_JOINTS, fast=True))   # fast == reference bitwise (rg_layer_timing.py)
     enc = S.FGDEncoder(device=device) if any(n.startswith('proj_perc') for n in layers) else None
     lkw = lambda n: {} if not n.startswith('proj') else (kw if n == 'proj_perc_s' else {k: v for k, v in kw.items() if k != 'smooth'})
     _W.update(lim=lim, coll=coll, K=K, layers={n: S.make_layer(n, lim, coll, enc, K=K, **lkw(n)) for n in layers})

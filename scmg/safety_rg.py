@@ -20,7 +20,7 @@ HAND_CMD = (376.0, 2.0, 6.0, 124.0, 192.0, 215.0, 376.0, 3.0, 112.0, 233.0, 253.
 class RGCollision:
     midpoints = False
 
-    def __init__(self, names, hand_cmd=HAND_CMD):
+    def __init__(self, names, hand_cmd=HAND_CMD, fast=False, cap_exact=1e-3):
         if RG_OFFICIAL not in sys.path: sys.path.insert(0, RG_OFFICIAL)
         import mujoco
         from robogesture import collision as C
@@ -36,6 +36,9 @@ class RGCollision:
             else: self.ctl.append((k, first.index(mi)))
         assert len(self.leg) == 12 and len(self.ctl) == len(names) - 12
         self.n = len(names); self.n_exact = 0; self.n_lin = 0
+        self.mj = mujoco; self.fast = fast; self.cap_exact = cap_exact; self._ft = np.empty(6)   # fast: capped distances (11-08)
+        self._ga = np.array([a for a, _ in self.f.geom_pairs]); self._gb = np.array([b for _, b in self.f.geom_pairs])
+        self._rb = m.geom_rbound[self._ga] + m.geom_rbound[self._gb]
 
     def _set(self, q):
         fr = np.zeros(30); fr[self.hands] = self.hand_cmd
@@ -49,19 +52,51 @@ class RGCollision:
     def distances(self, q):
         return self.f._distance(self._set(np.asarray(q, np.float64)))
 
+    def _capped(self, q, cap, com=False, first=False):
+        """pair distances with mj_geomDistance capped at `cap` (same function and pairs as _distance; values below the cap are
+        identical). Broad phase: a pair whose bounding spheres (geom_xpos, geom_rbound) are more than `cap` apart has a true
+        distance > cap and gets the cap without a call. first=True: stop at the first penetrating pair (collides())."""
+        mj = self.mj; c = self._set(np.asarray(q, np.float64)); self.f._kinematics(c, include_com=com)
+        m, d = self.f.model, self.f.data; ft = self._ft
+        x = d.geom_xpos; gap = np.linalg.norm(x[self._ga] - x[self._gb], axis=1) - self._rb
+        out = np.full(len(self._ga), float(cap))
+        for p in np.nonzero(gap <= cap)[0]:
+            out[p] = mj.mj_geomDistance(m, d, int(self._ga[p]), int(self._gb[p]), cap, ft)
+            if first and out[p] < 0: break
+        return c, out
+
     def contacts(self, q):
         self.n_exact += 1
-        return {('rg', int(i)) for i in np.nonzero(self.distances(q) < 0)[0]}
+        if not self.fast: return {('rg', int(i)) for i in np.nonzero(self.distances(q) < 0)[0]}
+        _, d = self._capped(q, self.cap_exact)
+        return {('rg', int(i)) for i in np.nonzero(d < 0)[0]}
 
     def collides(self, q):
-        return bool(self.contacts(q))
+        if not self.fast: return bool(self.contacts(q))
+        self.n_exact += 1
+        return bool((self._capped(q, self.cap_exact, first=True)[1] < 0).any())
 
     def near(self, q, act):
         """(grad [n], dist) for every RoboGesture pair with distance < act; d(q + dq) ~= dist + grad . dq (legs: 0)."""
         self.n_lin += 1
-        J, d = self.f._jacobian(self._set(np.asarray(q, np.float64)))
+        if not self.fast:
+            J, d = self.f._jacobian(self._set(np.asarray(q, np.float64)))
+            sel = np.nonzero(d < act)[0]
+        else:                         # = _jacobian restricted to the pairs within act (its arithmetic, pair by pair)
+            mj, C = self.mj, self.C; m, dd = self.f.model, self.f.data
+            c, d = self._capped(q, min(act, C.DETECTION_DISTANCE), com=True)
+            sel = np.nonzero(d < act)[0]; J = np.zeros((len(d), C.CONTROL_DOF)); ft = np.empty(6)
+            ja, jb = np.empty((3, C.MODEL_DOF)), np.empty((3, C.MODEL_DOF))
+            for p in sel:
+                ga, gb = self.f.geom_pairs[p]
+                dist = mj.mj_geomDistance(m, dd, ga, gb, C.DETECTION_DISTANCE, ft); d[p] = dist
+                if abs(dist) <= 1e-10:
+                    J[p] = self.f._finite_difference(c, ga, gb, self.f.active_controls[p]); continue
+                normal = (ft[3:] - ft[:3]) / dist
+                mj.mj_jac(m, dd, ja, None, ft[:3], int(m.geom_bodyid[ga])); mj.mj_jac(m, dd, jb, None, ft[3:], int(m.geom_bodyid[gb]))
+                J[p] = (normal @ (jb - ja)) @ self.f.expand
         rows = []
-        for p in np.nonzero(d < act)[0]:
+        for p in sel:
             g = np.zeros(self.n)
             for k, i in self.ctl: g[k] = J[p, i]
             rows.append((g, float(d[p])))

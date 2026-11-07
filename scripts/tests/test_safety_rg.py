@@ -4,6 +4,7 @@
  a default: safety_run.py --layers cbf_qp without --rg-pairs == BASE_TREE bitwise on 4 clips
  b gradients: RGCollision.near rows == central finite differences of RGCollision.distances (arm / waist joints) on near frames
  c HAND_CMD == RoboGesture's median hand command over its filtered generations (first 60 clips, every 3rd frame)
+ e fast path (broad phase, capped distances, early exit) == reference bitwise
  d live: on clips with RoboGesture penetration, cbf_qp --rg-pairs leaves no RoboGesture-penetrating and no G1 contact frame
    (except fallback frames, which are counted); the default cbf_qp output does not change on clips without either contact"""
 import json, os, subprocess, sys
@@ -75,4 +76,10 @@ for s in pen:
     npen += sum(bool((rg.distances(x) < 0).any()) for x in y); ncon += sum(g1.collides(x) for x in y)
 st = [json.loads(l) for l in open(SP / 'rg/cbf_qp/stats.jsonl')]; nfb = sum(int(r.get('fallback_frames', 0)) for r in st)
 ok('d --rg-pairs: no RoboGesture-penetrating / G1-contact frame beyond fallbacks', npen + ncon <= nfb, f'{nfr} frames: RG pen {npen}, G1 contact {ncon}, fallback {nfb}')
+# e (11-08) fast path (capped distances + bounding-sphere broad phase + early exit) == reference implementation bitwise
+from scmg.safety_rg import UnionCollision
+Lr = S.CBFQPLayer(S.Limits(), UnionCollision(S.G1Collision(), RGCollision(S.G1_JOINTS, fast=False)))
+Lf = S.CBFQPLayer(S.Limits(), UnionCollision(S.G1Collision(), RGCollision(S.G1_JOINTS, fast=True)))
+eq = all(np.array_equal(S.run_stream(Lr, load(E['RAW'], s), 10)[0], S.run_stream(Lf, load(E['RAW'], s), 10)[0]) for s in pen)
+ok('e fast RGCollision == reference, cbf_qp outputs bitwise (penetrating clips)', eq)
 print('ALL_OK' if not FAIL else f'SOME_FAIL {FAIL}'); sys.exit(1 if FAIL else 0)
