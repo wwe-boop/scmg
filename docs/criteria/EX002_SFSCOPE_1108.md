@@ -36,3 +36,10 @@ Matched control = enc-s0. Selection (frozen rule, as EX002_SWEEP_1107.md): czm-e
 (a) psync FGD v2 seed range entirely below, (b) offline FGD v2 mean <= 1.05 x, (c) psync FKD mean <= 1.10 x, (d) skipped steps
 <= 15 %, (e) the guards (1)-(5) in offline AND psync (means over seeds 0-2). If czm-enc-s0 fails but enc-s0 passes (e), enc-s0
 (current code, no causal match) is the base: the clean-code successor of sibag-s2. If neither passes, sibag-s2 stays interim.
+
+## Addition 2026-11-08 06:5x (coordinator check; written while enc-s0 trains, before any Gate 0 number is read)
+World size of the original runs: sibag-s0 / s1 / s2 (mainline-seeds-1104b, dlc14zvll7y68jfe) were single-process runs, one GPU per
+lane (5 lanes on 3 GPUs, batch 64 per process, no torchrun; log.txt has no rank / world lines), and the single-GPU retrain at
+2a81db6 (bisect) reproduced sibag-s0 to 4 decimals (flow 0.6411 / gn 0.662 / dev_flow 0.6699 / 0.6697 vs 0.6699 / 0.6696-0.6697).
+So the single-process 'encoders' emulation is the same recipe as the original; DDP support is not needed for this base and
+'encoders' refuses world > 1 (the None-grad / unused-parameter semantics under DDP were never exercised by the bug runs).
