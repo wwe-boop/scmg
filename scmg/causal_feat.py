@@ -476,10 +476,17 @@ def token_word_span(text, words, lang, tokenizer, n_tok, max_length=160):
     tokenisation: same call, special tokens removed). A token touching no word character (e.g. a lone '_') gets the
     next word (the previous one at the end)."""
     sep = ' ' if lang == 'en' else ''
-    if sep.join(w['text'] for w in words) != text: raise ValueError('item text != joined view words')
     spans, pos = [], 0
-    for w in words:
-        spans.append((pos, pos + len(w['text']))); pos += len(w['text']) + len(sep)
+    if sep.join(w['text'] for w in words) == text:          # the G1 views: the text IS the joined words (unchanged path)
+        for w in words:
+            spans.append((pos, pos + len(w['text']))); pos += len(w['text']) + len(sep)
+    else:                                                   # 11-07 EX002: the text carries punctuation / case the alignment
+        low = text.lower()                                  # units do not -> each unit located in order (case-insensitive)
+        for w in words:
+            u = w['text'].strip().lower()
+            j = low.find(u, pos) if u else -1
+            if j < 0: raise ValueError(f'item text != view words: {u!r} not found after {pos} in {text!r}')
+            spans.append((j, j + len(u))); pos = j + len(u)
     enc = tokenizer([text], truncation=True, max_length=max_length, return_offsets_mapping=True)
     ids, offs = enc['input_ids'][0], enc['offset_mapping'][0]
     sel = [j for j in range(len(ids)) if ids[j] not in tokenizer.all_special_ids]
