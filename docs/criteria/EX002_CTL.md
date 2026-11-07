@@ -74,3 +74,17 @@ Control = sibag-s2, mode none, seeds 0 / 1 / 2 on the 43 dev clips (control-toke
 FGD v2 91.13 / 87.15 / 95.32 (mean 91.20, SD 4.08), FKD 1.357 / 1.412 / 1.384; against the plan's commands (no tokens given):
 forearm STG 0.254 / 0.253 / 0.254, both-hands finger hit 0.056 / 0.051 / 0.060.
 δ = max(0.03 × 91.20, 2 × 4.08) = 8.17 → gate 3: FGD v2 ≤ 99.37 (mean of 3 seeds).
+
+## Lane 1 result (one line) and lane 2 (pre-registered 2026-11-07 19:40, before any lane-2 number)
+Lane 1 (ex002ctl, dlcbbo4y3r2de98k): STG given 0.574 vs none 0.301 (+0.273, passes; shuffle follows 0.582 vs 0.368), finger both-hands
+hit 0.602 (fails 0.9; shuffle follows 0.617 vs 0.065), FGD v2 given 230.0 / none 270.8 (fails, gate 99.37), FKD 2.73 vs 1.38.
+Diagnosis to test: the no-token run already degrades (270.8 vs 91.2), so the fine-tune RECIPE (self-forcing off, no BAgger,
+ctl_w 4, ctl_focus 0.5, w_ctl_aux 3) rather than the tokens moves the model off its distribution.
+Lane 2 (same plan / seeds / gates / δ):
+- rcp  : the sibag-s2 recipe (self_force_p 0.5 / steps 4 / rounds 1, BAgger share 0.33, semsynth 0.6), NO control modules, 2000
+         steps — tells whether 2000 more steps of the original recipe keep FGD v2 near the control;
+- ctl2 : the sibag-s2 recipe + control modules with light weights (ctl_w 1, w_ctl_aux 1, w_ctl_finger 1, ctl_focus 0.3,
+         counterfactual targets / counts 0.5, ctl lr x10), 2000 steps;
+- fo   : module 2 (finger override, pre-registered above) on ctl2 and on lane-1 ex002ctl, modes given / shuffle.
+Code change for lane 2: scmg/data.py collate pads the control arrays of windows without them (BAgger samples) — default path
+(no control tokens) unchanged.
