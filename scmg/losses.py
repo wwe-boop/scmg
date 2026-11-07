@@ -148,6 +148,16 @@ class StageCfg:
     # kept count token gets a different random count 0..4, the loss pulls toward it). ctl_count_thr = APEX.json action speed (m/s).
     w_ctl_count: float = 0.0
     ctl_cf_count_p: float = 0.0
+    # 11-07 duplex mode: COUNTERFACTUAL YIELD (default off; needs cfg ctl + batch ctl_* arrays + causal inputs). P(streaming covered
+    # sample) of an interrupt event at a stream-grid time t_y = k_y CHUNK + H inside the speech: a YIELD control token arrives at t_y
+    # (never dropped), from t_y on the audio is digital silence (causal_front rows [t_y, t_k) = the feat89 of digital silence, the
+    # prosody of the words ended by t_y, speaker grade capped at t_y), the words not ended by t_y are withdrawn, and the motion target
+    # after t_y is replaced by a critically damped retraction to the rest pose (waist + arms; legs / base held; 95 % at yield_rest_s);
+    # the bridge [t_y, t_y + yield_rest_s) is excluded from the flow / GT-reconstruction / aux losses (free, as ctlcf segments), the
+    # held rest pose after it is supervised. yield_human: human_ref json with rest.R_sil.joints (29).
+    yield_cf_p: float = 0.0
+    yield_rest_s: float = 1.4
+    yield_human: str = ''
     ctl_count_thr: float = 0.5918
     w_ctl_aux: float = 0.0         # pointing-ray loss on the decoded apex frame of kept POINT tokens: 1 - cos(elbow->wrist ray,
                                    # wrist->target), official FK (needs the decode path; weighted like w_cont by the noise level)
@@ -200,7 +210,7 @@ def causal_front_feat(batch, bi, Hb, K, horizons):
     return torch.where(keep, fk, torch.zeros_like(fk))
 
 
-def causal_front_tokens(model, batch, a, stream, H, drop_audio, K, horizons, tfocus):
+def causal_front_tokens(model, batch, a, stream, H, drop_audio, K, horizons, tfocus, ycf=None):
     """Training-matched audio tokens (StageCfg.causal_front): [B, K, N, d], row k of a streaming sample with causal inputs
     = the causal encoder on chunk k's own prefix input (cz_feat with the FRONT_COLS of cz_pro at t_k, rows >= t_k zero --
     what Streamer feeds the encoder at tick k); other samples keep their shared tokens. Same audio dropout / text-focus."""
@@ -210,6 +220,7 @@ def causal_front_tokens(model, batch, a, stream, H, drop_audio, K, horizons, tfo
     if not bool(sel.any()): return a4
     bi = sel.nonzero()[:, 0]; Bs = bi.numel(); dev = a.device
     fk = causal_front_feat(batch, bi, H[bi], K, horizons)
+    if ycf is not None: fk = yield_silence(fk, batch, bi, H[bi], K, horizons, ycf)
     if tfocus: fk[..., :80] = 0.
     ak = model.audio_tokens(fk.flatten(0, 1), torch.ones(Bs * K, dtype=torch.bool, device=dev)).view(Bs, K, N, -1)
     ak = torch.where(drop_audio[bi][:, None, None, None], model.audio_null.to(ak.dtype).expand_as(ak), ak)
@@ -217,11 +228,12 @@ def causal_front_tokens(model, batch, a, stream, H, drop_audio, K, horizons, tfo
     return a4
 
 
-def causal_spk_select(batch, H, K):
+def causal_spk_select(batch, H, K, t_cap=None):
     """Prefix speaker grade of chunk k: (spk [B, K, 192], spk_valid [B, K], grade [B, K] (-1 = none available)) --
     the grade with the largest availability frame cz_spkt <= t_k (clip frames), ties -> the prefix grade."""
     B = H.shape[0]; dev = H.device; ar = torch.arange(B, device=dev)[:, None]
     tk = batch['start'][:, None] + (torch.arange(K, device=dev)[None] * CHUNK + torch.clamp(H, max=10 ** 6)[:, None]) * STRIDE
+    if t_cap is not None: tk = torch.minimum(tk, batch['start'][:, None] + t_cap[:, None])     # 11-07 yield: no speech after t_y
     av = batch['cz_spkt']                                                             # [B, 5]
     can = av[:, None, :] <= tk[..., None]                                             # [B, K, 5]
     score = torch.where(can, av[:, None, :] * 2 + (torch.arange(5, device=dev) < 4).long(), torch.full_like(can, -1, dtype=torch.long))
@@ -230,13 +242,13 @@ def causal_spk_select(batch, H, K):
     return spk, batch['cz_spkv'][ar, jsel] * has.float(), torch.where(has, jsel, torch.full_like(jsel, -1))   # speaker (zeros, 0)
 
 
-def causal_spk_cond(model, batch, stream, H, drop_spk, src, K, sc=None):
+def causal_spk_cond(model, batch, stream, H, drop_spk, src, K, sc=None, t_cap=None):
     """Per-chunk global condition [B, K, d] (StageCfg.causal_spk): streaming chunk k of a covered sample uses the prefix
     CAM++ grade with the largest availability frame <= t_k (clip frames; ties -> the prefix grade, whose value is the
     inference one; none -> empty speaker, spk_valid 0); everything else the original speaker. drop_spk applies on top."""
     B = stream.shape[0]
     use = (stream & batch['cz_ok'].bool())[:, None].expand(B, K)
-    spk_c, val_c, _ = causal_spk_select(batch, H, K)
+    spk_c, val_c, _ = causal_spk_select(batch, H, K, t_cap)
     if sc is not None and sc.spk_empty_mean:
         if 'cz_spkmean' not in batch: raise ValueError('spk_empty_mean needs SPK_MEAN.npy in the causal precompute')
         empty = val_c < .5
@@ -245,6 +257,102 @@ def causal_spk_cond(model, batch, stream, H, drop_spk, src, K, sc=None):
     val = torch.where(use, val_c, batch['spk_valid'][:, None].expand(B, K)) * (~drop_spk)[:, None].float()
     g = model.global_cond(spk.reshape(B * K, -1), val.reshape(B * K), src.repeat_interleave(K))
     return g.view(B, K, -1)
+
+
+_YREST = {}
+
+
+def yield_silence(fk, batch, bi, Hb, K, horizons, ycf):
+    """11-07 counterfactual yield: chunk k of a cf sample with t_k > t_y sees rows < t_y with the prosody of the prefix at t_y (cz_pro
+    row of t_y), rows [t_y, t_k) = digital silence (normalised SIL feat89), rows >= t_k zero (not arrived, as before)."""
+    from .causal_feat import FRONT_COLS
+    on = ycf['on'][bi]
+    if not bool(on.any()): return fk
+    dev = fk.device; T = fk.shape[2]; ly = ycf['ly'][bi]                                          # [Bs] latents
+    lat = torch.arange(K, device=dev)[None] * CHUNK + Hb[:, None]                                 # t_k (latents)
+    after = on[:, None] & (lat > ly[:, None])                                                     # [Bs, K]
+    j = _stream_lut(K, horizons, dev)[ly.clamp(min=0)]
+    if bool((j[on] < 0).any()): raise ValueError('yield time outside the cz_pro grid')
+    fk = fk.clone(); rows = torch.arange(T, device=dev)
+    pre = (rows[None, None] < (ly * STRIDE)[:, None, None]) & after[..., None]                    # [Bs, K, T]
+    sil = (rows[None, None] >= (ly * STRIDE)[:, None, None]) & (rows[None, None] < (lat * STRIDE)[..., None]) & after[..., None]
+    pro = batch['cz_pro'][bi, j.clamp(min=0)]                                                     # [Bs, T, 9]
+    cols = list(FRONT_COLS)
+    fp = fk[..., cols]; fk[..., cols] = torch.where(pre[..., None], pro[:, None].to(fk.dtype), fp)
+    fk = torch.where(sil[..., None], ycf['sil'].to(fk.dtype), fk)
+    return fk
+
+
+def yield_cf_prepare(model, vae, batch, sc, stats, stream, H, K, x1, q):
+    """draw the counterfactual-yield samples and rewrite their batch rows (q, x1, text mask, control tokens); returns (batch, q, x1, ycf)."""
+    from .ctl import YIELD, NV, NVM
+    from .causal_feat import WORD_EPS
+    dev = q.device; B, T, Jn = q.shape; N = T // STRIDE
+    if not getattr(model.cfg, 'ctl', False): raise ValueError('yield_cf_p needs cfg ctl')
+    if 'ctl_type' not in batch or 'cz_ok' not in batch: return batch, q, x1, None     # e.g. the dev-loss batches: no counterfactual
+    if not sc.yield_human: raise ValueError('yield_cf_p needs yield_human (rest pose)')
+    if sc.yield_human not in _YREST:
+        import json as _j
+        from .common import P as _P
+        from pathlib import Path as _Pa
+        _YREST[sc.yield_human] = torch.tensor(_j.loads(_Pa(_P(sc.yield_human)).read_text())['rest']['R_sil']['joints'], dtype=torch.float32)
+    rest = _YREST[sc.yield_human].to(dev)
+    nb = int(round(sc.yield_rest_s * 50 / STRIDE))                                                # bridge latents
+    nval = (batch['mask'].view(B, N, STRIDE).min(-1).values > .5).sum(1)                          # valid latents
+    Hl = torch.clamp(H, max=10 ** 6)
+    kmax = torch.div(nval - Hl - nb - CHUNK, CHUNK, rounding_mode='floor')                        # t_y + bridge + a chunk inside the clip
+    elig = stream & batch['cz_ok'].bool() & (kmax >= 1)
+    on = elig & (torch.rand(B, device=dev) < sc.yield_cf_p)
+    ky = 1 + (torch.rand(B, device=dev) * kmax.clamp(min=1).float()).long().clamp(max=10 ** 6)
+    ky = torch.minimum(ky, kmax.clamp(min=1))
+    ly = torch.where(on, ky * CHUNK + Hl, torch.full_like(ky, -1))                                # yield time (window latents)
+    if not bool(on.any()):
+        return batch, q, x1, None
+    batch = dict(batch)
+    fy = ly * STRIDE; ts = fy.float() / 50.                                                       # window frame / s
+    # motion: critically damped retraction from the frame before t_y (infer_retract._targets rule)
+    qm, qs = stats['qm'].to(dev), stats['qs'].to(dev)
+    qp = q.float() * qs + qm; qn = q.clone()
+    up = list(range(22, 39)); wn = 4.744 / max(sc.yield_rest_s, 1e-3)
+    for b in on.nonzero()[:, 0].tolist():
+        f0 = int(fy[b]); q0 = qp[b, f0 - 1]; v0 = (qp[b, f0 - 1] - qp[b, f0 - 2]) * 50.
+        tt = torch.arange(1, T - f0 + 1, device=dev).float()[:, None] / 50.
+        e = q0 - torch.cat([q0[:10], rest])
+        tr = q0[None].repeat(T - f0, 1)
+        upv = torch.cat([q0[:10], rest])[None] + (e + (v0 + wn * e) * tt) * torch.exp(-wn * tt)
+        tr[:, up] = upv[:, up]; tr[:, 6:10] = 0.
+        qn[b, f0:] = ((tr - qm) / qs).to(q.dtype)
+    with torch.no_grad():
+        mu, _ = vae.encode(qn[on])
+    x1 = x1.clone(); x1[on] = (mu - model.lat_mean) / model.lat_std
+    batch['q'] = qn
+    # text: words not ended by t_y are withdrawn (whole window, as Streamer after the interruption)
+    if 'cz_tend' in batch:
+        keep = torch.nan_to_num(batch['cz_tend'], nan=1e9) <= ts[:, None] + WORD_EPS
+        batch['tmask'] = torch.where(on[:, None], batch['tmask'] & keep, batch['tmask'])
+    # control token: YIELD at t_y in the first free slot (never dropped)
+    ct = batch['ctl_type'].clone(); free = (ct == 0)
+    slot = torch.where(free.any(1), free.float().argmax(1), torch.full_like(ct[:, 0], ct.shape[1] - 1))
+    ar = torch.arange(B, device=dev)
+    put = torch.zeros_like(free); put[ar[on], slot[on]] = True
+    for k_, val in (('ctl_t', ts), ('ctl_a', ts), ('ctl_b', ts + sc.yield_rest_s)):
+        x = batch[k_].clone(); x[put] = val[:, None].expand_as(x)[put].to(x.dtype); batch[k_] = x
+    x = batch['ctl_apex'].clone(); x[put] = float('nan'); batch['ctl_apex'] = x
+    ct[put] = YIELD; batch['ctl_type'] = ct
+    g_ = batch['ctl_g'].clone(); g_[put] = 0; batch['ctl_g'] = g_
+    for k_ in ('ctl_v', 'ctl_vm'):
+        x = batch[k_].clone(); x[put] = 0.; batch[k_] = x
+    sil = ycf_sil(stats, dev)
+    ycf = dict(on=on, ly=ly, nb=nb, cap=torch.where(on, fy, torch.full_like(fy, 10 ** 9)), put=put, sil=sil)
+    return batch, qn, x1, ycf
+
+
+def ycf_sil(stats, dev):
+    """normalised feat89 row of digital silence (infer_interrupt SIL_RAW: logmel log(1e-6), prosody 0)."""
+    import numpy as _np
+    raw = _np.concatenate([_np.full(80, _np.log(1e-6)), _np.zeros(9)]).astype(_np.float32)
+    fm = _np.asarray(stats['fm_raw'], _np.float32); fsd = _np.asarray(stats['fs_raw'], _np.float32)
+    return torch.as_tensor((raw - fm) / fsd, device=dev)
 
 
 def step_losses(model, vae, batch, sc: StageCfg, stats):
@@ -287,6 +395,10 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         stream = r(sc.p_stream); asy = torch.zeros_like(stream)
     hz = U80 * torch.tensor(sc.horizons, device=dev)[torch.randint(len(sc.horizons), (B,), device=dev)]
     H = torch.where(stream, hz, torch.full_like(hz, INF))
+    ycf = None
+    if sc.yield_cf_p > 0:                 # 11-07 counterfactual yield (default off: no draw, nothing changes)
+        batch, q, x1, ycf = yield_cf_prepare(model, vae, batch, sc, stats, stream, H, K, x1, q)
+        lat_k = x1.view(B, K, CHUNK, -1)
     if not sc.sel_audio_premask:  # keep the default execution / RNG order unchanged
         a = model.audio_tokens(feat, stream, batch.get('tts_h'), batch.get('tts_hm'))
         a = torch.where(drop_audio[:, None, None], model.audio_null.expand_as(a), a)
@@ -321,7 +433,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     if sc.causal_front and 'cz_pro' in batch:
         if sc.sel_audio_premask or getattr(cfg, 'tts_h', False):
             raise ValueError('causal_front: not implemented with sel_audio_premask / tts_h')
-        a = causal_front_tokens(model, batch, a, stream, H, drop_audio, K, sc.horizons, tfocus)
+        a = causal_front_tokens(model, batch, a, stream, H, drop_audio, K, sc.horizons, tfocus, ycf)
     dtime = r(cfg.drop_time)
     text, tmask = model.text_tokens(batch['text'], batch['ttime'], batch['tmask'] & ~drop_text[:, None], drop=dtime)
     tsec = model.token_seconds(batch['ttime'], dtime)                                # flow_text_xattn: usable token times
@@ -385,6 +497,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             ct = ct + jm.float() * (torch.rand(ct.shape, device=dev) * 2 - 1) * sc.ctl_t_jitter
         gdrop = torch.stack([r(sc.ctl_drop), r(sc.ctl_drop)], 1)                    # annotation / lexical groups dropped independently
         cm = (batch['ctl_type'] > 0) & torch.isfinite(ct) & ~torch.gather(gdrop, 1, batch['ctl_g'].long().clamp(0, 1))
+        if ycf is not None: cm = cm | ycf['put']                                    # 11-07: a counterfactual YIELD is never dropped
         cvm = batch['ctl_vm'].float()
         if sc.ctl_field_drop > 0: cvm = cvm * (torch.rand(cvm.shape, device=dev) >= sc.ctl_field_drop).float()
         cval = batch['ctl_v'].float(); cf = None
@@ -409,6 +522,9 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         nowk = torch.arange(K, device=dev).float() * CHUNK_FRAMES / 50.
         if sc.p_async > 0:                # arrives with the word it is attached to; time known once voiced (streaming samples)
             arr_c = anchor_arrival(arr, batch['ttime'], tvalid, ct)
+            if ycf is not None or sc.yield_cf_p > 0:                              # 11-07: YIELD = an event, it arrives at its own time
+                from .ctl import YIELD
+                arr_c = torch.where(batch['ctl_type'] == YIELD, torch.nan_to_num(ct, 0.).float(), arr_c)
             if sc.ctl_lookahead > 0:
                 g0 = batch['ctl_g'] == 0
                 arr_c = torch.where(g0, torch.minimum(arr_c, torch.nan_to_num(ct, 0.).float() - sc.ctl_lookahead), arr_c)
@@ -445,7 +561,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     src = torch.where(r(0.1), torch.zeros_like(batch['source']), batch['source'])
     g = model.global_cond(batch['spk'], batch['spk_valid'] * (~drop_spk), src)
     if sc.causal_spk and 'cz_spk' in batch:
-        g = causal_spk_cond(model, batch, stream, H, drop_spk, src, K, sc)
+        g = causal_spk_cond(model, batch, stream, H, drop_spk, src, K, sc, t_cap=None if ycf is None else ycf['cap'])
 
     # ---- state simulation (stage 4): replaces targets of the selected chunks by recovery trajectories
     seg_q, seg_valid = segments(q, K, CHUNK_FRAMES * 3, CHUNK_FRAMES)                # [B, K, 64, J] normalised
@@ -645,6 +761,16 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         a_, b_ = batch['ctl_a'].float(), batch['ctl_b'].float(); q_ = ctl['qsec'][None, :, :, None]
         ins_cf = ((q_ >= (a_ - 0.3)[:, None, None]) & (q_ <= (b_ + 0.3)[:, None, None]) & ctl['cf'][:, None, None]).any(-1)
         sup = sup & ~ins_cf.flatten(0, 1)
+    ybr = ybr_f = None
+    if ycf is not None:                   # 11-07 counterfactual yield: the bridge [t_y, t_y + rest) has no target
+        bb_ = torch.arange(B, device=dev).repeat_interleave(K)
+        gl_ = (kk * CHUNK - cfg.ctx)[:, None] + torch.arange(L, device=dev)[None]                     # window latent of each position
+        ly_ = ycf['ly'][bb_][:, None]
+        ybr = ycf['on'][bb_][:, None] & (gl_ >= ly_) & (gl_ < ly_ + ycf['nb'])                       # [M, L]
+        sup = sup & ~ybr
+        fr_ = (kk - 1)[:, None] * CHUNK_FRAMES + torch.arange(2 * CHUNK_FRAMES, device=dev)[None]     # window frame of [ctx | target]
+        ybr_f = ycf['on'][bb_][:, None] & (fr_ >= ly_ * STRIDE) & (fr_ < (ly_ + ycf['nb']) * STRIDE)  # [M, 2 CF]
+        out_y = dict(yield_cf_n=ycf['on'].float().sum())
     err = (v - (x1i - noise)).square().mean(-1)
     ilab = None
     if 'intent' in batch and (sc.w_int > 0 or sc.sem_w > 0):
@@ -669,6 +795,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     else:
         flow = (err * sup).sum() / sup.sum().clamp(min=1)
     out = dict(flow=flow, self_forced=torch.tensor(out_sf, device=dev))
+    if ycf is not None: out.update(out_y)
     if sc.ogm_alpha > 0:
         if cfg.mtc or cfg.planner != 'chunk': raise ValueError('ogm_alpha: chunk planner without mtc only')
         with torch.no_grad():
@@ -696,6 +823,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     aux = (model.p_aux(h) - lat_k.flatten(-2)).square().mean(-1)
     cm = lmask.view(B, K, CHUNK).all(-1).float()
     if supervise is not None: cm = cm * supervise
+    if ycf is not None: cm = cm * (~ybr.view(B, K, L)[:, :, cfg.ctx:].any(-1)).float()                # no aux target in the bridge
     out['aux'] = (aux * cm).sum() / cm.sum().clamp(min=1)
     loss = out['flow'] + sc.w_aux * out['aux'] + (sc.w_tdelta * out['tdelta'] if sc.w_tdelta > 0 else 0.)
     vaux = getattr(getattr(model, 'vox', None), '_aux', None) or {}
@@ -772,6 +900,8 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             [has_ctx[:, None].float().expand(M, CHUNK_FRAMES), tgt_valid.float().repeat_interleave(STRIDE, 1)], 1)
         fv = fv * (kk.view(M) >= 4).float()[:, None]                                  # needs 4 chunks of history
         if supervise is not None: fv = fv * supervise.reshape(M, 1)
+        fv_all = fv
+        if ybr_f is not None: fv = fv * (~ybr_f).float()                              # 11-07 yield bridge: no GT reconstruction there
         w_inst = t[:, -1]                                                             # trust low-noise estimates more
         dw = None
         if sc.dim_mask:
@@ -789,7 +919,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             from .common import EMBODIMENT
             if EMBODIMENT != 'g1': raise ValueError('StageCfg.w_safe is the G1 executable-contract term (SCMG_J=39)')
             from .g1_safety import contract_loss
-            sf = contract_loss(y.float() * qs + qm, fv * w_inst[:, None])
+            sf = contract_loss(y.float() * qs + qm, fv_all * w_inst[:, None])   # the executable contract holds in the bridge too
             out.update(sf); loss = loss + sc.w_safe * (sf['safe_lim'] + sf['safe_lr'] + sc.safe_torso_w * sf['safe_torso'])
         if sc.w_ctl_aux > 0 and ctl is not None:
             out.update(ctl_ray_loss(y.float() * qs + qm, batch, ctl, fv * w_inst[:, None], B, K))

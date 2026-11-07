@@ -228,7 +228,7 @@ class View:
         if intent_frames is not None or tok_intent is not None:
             raise ValueError(f'intent tracks / word intent labels exist for EX002 only (view {v.name}, embodiment {EMBODIMENT})')
 
-    def load_causal(self, d, horizons, check_spk=True):
+    def load_causal(self, d, horizons, check_spk=True, allow_extended=False):
         """Training-matched causal inputs (precompute_causal.py output; 11-05). horizons = StageCfg.horizons (80 ms units):
         the stream times of a window whose prefix prosody columns every sample carries (causal_feat.stream_lat_grid).
         Checks (check_spk, off only for tests on perturbed audio): the 'full' speaker grade of up to 64 covered clips equals
@@ -241,6 +241,11 @@ class View:
                            spkv=np.load(d / 'SPK_VALID.npy'), units=np.load(d / 'UNITS.npy'), tend=np.load(d / 'TOKEN_END.npy'),
                            horizons=tuple(int(h) for h in horizons), meta=meta)
         ids = [c['items'][0]['id'] for c in self.clips if len(c['items']) == 1]
+        if allow_extended:                # 11-07 duplex: clips extended past their precompute (post-speech tails) -> not covered
+            fr = {c['items'][0]['id']: c['frames'] for c in self.clips if len(c['items']) == 1}
+            ext = {i for i in ids if i in self.causal['index'] and self.causal['index'][i]['feat'][4][1] and self.causal['index'][i]['feat'][4][1] != fr[i]}
+            self.causal['index'] = {k: v for k, v in self.causal['index'].items() if k not in ext}
+            self.causal['extended_dropped'] = len(ext)
         cov = [i for i in ids if i in self.causal['index']]
         nchk = nmel = 0
         F = np.load(d / 'FEAT_PREFIX.npy', mmap_mode='r') if (d / 'FEAT_PREFIX.npy').exists() else None
@@ -464,7 +469,7 @@ class WindowDataset(torch.utils.data.IterableDataset):
             extra['gest'] = np.where(il >= 0, v.gest_lut[np.clip(il, 0, None)], -1).astype(np.int16)   # coarse g_k frame labels
         if getattr(v, 'gest', None) is not None:      # [T] int16: -1 unknown / 0 none / 1.. coarse class (past the clip end -1)
             gl = np.full(T, -1, np.int16); gl[:n] = v.gest[a:a + n]; extra['gest'] = gl
-        if getattr(v, 'floor', None) is not None:       # [T] floor per frame (0 speaking, 1 hold, 2 yield; 0 past the clip end)
+        if getattr(v, 'floor', None) is not None and getattr(v, 'floor_aend', True):   # [T] floor per frame (0 speaking, 1 hold, 2 yield)
             fl = np.zeros(T, np.int64); fl[:n] = v.floor[a:a + n]; extra['floor'] = fl
             extra['aend'] = np.int64(int(np.argmax(fl[:n] > 0)) if (n and fl[:n].max() > 0) else n)   # audio frames of the window
         if getattr(v, 'ctl', None) is not None:        # control tokens of the window's items (window-relative s)

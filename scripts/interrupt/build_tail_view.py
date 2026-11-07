@@ -30,11 +30,13 @@ ap = argparse.ArgumentParser()
 ap.add_argument('--base', required=True); ap.add_argument('--hos', required=True); ap.add_argument('--tails', required=True)
 ap.add_argument('--human', required=True); ap.add_argument('--stats', required=True); ap.add_argument('--out', required=True)
 ap.add_argument('--variant', required=True, choices=['labelled', 'yield']); ap.add_argument('--fade', type=float, default=0.3)
+ap.add_argument('--tail-feat', default='mean', choices=['mean', 'silence'], help="11-07 duplex: tail feat rows = f_mean (old) or the feat89 of digital silence (a pause)")
 a = ap.parse_args()
 base, out = Path(a.base), Path(a.out)
 items = json.loads((base / 'train.json').read_text())
 q = np.load(base / 'train_q.npy', mmap_mode='r'); f = np.load(base / 'train_feat.npy', mmap_mode='r')
 fm = np.asarray(json.loads(Path(a.stats).read_text())['f_mean'], np.float32)
+SILROW = np.concatenate([np.full(80, np.log(1e-6)), np.zeros(9)]).astype(np.float32)   # infer_interrupt SIL_RAW (raw feat89 of digital silence)
 rest_z = np.array(json.loads(Path(a.human).read_text())['rest']['R_sil']['hand_z'])
 hos = json.loads((Path(a.hos) / 'HOS.json').read_text())
 EXCL = {s.split('_', 1)[1] for s in hos['speakers']} | {'1_wayne', '3_solomon', '21_ayana'}   # dev held-out + val_common
@@ -73,7 +75,7 @@ for it in items:
         ch = np.r_[0:39]                                                   # rot6d, yaw rate, base velocity, joints
         jump = qi[-1, ch] - g1.to50(t['rr'][t['off'] - 3:t['off'] + 3])[5, ch] if len(qi) else 0.
         r50[:, ch] += w * jump
-        qi = np.concatenate([qi, r50.astype(np.float32)]); fi = np.concatenate([fi, np.repeat(fm[None].astype(fi.dtype), len(r50), 0)])
+        qi = np.concatenate([qi, r50.astype(np.float32)]); fi = np.concatenate([fi, np.repeat((SILROW if a.tail_feat == 'silence' else fm)[None].astype(fi.dtype), len(r50), 0)])
         fl = np.concatenate([fl, np.full(len(r50), t['floor'], np.int8)])
         n_ext[t['kind']] += 1
         it = dict(it, frames=len(qi), tail=dict(id=t['id'], kind=t['kind'], floor=t['floor'], frames=len(r50), speech_frames=n))
@@ -87,7 +89,7 @@ for name in ('cond', 'alignments', 'test', 'FROZEN.json', 'labels.jsonl', 'META.
     p = out / name
     if not p.exists(): os.symlink(base / name, p)
 info = dict(variant=a.variant, tails=dict(lab), extended=dict(n_ext), skipped=dict(skipped), rows=off, excluded_speakers=sorted(EXCL),
-            base=str(base), tails_dir=str(a.tails), fade_s=a.fade, audio_after_offset='none (feat = f_mean, aend marks the offset)')
+            base=str(base), tails_dir=str(a.tails), fade_s=a.fade, audio_after_offset=('digital silence (feat89 of zero PCM)' if a.tail_feat == 'silence' else 'none (feat = f_mean, aend marks the offset)'))
 (out / 'TAIL.json').write_text(json.dumps(info, indent=1))
 hv = Path(str(out) + '-hos'); hv.mkdir(exist_ok=True)
 for name in ('train_q.npy', 'train_feat.npy', 'FLOOR.npy', 'train.json', 'cond', 'alignments', 'test', 'FROZEN.json', 'labels.jsonl', 'META.json', 'TAIL.json'):

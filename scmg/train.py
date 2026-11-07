@@ -204,6 +204,9 @@ def main():
     ap.add_argument('--gest-frames', default=None, help='direct coarse g_k frame track (scripts/semantic/g1_gest_frames.py); train split only')
     ap.add_argument('--floor-frames', default=None, help='floor track of a post-speech tail view (scripts/interrupt/build_tail_view.py); train split only')
     ap.add_argument('--tail-share', type=float, default=0., help='share of windows drawn around a tail clip speech offset')
+    ap.add_argument('--tail-no-aend', action='store_true', help='11-07 duplex: tails are a PAUSE (silence rows, audio not final): no aend / floor keys')
+    ap.add_argument('--causal-allow-extended', action='store_true', help='11-07 duplex: clips extended past the causal precompute (tails) stay uncovered')
+    ap.add_argument('--causal-min-cov', type=float, default=0.99)
     ap.add_argument('--ctl-tokens', default=None, help='control tokens (scripts/semantic/g1_ctl_tokens.py) of the train split; needs cfg ctl')
     ap.add_argument('--ctl-focus', type=float, default=0., help='P(train window placed around an annotation control token)')
     ap.add_argument('--ret', default=None, help='retrieval dir[:query file] (scripts/semantic/g1_ret_bank.py; default query RET_train.json); needs cfg ret')
@@ -229,6 +232,7 @@ def main():
     view = View(a.view, 'train', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache, tts_hidden=a.tts_hidden,
                 intent_frames=a.intent_frames, holdout=a.holdout, tok_intent=a.tok_intent, bagger_dir=a.bagger_dir,
                 gest_frames=a.gest_frames, floor_frames=a.floor_frames, **({} if not a.ctl_tokens else dict(ctl_tokens=a.ctl_tokens)), **({} if not a.ret else dict(ret=a.ret)))
+    if a.tail_no_aend: view.floor_aend = False                                    # 11-07 duplex: tails are a pause, not an audio end
     dview = View(a.view, 'val', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache, tts_hidden=a.tts_hidden)
     if a.overfit:
         overfit_clips(view, a.overfit); dview = view
@@ -241,8 +245,8 @@ def main():
         _cz = _sc0.causal_front or _sc0.causal_spk or _sc0.causal_text
         if _cz and not a.causal_dir: raise SystemExit('--sc causal_front / causal_spk / causal_text need --causal-dir')
         if a.causal_dir:
-            cov = view.load_causal(a.causal_dir, _sc0.horizons)
-            if cov < 0.99: raise SystemExit(f'--causal-dir covers only {cov:.1%} of the train clips')
+            cov = view.load_causal(a.causal_dir, _sc0.horizons, **({'allow_extended': True} if a.causal_allow_extended else {}))
+            if cov < a.causal_min_cov: raise SystemExit(f'--causal-dir covers only {cov:.1%} of the train clips')
     ds = WindowDataset(view, a.frames, seed=a.seed * 1000 + rank, semsynth_share=a.semsynth_share, bagger_share=a.bagger_share,
                        tail_share=a.tail_share, **({'p_start0': a.p_start0} if a.p_start0 > 0 else {}),
                        **({} if not a.ctl_focus else dict(ctl_focus=a.ctl_focus)))
@@ -250,6 +254,7 @@ def main():
                                           persistent_workers=a.workers > 0, prefetch_factor=4 if a.workers else None))
     dev_ds = WindowDataset(dview, a.frames, seed=12345, fixed=fixed_windows(dview, a.frames))
     st = dict(qm=torch.tensor(stats['q_mean'], device=dev), qs=torch.tensor(stats['q_std'], device=dev))
+    st.update(fm_raw=stats['f_mean'], fs_raw=stats['f_std'])          # 11-07: raw feat89 normalisation (yield_cf silence row)
     if rank == 0: (out / 'ARGS.json').write_text(json.dumps(vars(a), indent=1))
 
     # ------------------------------------------------------------ model

@@ -115,6 +115,8 @@ class Streamer:
         # nothing below changes. cfg_ctl None: the tokens are part of the conditional branch of the existing CFG; a number: a
         # separate guidance term cfg_ctl * (v(with tokens) - v(without tokens)) on top of it (one more Local Flow pass).
         self.has_ctl = bool(getattr(model.cfg, 'ctl', False)) and 'ctl_type' in self.cond
+        from .ctl import YIELD as _YID
+        self._yield_id = _YID
         self.has_ret = bool(getattr(model.cfg, 'ret', False)) and 'ret_t' in self.cond      # 11-06 retrieved exemplars (same CFG group)
         self.cfg_ctl = cfg_ctl if (self.has_ctl or self.has_ret) else None
         if self.cfg_ctl is not None and model.cfg.mtc: raise ValueError('cfg_ctl is not implemented for mtc models')
@@ -289,6 +291,8 @@ class Streamer:
             nowc = torch.arange(W, device=self.dev).float() * CHUNK_FRAMES / 50.
             arr_c = (anchor_arrival((self.arr_text - f0 / 50.)[None], tt[None].float(), c['tmask'][None].bool(), ctl_tt)
                      if (self.arr_text is not None and self.text_mode != 'final') else ctl_tt)
+            if bool((c['ctl_type'] == self._yield_id).any()):         # 11-07 duplex: a YIELD event arrives at its own time
+                arr_c = torch.where((c['ctl_type'] == self._yield_id)[None], ctl_tt, arr_c)
             heard_c = (nowc + (self.H * STRIDE / 50. if self.H < INF else 1e9))[None]
             stream_c = torch.tensor([bool((self.deploy_timing or adsc_m) and self.H < INF)], device=self.dev)
             if self.ctl_lookahead > 0:

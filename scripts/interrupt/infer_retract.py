@@ -87,9 +87,11 @@ def clip_seed(seed, mode, stem):
 class RetractStreamer(Streamer):
     def __init__(self, *args, t_int=None, keep_tok=None, audio='end', fm=None, fs=None, n_total=None, restart='chunk',
                  react_delay=0.04, retract=None, rest=None, tr=1.0, w=1.0, splice=0, w0=0., prefix=None, floor=0, guide=0.,
-                 comp=None, diff=0., fresh_feat=None, **kw):
+                 comp=None, diff=0., fresh_feat=None, yield_token=False, **kw):
         super().__init__(*args, **kw)
         self.fresh_feat = fresh_feat      # psync: () -> a new CausalInputs of the clip (feat after the interruption)
+        self.yield_token = yield_token    # 11-07 duplex: a YIELD control token arrives at t_i (models trained with yield_cf)
+        if yield_token and not getattr(self.m.cfg, 'ctl', False): raise ValueError('--yield-token needs a model with cfg ctl')
         self.t_int, self.keep_tok, self.audio, self.n_total = t_int, keep_tok, audio, n_total
         self.sil = None if fm is None else torch.as_tensor((SIL_RAW - fm) / fs, device=self.dev).float()
         self.restart, self.delay, self.retract, self.rest, self.tr, self.w = restart, react_delay, retract, rest, tr, w
@@ -155,6 +157,17 @@ class RetractStreamer(Streamer):
             sil = self.audio == 'silence'
             fr = self.fresh_feat(silence_from=n50, T=sh + self.feat.shape[0], t_words=self.t_int) if sil else self.fresh_feat()
             self.causal = PostInterrupt(self.causal, fr, n50, sh, self.feat.shape[0], silence=sil)
+        if self.yield_token:              # the interrupt event as a control token (no values) at t_i on the re-based clock
+            from scmg.ctl import YIELD, NV, NVM
+            ty_ = torch.tensor([YIELD], device=self.dev); t_ = torch.tensor([self.t_int - o * STRIDE / 50.], device=self.dev).float()
+            v_ = torch.zeros(1, NV, device=self.dev); m_ = torch.zeros(1, NVM, device=self.dev)
+            c = self.cond
+            if 'ctl_type' in c:
+                c['ctl_type'] = torch.cat([c['ctl_type'].long(), ty_]); c['ctl_v'] = torch.cat([c['ctl_v'].float(), v_]); c['ctl_vm'] = torch.cat([c['ctl_vm'].float(), m_])
+                c['ctl_t'] = torch.cat([c['ctl_t'].float() - (o * STRIDE / 50.), t_])
+            else:
+                c['ctl_type'], c['ctl_v'], c['ctl_vm'], c['ctl_t'] = ty_, v_, m_, t_
+            self.has_ctl = True
         self.o = o
         self.frames = frames; self.n_emitted = len(frames)
         if self.floor: self.floor_k0 = self.k                   # chunk index in the (possibly re-based) clock
@@ -356,6 +369,7 @@ def main():
     ap.add_argument('--text-causal', default=None); ap.add_argument('--x2-rate', type=float, default=15.0); ap.add_argument('--x2-lag', type=float, default=0.15)
     ap.add_argument('--wav-dir', default=None); ap.add_argument('--words-dir', default=None); ap.add_argument('--pstats', default=None)
     ap.add_argument('--campplus', default='/home/xr-25b7/bulk/models-ro/campplus'); ap.add_argument('--asr-lag', type=float, default=0.5)
+    ap.add_argument('--yield-token', action='store_true', help='11-07 duplex: a YIELD control token at t_i (models trained with yield_cf_p)')
     ap.add_argument('--record-plan', action='store_true', help='end head: save the post-interruption conditional planner outputs (<name>.plan.npz)')
     ap.add_argument('--plan-noise', type=float, default=0., help='end-head label collection: N(0, s) on the planner history latents after the interruption')
     ap.add_argument('--spk-refresh', default='tick', choices=['tick', 'grades']); ap.add_argument('--causal-feat', default='prefix', choices=['prefix', 'inc'])
@@ -438,7 +452,7 @@ def main():
                                                          a.x2_rate, a.x2_lag, a.asr_lag), np.asarray(cond['tword'], np.int64)) & np.asarray(s['tmask'], bool)
             else:
                 keep = spoken_tokens(s['ttime'], s['tmask'], words[stem], t_i)
-            ikw = dict(t_int=t_i, keep_tok=keep, audio=a.audio, fm=fm, fs=fs, n_total=n_run * CHUNK_FRAMES, restart=a.restart,
+            ikw = dict(yield_token=a.yield_token, t_int=t_i, keep_tok=keep, audio=a.audio, fm=fm, fs=fs, n_total=n_run * CHUNK_FRAMES, restart=a.restart,
                        react_delay=a.react_delay, retract=a.retract, rest=rest39, tr=a.tr, w=a.w, w0=a.w0, splice=a.splice, floor=a.floor, guide=a.yield_guide,
                        prefix=(f"{a.prefix_feats}/{stem}@{r['frac']:.1f}.npz" if a.prefix_feats else None))
         else:
