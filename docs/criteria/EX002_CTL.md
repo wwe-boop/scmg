@@ -103,3 +103,15 @@ Lane 3 (module 3: frozen base): ctl3 = sibag-s2 + control modules where the BASE
 ctl_focus 0.5, counterfactual targets / counts 0.5. With no tokens the control routes contribute exactly 0, so mode none ≈ the
 control; the gates measure whether the token routes alone reach the gates. Runs: none / given / shuffle and finger-override
 given / shuffle x seeds 0-2. Same plan, gates, δ (FGD v2 ≤ 99.37).
+
+## Recipe-drift check (coordinator request, 2026-11-07 21:40)
+(a) step-0 identity: sibag-s2 through the fine-tune path (scmg.train, --lr 0, 1 step, the rcp arguments) saves an EMA state that is
+    bitwise identical to sibag-s2's (0 of all tensors differ; base / extra cfg equal) -> no loading bug.
+(b) EMA: sibag-s2/final.pt is an EMA snapshot (raw vs EMA |Δ|/|θ| = 0.027 at its own step 2000); the continuation restarts the EMA
+    from these EMA weights with the same decay 0.999 (raw vs EMA 0.027 at step 2000, like the original). After 2000 steps the EMA has
+    moved |Δ|/|θ| = 0.069 from sibag-s2 (raw 0.094) — a real drift, not an EMA artefact. (Intermediate snapshots were not saved.)
+(c) recipe parity: rcp vs sibag-s2's stored StageCfg differ only by fields added after 11-04, all at their inactive defaults
+    (ogm_ge is gated by ogm_alpha 0; ctl / ret / phys / safe weights 0); base / extra cfg identical; same view, BAgger 0.33, semsynth
+    0.6, SF 0.5, warmup 200, lr 1e-4, batch 64; data order differs (training seed 0 vs sibag-s2's 2). Open question tested by
+    dlc1mjl4p7zdospj: FGD v2 of the sibling training seeds sibag-s0 / s1 (same recipe) — if they sit near 124, sibag-s2's 91 is a
+    favourable training seed and the continuation regresses to the recipe's mean.
