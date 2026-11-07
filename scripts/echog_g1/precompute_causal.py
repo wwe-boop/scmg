@@ -94,7 +94,9 @@ def write(out, res):
         if isinstance(tend, list):                   # 11-07 recording: per-item token ends under the item ids
             index[stem] = dict(clip_row=i, frames=T, feat=ent, units=[urow, len(units)], tend=[trow, 0], recording=[iid for iid, _ in tend])
             for iid, te in tend:
-                index[iid] = dict(tend=[trow, len(te)], of=stem); trows.append(te); trow += len(te)
+                if iid == stem: index[stem]['tend'] = [trow, len(te)]         # item id == recording key: one entry holds both
+                else: index[iid] = dict(tend=[trow, len(te)], of=stem)
+                trows.append(te); trow += len(te)
         else:
             index[stem] = dict(clip_row=i, frames=T, feat=ent, units=[urow, len(units)], tend=[trow, len(tend)])
             trows.append(tend); trow += len(tend)
