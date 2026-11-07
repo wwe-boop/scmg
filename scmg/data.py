@@ -246,8 +246,9 @@ class View:
             ext = {i for i in ids if i in self.causal['index'] and self.causal['index'][i]['feat'][4][1] and self.causal['index'][i]['feat'][4][1] != fr[i]}
             self.causal['index'] = {k: v for k, v in self.causal['index'].items() if k not in ext}
             self.causal['extended_dropped'] = len(ext)
-        cov = [i for i in ids if i in self.causal['index']]
-        nrec = sum(1 for c in self.clips if len(c['items']) > 1 and 'recording' in self.causal['index'].get(c.get('clip'), {}))   # 11-07 EX002
+        cov = [i for i in ids if 'feat' in self.causal['index'].get(i, {})]          # item-only (token-end) entries are not clips
+        nrec = sum(1 for c in self.clips if not (len(c['items']) == 1 and c['items'][0]['id'] in cov)
+                   and 'recording' in self.causal['index'].get(c.get('clip'), {}))   # 11-07 EX002 recording entries
         nchk = nmel = 0
         F = np.load(d / 'FEAT_PREFIX.npy', mmap_mode='r') if (d / 'FEAT_PREFIX.npy').exists() else None
         for i in cov[:64]:
@@ -528,7 +529,8 @@ def causal_rows(v, c, s, n, T, f):
                cz_spk=np.zeros((5, SPK), np.float32), cz_spkv=np.zeros(5, np.float32),
                cz_spkt=np.array([min(50 * g, L) for g in (1, 2, 4, 8)] + [L], np.int64))
     e = cz['index'].get(it['id']) if len(c['items']) == 1 else None
-    if e is None and len(c['items']) > 1:            # 11-07 EX002: a recording entry (precompute_causal --recording)
+    if e is not None and 'feat' not in e: e = None   # an item's token-end entry of a recording precompute
+    if e is None:                                    # 11-07 EX002: a recording entry (precompute_causal --recording)
         e = cz['index'].get(c.get('clip'))
         if e is not None and 'recording' not in e: e = None
     if e is None or 'feat' not in e or int(e['frames']) != L: return out
