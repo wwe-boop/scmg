@@ -59,6 +59,20 @@ def tokens_for(evs, mode):
     return toks
 
 
+def finger_override(y, toks, shapes, hold=0.4, ramp=0.15):
+    """y [T, 34] 50 Hz: at every finger command the 8 finger joints of each hand are blended to the canonical hand shape of the
+    commanded count (HAND_SHAPES.json: median of train frames with exactly that count) over [t - hold, t + hold], cosine ramps of
+    `ramp` s outside it; arms / torso untouched (CBF-QP runs afterwards)."""
+    y = y.copy(); T = len(y); fr = np.arange(T) / FPS
+    for t in toks:
+        if t.get('fingers') is None: continue
+        d = np.abs(fr - t['t']); w = np.clip((hold + ramp - d) / ramp, 0, 1); w = 0.5 - 0.5 * np.cos(np.pi * w)
+        for h, (lo, hi) in ((0, (18, 26)), (1, (26, 34))):
+            tgt = np.asarray(shapes[f"{h}_{int(t['fingers'][h])}"], np.float32)
+            y[:, lo:hi] = (1 - w[:, None]) * y[:, lo:hi] + w[:, None] * tgt[None]
+    return y
+
+
 def infer(a):
     from scmg.common import CHUNK_FRAMES
     from scmg.data import View, WindowDataset
@@ -86,7 +100,10 @@ def infer(a):
                         ctl_v=np.stack([x[1] for x in tv]), ctl_vm=np.stack([x[2] for x in tv]))
         seed = (a.seed + zlib.crc32(c['clip'].encode())) % (2 ** 63)
         cmd, _, _ = generate(m, vae, s['feat'], cond, st, nch, H=INF, steps=a.steps, seed=seed, standby=qm, ctx_t=m.ctx_t, cfg_w=a.cfg_w)
-        np.save(o, cmd[:L].astype(np.float32))
+        y = cmd[:L].astype(np.float32)
+        if a.finger_override and a.mode != 'none':      # 11-07 module 2 (default off): joint-space hand-shape override after decoding
+            y = finger_override(y, tokens_for(by.get(ci, []), a.mode), json.loads(Path(a.finger_override).read_text())['shapes'])
+        np.save(o, y)
         g = out.parent / f'gt_{ci}.npy'
         if not g.exists(): np.save(g, (s['q'] * qs + qm)[:L].astype(np.float32))
         if ci % 40 == 0: print(f'{ci}/{len(view.clips)} {time.time() - t0:.0f}s', flush=True)
@@ -157,6 +174,7 @@ def main():
     p.add_argument('--tok-cache', default=C + '/scmg/tok-qwen25-v36_1'); p.add_argument('--mode', choices=['none', 'given', 'shuffle'], required=True)
     p.add_argument('--seed', type=int, default=0); p.add_argument('--steps', type=int, default=10); p.add_argument('--cfg-w', type=float, default=2.0)
     p.add_argument('--shard', default='0/1')
+    p.add_argument('--finger-override', default=None, help='HAND_SHAPES.json: joint-space hand-shape override at finger commands (module 2, default off)')
     p = sub.choices['eval']; p.add_argument('--plan', required=True); p.add_argument('--ctl', required=True)
     p.add_argument('--shuffled-run', action='store_true', help='the runs were generated with the SHUFFLED values (mode shuffle)')
     p.add_argument('specs', nargs='+')
