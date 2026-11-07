@@ -115,3 +115,6 @@ given / shuffle x seeds 0-2. Same plan, gates, δ (FGD v2 ≤ 99.37).
     0.6, SF 0.5, warmup 200, lr 1e-4, batch 64; data order differs (training seed 0 vs sibag-s2's 2). Open question tested by
     dlc1mjl4p7zdospj: FGD v2 of the sibling training seeds sibag-s0 / s1 (same recipe) — if they sit near 124, sibag-s2's 91 is a
     favourable training seed and the continuation regresses to the recipe's mean.
+Result of dlc1mjl4p7zdospj: sibling training seeds of the same recipe give FGD v2 86.92 (sibag-s0) / 89.41 (sibag-s1), inference
+seed 0, vs sibag-s2 91.13 -> the control is NOT a favourable outlier; the +33 of the 2000-step continuation at lr 1e-4 is a real
+drift of a converged model under a restarted (warm-up + cosine from 1e-4) schedule. The frozen-base lane 3 is the remedy under test.
