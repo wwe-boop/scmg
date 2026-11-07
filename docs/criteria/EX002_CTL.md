@@ -91,3 +91,15 @@ Code change for lane 2: scmg/data.py collate pads the control arrays of windows 
 Host rule (from agent A's bench_ex002 cross-check, exp/duplex 71f2e04): the same code gives bitwise-equal generations on one host
 type but differs by 2e-4–3e-4 rad between DLC A800 and the local RTX 5090 → every EX002 control / semantics number is generated on
 DLC A800 (all lane runs so far are); bench_ex002.py reproduces ex002_ctl_run evaluate to full precision on the same outputs.
+
+## Lane 2 result (one line) and lane 3 (pre-registered 2026-11-07 21:30, before any lane-3 number)
+Lane 2 (dlcqbkgzvypnn0hy): rcp (sibag recipe, no control) FGD v2 124.3 / FKD 1.76 — even 2000 more steps of the ORIGINAL recipe
+leave the δ band (99.37); ctl2 (light weights) STG 0.419 vs none 0.295 (+0.124, passes, shuffle follows), finger hit 0.497, FGD v2
+163 (none 166); finger override (module 2): hit 1.000 on ctl2 and lane 1 (by construction; shuffle: 1.000 vs 0.058 against the
+original), FGD v2 +12 (175) on ctl2. Diagnosis: any 2000-step fine-tune of the converged sibag-s2 at lr 1e-4 moves FGD v2 by
++33 or more, before tokens matter.
+Lane 3 (module 3: frozen base): ctl3 = sibag-s2 + control modules where the BASE learns at lr 1e-6 and the control modules at 1e-4
+(--lr 1e-6, ctl_lr_scale 100), 2000 steps, data recipe of lane 1 (no SF, no BAgger), ctl_w 1, w_ctl_aux 3, w_ctl_finger 1,
+ctl_focus 0.5, counterfactual targets / counts 0.5. With no tokens the control routes contribute exactly 0, so mode none ≈ the
+control; the gates measure whether the token routes alone reach the gates. Runs: none / given / shuffle and finger-override
+given / shuffle x seeds 0-2. Same plan, gates, δ (FGD v2 ≤ 99.37).
