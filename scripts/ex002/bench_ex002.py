@@ -73,6 +73,10 @@ def infer(a):
     if a.protocol == 'psync':
         from scmg import causal_feat as CF
         tokz = CF.e5_tokenizer(); enc = CF.speaker_encoder(a.campplus); pst = CF.load_pstats(a.pstats)
+    by = {}
+    if a.plan:
+        sys.path.insert(0, str(Path(__file__).resolve().parent)); from ex002_ctl_run import tokens_for; from scmg.ctl import token_value
+        for e in json.loads(Path(a.plan).read_text())['events']: by.setdefault(e['ci'], []).append(e)
     si, sn = (int(x) for x in a.shard.split('/')); t0 = time.time(); log = []
     for ci in range(len(view.clips))[si::sn]:
         o = out / f'{ci}.npy'
@@ -82,6 +86,10 @@ def infer(a):
         s = WindowDataset(view, nch * CHUNK_FRAMES, max_tokens=256).sample(ci, 0, np.random.default_rng(ci))
         cond = {k: s[k] for k in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm', 'titime', 'tseg', 'tiseg', 'tiend', 'text_c') if k in s}
         seed = (a.seed + zlib.crc32(c['clip'].encode())) % (2 ** 63) if a.seed_mode == 'per_clip' else a.seed
+        if a.plan and a.mode != 'none' and by.get(ci):       # 11-08 (default off): commanded-event tokens of an ex002_ctl_run plan
+            toks = tokens_for(by[ci], a.mode); tv = [token_value(t) for t in toks]
+            cond.update(ctl_t=np.array([t['t'] for t in toks], np.float32), ctl_type=np.array([x[0] for x in tv], np.int64),
+                        ctl_v=np.stack([x[1] for x in tv]), ctl_vm=np.stack([x[2] for x in tv]))
         kw = dict(H=INF)
         if a.protocol == 'engine': kw = dict(H=2 * U80, text_mode='x2', x2_rate=15., x2_lag=0.15, deploy_timing=True)
         if a.protocol == 'psync':
@@ -90,6 +98,7 @@ def infer(a):
             ci_ = CF.CausalInputs(pcm, wave, words, c['items'][0]['lang'], len(s['feat']), pst, view.fm, view.fs, enc, Tpad=len(s['feat']),   # the generated nch * 16 frames
                                   spk_refresh=a.spk_refresh, feat_mode=a.causal_feat)
             kw = dict(H=2 * U80, text_mode='voiced', x2_rate=15., x2_lag=0.15, deploy_timing=True, causal_inputs=ci_)
+        if a.ctl_lookahead > 0 and 'ctl_type' in cond: kw['ctl_lookahead'] = a.ctl_lookahead
         cmd, _, tk = generate(m, vae, s['feat'], cond, st, nch, steps=a.steps, seed=seed, standby=qm, ctx_t=m.ctx_t, cfg_w=a.cfg_w, **kw)
         y = cmd[:L].astype(np.float32)
         np.save(o, y)
@@ -138,6 +147,9 @@ def main():
     p.add_argument('--pstats', default=X + '/PROSODY_STATS_ex002_v36_1_train.json'); p.add_argument('--campplus', default=B + '/causal-train-1105/campplus')
     p.add_argument('--words-dir', default=X + '/words', help='prep_causal_ex002.py words (alignment.json units per item)')
     p.add_argument('--spk-refresh', default='grades', choices=['tick', 'grades']); p.add_argument('--causal-feat', default='inc', choices=['prefix', 'inc'])
+    p.add_argument('--plan', default=None, help='11-08 (default off): ex002_ctl_run plan; with --mode given / shuffle its commands become control tokens')
+    p.add_argument('--mode', default='none', choices=['none', 'given', 'shuffle'])
+    p.add_argument('--ctl-lookahead', type=float, default=0., help='streaming: commands visible this many s before their time (0 = generate default)')
     p = sub.add_parser('eval'); p.add_argument('--out', required=True); p.add_argument('--gt-as-gen', action='store_true', help='sanity: GT scored as the generation (FGD v2 = 0)')
     p.add_argument('specs', nargs='+')
     a = ap.parse_args(); dict(infer=infer, eval=evaluate)[a.cmd](a)

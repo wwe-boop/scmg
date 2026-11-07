@@ -59,14 +59,15 @@ def tokens_for(evs, mode):
     return toks
 
 
-def finger_override(y, toks, shapes, hold=0.4, ramp=0.15):
+def finger_override(y, toks, shapes, hold=0.4, ramp=0.15, profile='cos'):
     """y [T, 34] 50 Hz: at every finger command the 8 finger joints of each hand are blended to the canonical hand shape of the
     commanded count (HAND_SHAPES.json: median of train frames with exactly that count) over [t - hold, t + hold], cosine ramps of
     `ramp` s outside it; arms / torso untouched (CBF-QP runs afterwards)."""
     y = y.copy(); T = len(y); fr = np.arange(T) / FPS
     for t in toks:
         if t.get('fingers') is None: continue
-        d = np.abs(fr - t['t']); w = np.clip((hold + ramp - d) / ramp, 0, 1); w = 0.5 - 0.5 * np.cos(np.pi * w)
+        d = np.abs(fr - t['t']); w = np.clip((hold + ramp - d) / ramp, 0, 1)
+        w = 0.5 - 0.5 * np.cos(np.pi * w) if profile == 'cos' else w ** 3 * (10 - 15 * w + 6 * w * w)   # 11-08: 'minjerk' quintic
         for h, (lo, hi) in ((0, (18, 26)), (1, (26, 34))):
             tgt = np.asarray(shapes[f"{h}_{int(t['fingers'][h])}"], np.float32)
             y[:, lo:hi] = (1 - w[:, None]) * y[:, lo:hi] + w[:, None] * tgt[None]

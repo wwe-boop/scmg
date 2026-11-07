@@ -18,6 +18,7 @@ FPS = 50
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('--view', required=True); ap.add_argument('--plan', required=True)
     ap.add_argument('--out', required=True); ap.add_argument('specs', nargs='+')
+    ap.add_argument('--hold', type=float, default=0.4); ap.add_argument('--ramp', type=float, default=0.15)
     a = ap.parse_args()
     from scmg.safety import limits34, CBFFilter, violation_rate
     meta = json.loads((Path(a.view) / 'META.json').read_text())['ex002']
@@ -39,7 +40,7 @@ def main():
             j = np.abs(np.diff(y[:, 18:34], n=3, axis=0)) * FPS ** 3          # frame i -> jerk around i + 1.5
             fr = (np.arange(len(j)) + 1.5) / FPS
             for t in by.get(ci, []):
-                z = (np.abs(fr - t) > 0.4) & (np.abs(fr - t) <= 0.55)
+                z = (np.abs(fr - t) > a.hold) & (np.abs(fr - t) <= a.hold + a.ramp)
                 if z.any(): rj.append(j[z].mean(1)); rj_over.append((j[z] > lim['j'][18:34]).any(1))
         rj = np.concatenate(rj) if rj else np.zeros(0); rj_over = np.concatenate(rj_over) if rj_over else np.zeros(0)
         r = dict(clips=n_clip, exec_after_cbf=n_exec / max(n_clip, 1), raw_violation_any=float(np.mean(raw_any)),

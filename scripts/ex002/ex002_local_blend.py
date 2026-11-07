@@ -26,6 +26,7 @@ def main():
     ap.add_argument('--plan', required=True); ap.add_argument('--out', required=True); ap.add_argument('--inner', type=float, default=.6)
     ap.add_argument('--outer', type=float, default=.9); ap.add_argument('--finger-override'); ap.add_argument('--mode', default='given')
     ap.add_argument('--pre', type=float); ap.add_argument('--post', type=float)
+    ap.add_argument('--fo-ramp', type=float, default=0.15); ap.add_argument('--fo-profile', default='cos', choices=['cos', 'minjerk'])
     a = ap.parse_args()
     from ex002_ctl_run import finger_override, tokens_for
     P = json.loads(Path(a.plan).read_text()); by = {}
@@ -36,7 +37,7 @@ def main():
         ci = int(f.stem); y1 = np.load(f); y0 = np.load(n0 / f.name); T = min(len(y0), len(y1)); y0, y1 = y0[:T], y1[:T]
         w = weight(T, [e['t'] for e in by.get(ci, [])], a.inner, a.outer, a.pre, a.post)[:, None]
         y = ((1 - w) * y0 + w * y1).astype(np.float32)
-        if shapes is not None: y = finger_override(y, tokens_for(by.get(ci, []), a.mode), shapes)
+        if shapes is not None: y = finger_override(y, tokens_for(by.get(ci, []), a.mode), shapes, ramp=a.fo_ramp, profile=a.fo_profile)
         np.save(out / f.name, y)
         g = n1.parent / f'gt_{ci}.npy'
         if g.exists() and not (out.parent / g.name).exists(): shutil.copy(g, out.parent / g.name)
