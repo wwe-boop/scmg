@@ -73,6 +73,13 @@ class StageCfg:
     phys_dyn_w: float = 1.0        # 11-04 landing L1: weight of the velocity/acc/jerk term inside w_phys (0 = joint limits +
                                    # self-collision only; the full term made the upper arm ~20% smaller than the human)
     phys_coll_w: float = 1.0       # weight of the self-collision term inside w_phys
+    phys_coll_huber: float = 0.0   # 11-08 (cm, > 0): Huber penetration penalty inside phys_coll -- pen^2 up to delta, delta (2 pen - delta)
+                                   # beyond (per-pair gradient bounded by 2 delta); 0 = the squared hinge (bit-identical). Motivation:
+                                   # skipped-step diagnosis (ex002-skipdiag-1108): all skips are gradient spikes driven by deep
+                                   # penetrations of the model's own x1-hat (phys_coll 7.4 vs 0.06), GT penetration unchanged
+    skip_diag: bool = False        # 11-08 diagnostic (train.py --skip-log): per-term |d loss / d y| of the physics / continuity
+                                   # terms, model and GT max penetration on the same frame / pair subset (no extra random draw);
+                                   # '_'-prefixed out keys, not in the loss. Default off = bit-identical
     p_async: float = 0.0           # ADSC: among STREAMING samples, probability that the text also streams (else text final);
                                    # streaming samples never see timing of not-yet-voiced tokens (offline samples do)
     p_async_seg: float = 0.3       # text arrival unit: TTS segment (robot TTS / sentence-level engines) vs X2Streaming-TTS
@@ -87,6 +94,13 @@ class StageCfg:
     self_force_cfg: float = 0.0   # >0: joint audio/text CFG; local null-audio visibility matches Streamer(cfg_null_fix=True)
     self_force_mix: float = 0.0   # per round, independently replace each generated chunk with GT with this probability
     self_force_noise: float = 0.0 # Gaussian std in normalised latent space; applied before GT mixing / padding restore
+    self_force_scope: str = 'all'  # 11-08 (default 'all' = unchanged): which parameters learn from a self-forced batch.
+                                   # 'encoders' = exposure-robust conditioning: every nn.Linear executed by the no-grad generation
+                                   # pass (planner, Local Flow and their input / output projections) gets NO gradient on that
+                                   # batch (grad None -> AdamW skips it); the gradient still flows through their activations to
+                                   # the condition encoders (audio / text / speaker / source ...). This is exactly what the
+                                   # pre-dcd50fb code did by accident (autocast weight cache filled under no_grad) -- the
+                                   # recipe of the lively EX002 sibag-s0/1/2. Single process, --accum 1 only (train.py checks).
     dim_mask: tuple = ()           # 11-04 ECHO-G G1 'leg masking' report lane (default off): motion channels with ZERO weight in
                                    # the decoded-motion losses (w_cont / rhythm unaffected: arms only); pair with the VAE's
                                    # dim_mask so the latents do not carry them at all (view META.json lists legs / root indices)
@@ -157,6 +171,9 @@ class StageCfg:
     # held rest pose after it is supervised. yield_human: human_ref json with rest.R_sil.joints (29).
     yield_cf_p: float = 0.0
     yield_rest_s: float = 1.4
+    yield_mask_rest_p: float = 0.0  # 11-08 duplex ladder (b): P(a counterfactual-yield sample has its post-bridge latents [t_y + rest, end)
+                                    # flagged as known inserted latents, cfg.mask_cond) -> rest insertion at inference is in-distribution;
+                                    # 0 = off (no extra random draw, bit-identical)
     yield_human: str = ''
     ctl_count_thr: float = 0.5918
     # 11-07 EX002 finger commands (default off): soft extended-finger count loss (w_ctl_finger) and counterfactual counts
@@ -319,14 +336,20 @@ def yield_cf_prepare(model, vae, batch, sc, stats, stream, H, K, x1, q):
     # motion: critically damped retraction from the frame before t_y (infer_retract._targets rule)
     qm, qs = stats['qm'].to(dev), stats['qs'].to(dev)
     qp = q.float() * qs + qm; qn = q.clone()
-    up = list(range(22, 39)); wn = 4.744 / max(sc.yield_rest_s, 1e-3)
+    wn = 4.744 / max(sc.yield_rest_s, 1e-3)
+    if Jn == 39:                    # G1 robot_repr: root 0:10 + 29 joints; waist + arms = channels 22..38; root velocities zeroed
+        up = list(range(22, 39)); full = lambda q0_: torch.cat([q0_[:10], rest]); zero_root = True
+    else:                           # 11-08 EX002 34 joints (rad): waist (0, 1) + arms (4..17) to the 34-joint rest pose; head / fingers held
+        if rest.numel() != Jn: raise ValueError(f'yield_human rest has {rest.numel()} joints, motion has {Jn}')
+        up = [0, 1] + list(range(4, 18)); full = lambda q0_: rest; zero_root = False
     for b in on.nonzero()[:, 0].tolist():
         f0 = int(fy[b]); q0 = qp[b, f0 - 1]; v0 = (qp[b, f0 - 1] - qp[b, f0 - 2]) * 50.
         tt = torch.arange(1, T - f0 + 1, device=dev).float()[:, None] / 50.
-        e = q0 - torch.cat([q0[:10], rest])
+        e = q0 - full(q0)
         tr = q0[None].repeat(T - f0, 1)
-        upv = torch.cat([q0[:10], rest])[None] + (e + (v0 + wn * e) * tt) * torch.exp(-wn * tt)
-        tr[:, up] = upv[:, up]; tr[:, 6:10] = 0.
+        upv = full(q0)[None] + (e + (v0 + wn * e) * tt) * torch.exp(-wn * tt)
+        tr[:, up] = upv[:, up]
+        if zero_root: tr[:, 6:10] = 0.
         qn[b, f0:] = ((tr - qm) / qs).to(q.dtype)
     with torch.no_grad():
         mu, _ = vae.encode(qn[on])
@@ -653,6 +676,12 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         # planner and the Local Flow got NO gradient (324 of 406 tensors None).  Same autocast dtype, cache off.
         from .model import autocast_dtype
         _ac = torch.autocast('cuda', dtype=autocast_dtype(), enabled=torch.is_autocast_enabled(), cache_enabled=False)
+        if sc.self_force_scope not in ('all', 'encoders'): raise ValueError(f'self_force_scope {sc.self_force_scope!r}')
+        _sf_mods, _sf_hooks = [], []
+        if sc.self_force_scope == 'encoders':     # record the Linear modules the generation pass executes (= legacy cache set)
+            for _m in model.modules():
+                if isinstance(_m, torch.nn.Linear):
+                    _sf_hooks.append(_m.register_forward_hook(lambda mod, i, o: _sf_mods.append(mod)))
         with torch.no_grad(), _ac:
             src = lat_k
             for _round in range(max(1, sc.self_force_rounds)):
@@ -697,6 +726,13 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
                     gen = torch.where(use_gt, lat_k, gen)
                 gen = torch.where(lmask.view(B, K, CHUNK)[..., None], gen, lat_k)
                 src = gen
+        for _h in _sf_hooks: _h.remove()
+        if sc.self_force_scope == 'encoders':     # train.py sets grad None for these after backward (before clipping / step)
+            _seen = {}
+            for _m in _sf_mods:
+                for _p in _m.parameters(recurse=False):
+                    if _p.requires_grad: _seen[id(_p)] = _p
+            model._sf_frozen = list(_seen.values())
         hist = gen
         if bagger is not None:
             gen = torch.where(bagger[:, None, None, None], lat_k, gen)
@@ -740,6 +776,13 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         ins = (gpos >= st_[bb][:, None]) & (gpos < (st_ + ln)[bb][:, None]) & on[bb][:, None] & (gpos >= 0)
         ins[:, :cfg.ctx] &= known[:, :cfg.ctx]                    # a context position is inserted only where it exists
         known = known | ins
+    if sc.yield_mask_rest_p > 0 and ycf is not None and getattr(cfg, 'mask_cond', False):   # 11-08 ladder (b): rest spans as insertions
+        gpr = (kk * CHUNK - cfg.ctx)[:, None] + torch.arange(L, device=dev)[None]
+        bbr = torch.arange(B, device=dev).repeat_interleave(K)
+        selr = ycf['on'] & (torch.rand(B, device=dev) < sc.yield_mask_rest_p)
+        insr = (gpr >= (ycf['ly'] + ycf['nb'])[bbr][:, None]) & selr[bbr][:, None] & (gpr >= 0)
+        insr[:, :cfg.ctx] &= known[:, :cfg.ctx]
+        ins = insr if ins is None else (ins | insr); known = known | insr
     t = logit_normal(M, dev)[:, None].expand(M, L).clone(); t[known] = 1.
     noise = torch.randn_like(x1i)
     xt = torch.where(known[..., None], x1i, t[..., None] * x1i + (1 - t[..., None]) * noise)
@@ -949,9 +992,21 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         if sc.w_ctl_count > 0 and ctl is not None:
             out.update(ctl_count_loss(y.float() * qs + qm, batch, ctl, fv * w_inst[:, None], B, K, sc.ctl_count_thr))
             loss = loss + sc.w_ctl_count * out['ctl_count']
-        if sc.w_phys > 0:
+        if sc.w_phys > 0 and not sc.skip_diag:
             out.update(phys_reg(y, fv * w_inst[:, None], qm, qs, sc))
             loss = loss + sc.w_phys * (out['phys_joint'] + sc.phys_dyn_w * out['phys_dyn'] + sc.phys_coll_w * out['phys_coll'])
+        elif sc.w_phys > 0:                                    # 11-08 skip diagnostic: the same terms + gradient / penetration probes
+            pr = phys_reg(y, fv * w_inst[:, None], qm, qs, sc, gt=gt_frames)
+            out.update({k_: v_ for k_, v_ in pr.items() if not k_.startswith('_')})
+            terms = dict(phys_joint=sc.w_phys * pr['phys_joint'], phys_dyn=sc.w_phys * sc.phys_dyn_w * pr['phys_dyn'],
+                         phys_coll=sc.w_phys * sc.phys_coll_w * pr['phys_coll'], cont=sc.w_cont * (rl['rec'] + 0.3 * rl['vel'] + 0.1 * rl['acc']))
+            loss = loss + terms['phys_joint'] + terms['phys_dyn'] + terms['phys_coll']
+            for k_, v_ in terms.items():
+                if not (y.requires_grad and v_.requires_grad): continue           # dev evaluation (no grad)
+                gy = torch.autograd.grad(v_, y, retain_graph=True, allow_unused=True)[0]
+                out[f'_gy_{k_}'] = float(gy.float().norm()) if gy is not None else 0.
+            out.update({k_: v_ for k_, v_ in pr.items() if k_.startswith('_')})
+            out['_K'] = float(K)
         if sc.w_rhy > 0:
             yt = y[:, CHUNK_FRAMES:].reshape(B, K * CHUNK_FRAMES, Jn)
             gt = gt_frames[:, CHUNK_FRAMES:].reshape(B, K * CHUNK_FRAMES, Jn)
@@ -1076,7 +1131,7 @@ _PHYS = {}
 _EX = {}
 
 
-def phys_reg(y, fw, qm, qs, sc):
+def phys_reg(y, fw, qm, qs, sc, gt=None):
     """y [M, F, J] decoded [ctx | target] frames (normalised), fw [M, F] frame weights (validity x low-noise trust).
     Returns phys_joint (hardware-limit hinge^2), phys_dyn (|v|,|a|,|j| beyond the robot's limits, relative, hinge^2),
     phys_coll (self-penetration^2 in cm^2 over a random frame / pair subset)."""
@@ -1110,5 +1165,17 @@ def phys_reg(y, fw, qm, qs, sc):
     kin = P['kin']; npair = kin.pairs.shape[0]
     pi = torch.randint(0, npair, (min(sc.phys_pairs, npair),), device=dev)
     pen = kin.penetration(tg[idx], pi, d_safe=0.005) * 100.                          # cm
-    out['phys_coll'] = (pen ** 2).sum(-1).mean() * (npair / len(pi))
+    if sc.phys_coll_huber > 0:
+        hd = sc.phys_coll_huber
+        out['phys_coll'] = torch.where(pen <= hd, pen ** 2, hd * (2 * pen - hd)).sum(-1).mean() * (npair / len(pi))
+    else:
+        out['phys_coll'] = (pen ** 2).sum(-1).mean() * (npair / len(pi))
+    if gt is not None:              # skip diagnostic: same frames / pairs on the GT (no extra random draw)
+        with torch.no_grad():
+            gq = (gt.float() * qs + qm)[:, q.shape[1] // 2:].reshape(-1, q.shape[-1])
+            gp = kin.penetration(gq[idx], pi, d_safe=0.005) * 100.
+            pf = pen.detach().max(-1).values; gf = gp.max(-1).values; fpw = q.shape[1] - q.shape[1] // 2
+            out.update(_pen_max_cm=float(pf.max()), _gt_pen_max_cm=float(gf.max()), _pen_mean_cm2=float((pen.detach() ** 2).sum(-1).mean()),
+                       _gt_pen_mean_cm2=float((gp ** 2).sum(-1).mean()), _pen_argmax_window=float(idx[int(pf.argmax())] // fpw),
+                       _gt_pen_frames=float((gf > 0).float().mean()), _pen_frames=float((pf > 0).float().mean()))
     return out

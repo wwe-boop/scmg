@@ -30,6 +30,7 @@ a = ap.parse_args()
 H = json.loads(Path(a.human + '.json').read_text()); hw = np.load(a.human + '_windows.npz')
 HK_all = np.stack([I.kin_features(I.fk(w), I.SEC) for w in hw['q_ctx'].astype(np.float64)]); HK_ret = HK_all[hw['retract'].astype(bool)]
 T_r = H['T_r'] if a.tr is None else a.tr; rest = np.array(H['rest']['R_sil']['joints']); rest_z = np.array(H['rest']['R_sil']['hand_z'])
+rest_P = I.fk(rest[None])[0]                                    # [2, 3] human rest wrist positions (primary 3D yield)
 ints = json.loads(Path(a.interrupts).read_text())['interrupts']
 meta = json.loads((Path(a.view) / 'META.json').read_text()); ex = meta['ex002']
 lo, hi = np.asarray(ex['lower'], np.float64), np.asarray(ex['upper'], np.float64)
@@ -75,6 +76,16 @@ if list(ex['names34'] if isinstance(ex['names34'], list) else eval(ex['names34']
 WBC = RB.EX002()
 
 
+# FRONT sanity control (11-08): a fixed pose whose wrists are at the human rest height (+-5 cm) but far in front of / beside the rest
+# wrist positions: chosen deterministically from the dev GT frames (every 5th) with both wrists within 5 cm of rest height,
+# maximising the smaller wrist distance to rest_P. Height-only yield must pass it, the 3D yield must fail it.
+_cand = []
+for ci_, q_ in sorted(gts.items()):
+    P_ = I.fk(q_[::5]); dz = np.abs(P_[:, :, 2] - rest_z[None]).max(1); dd = np.linalg.norm(P_ - rest_P[None], axis=-1).min(1)
+    for t_ in np.nonzero(dz <= 0.05)[0]: _cand.append((float(dd[t_]), ci_, int(t_ * 5)))
+_cand.sort(reverse=True); FRONT_D, FRONT_CI, FRONT_T = _cand[0]; front = gts[FRONT_CI][FRONT_T].copy()
+
+
 def unsafe(q, f):
     w = q[f - 1:f + I.WIN]; v = np.gradient(w, 1 / I.FPS, axis=0)[1:]; w = w[1:]
     pv = bool(((w < lo - 1e-6) | (w > hi + 1e-6)).any()); vv = bool((np.abs(v) > vmax).any())
@@ -85,8 +96,9 @@ def unsafe(q, f):
 
 def motion(kind, d, ref, r):
     f = r['f_i']; ci = r['ci']
-    if kind in ('B1', 'B2'):
+    if kind in ('B1', 'B2', 'FRONT'):
         base = np.load(f'{d}/{ci}.npy').astype(np.float64)
+        if kind == 'FRONT': return I.retract_after(base, f, front, T_r), base   # sanity control: settles at the front pose
         return (I.freeze_after(base, f) if kind == 'B1' else I.retract_after(base, f, rest, T_r)), base
     if kind == 'GT': g = gts[ci]; return g[:f + I.WIN], None
     if kind == 'GTMIS':                                 # another recording's GT window spliced at f_i
@@ -116,15 +128,19 @@ for spec in a.methods:
             dev_ = np.linalg.norm(P[f:n] - PU[f:n], axis=-1).max(1) > 0.02
             row['react'] = float(np.argmax(dev_) / I.FPS) if dev_.any() else None; row['react_cens'] = (n - f) / I.FPS
             row['v3_ratio'] = I.v3_ratio(P, PU, f)
-        ty, need = I.yield_time(P, f, rest_z); row.update(need=need, yield_s=ty)
+        ty, need = I.yield_time(P, f, rest_z); row.update(need=need, yield_s=ty)                       # secondary: height only
+        t3, n3 = I.yield3d(P, f, rest_P); row.update(need3d=n3, yield3d_s=t3)                       # primary (11-08): 3D rest pose
         row['jerk'] = I.peak_jerk(P, f - I.PRE, f + I.WIN)
         row.update({f'unsafe_{k}': x for k, x in unsafe(mo, f).items()})
         kf = I.kin_features(P, f); row['kin'] = kf.tolist(); rows.append(row); kins.append(kf)
         if per: per.write(json.dumps(dict(row, method=lab)) + '\n')
     if not rows: print(lab, 'no rows'); continue
-    W = I.WIN / I.FPS; sel = [x for x in rows if x['need']]
+    W = I.WIN / I.FPS; sel = [x for x in rows if x['need']]; s3 = [x for x in rows if x['need3d']]
     out = dict(n=len(rows), n_need=len(sel), yield_rate=float(np.mean([x['yield_s'] is not None for x in sel])) if sel else None,
                yield_s=float(np.mean([x['yield_s'] if x['yield_s'] is not None else W for x in sel])) if sel else None)
+    out.update(n_need3d=len(s3), yield3d_rate=float(np.mean([x['yield3d_s'] is not None for x in s3])) if s3 else None,
+               yield3d_s=float(np.mean([x['yield3d_s'] if x['yield3d_s'] is not None else W for x in s3])) if s3 else None,
+               yield3d_rate_all=float(np.mean([x['yield3d_s'] is not None for x in rows])))
     rc = [x['react'] if x.get('react') is not None else x.get('react_cens') for x in rows if 'react_cens' in x]
     out['react_s'] = float(np.mean(rc)) if rc else None
     v3 = np.array([x['v3_ratio'] for x in rows if x.get('v3_ratio') is not None])
@@ -134,7 +150,7 @@ for spec in a.methods:
     out['rkd_retract'] = I.kin_distance(np.stack(kins), HK_ret)[0] if len(HK_ret) >= 30 else None   # secondary, only if >= 30 windows
     out['jerk_median'] = float(np.median([x['jerk'] for x in rows]))
     res[lab] = out
-    print(f"{lab:14s} n {out['n']} | yield {out['yield_rate']} ({out['yield_s']}) | v3 {out['abrupt_v3']} | RKD-post {out['rkd_post']:.3f} RKD-retract {out['rkd_retract']} | unsafe WBC {out['unsafe_any']:.4f} scene {out['unsafe_any_scene']:.4f} | react {out['react_s']}", flush=True)
+    print(f"{lab:14s} n {out['n']} | yield3d {out['yield3d_rate']} ({out['yield3d_s']}) all {out['yield3d_rate_all']:.3f} | yield-height {out['yield_rate']} ({out['yield_s']}) | v3 {out['abrupt_v3']} | RKD-post {out['rkd_post']:.3f} RKD-retract {out['rkd_retract']} | unsafe WBC {out['unsafe_any']:.4f} scene {out['unsafe_any_scene']:.4f} | react {out['react_s']}", flush=True)
 res['_meta'] = dict(T_r=T_r, T_r_source='human_ref median' if a.tr is None else 'override', T_r_ex002_human=H['T_r'],
                     collision_primary='retargeter WBC clearance (ours): release06 smplx2ex002_3f EX002.clearance, runtime-rm003 349 rows',
                     collision_scene='MuJoCo scene, structural-contact-limited: scene.xml contacts minus parent-child links minus pairs in >= 50 % of dev GT frames',
@@ -142,6 +158,8 @@ res['_meta'] = dict(T_r=T_r, T_r_source='human_ref median' if a.tr is None else 
                     rkd_post_half_split=I.kin_distance(HK_all[0::2], HK_all[1::2])[0],
                     rkd_retract_half_split=I.kin_distance(HK_ret[0::2], HK_ret[1::2])[0] if len(HK_ret) >= 30 else None,
                     rkd_note='RKD-post (all post-speech windows) is not comparable with the G1 retraction-window RKD',
+                    yield_primary='3D: both wrists within 10 cm of the human rest wrist positions, held >= 0.5 s (icommon_ex002.yield3d); height-only = secondary',
+                    rest_wrists=rest_P.tolist(), front_control=dict(ci=FRONT_CI, frame=FRONT_T, min_wrist_dist_to_rest_m=FRONT_D),
                     adjacent_pairs=len(adjacent), structural_pairs=len(structural), prefix=a.prefix, rule=__doc__.split('\n')[0])
 print('RKD-post human half-split floor', round(res['_meta']['rkd_post_half_split'], 3), '| windows', len(HK_all), '| n retract', len(HK_ret), '| T_r', T_r, '(EX002 human', H['T_r'], ')')
 Path(a.out).write_text(json.dumps(res, indent=1))

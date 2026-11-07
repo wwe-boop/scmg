@@ -124,6 +124,10 @@ def evaluate(a):
     from model import Embedder
     from config import WEIGHTS
     emb = [Embedder(WEIGHTS / f'human_seed{k}' / 'best.pt') for k in (0, 1)]       # as score_dirs.py / ex002_ctl_run (frozen FGD v2)
+    # 11-08 (user: no lane may be selected without it): the moving-upper-body liveliness guard (lively_floor_ex002.py, 13 FK points,
+    # gates vs the GT of the same clips) is computed for EVERY lane, always; there is no switch to turn it off
+    sys.path.insert(0, str(Path(__file__).resolve().parent)); import lively_floor_ex002 as LF
+    SM = LF.speech_masks(); gtc = {}
     res = {}
     for spec in a.specs:
         lab, d = spec.split('=', 1); d = Path(d); gt_dir = d.parent
@@ -135,6 +139,15 @@ def evaluate(a):
         r = dict(n_clips=len(gens), frames=int(sum(len(g) for g in gens)), FKD=float(frechet(Fg, Ft)) if len(Fg) > 110 else None)
         r['FGD_v2_seeds'] = [float(frechet(np.concatenate([e_.features(g) for g in gts]), np.concatenate([e_.features(y) for y in gens]))) for e_ in emb]
         r['FGD_v2'] = float(np.mean(r['FGD_v2_seeds']))
+        if gt_dir not in gtc:
+            gf = LF.files('GT', str(gt_dir)); norm = np.concatenate([LF.speed(LF.pts(np.load(f))) for f in gf]).mean(0)
+            gtc[gt_dir] = (norm, LF.lane_stats(gf, norm, SM=SM))
+        norm, gst = gtc[gt_dir]
+        if a.gt_as_gen: r['lively'] = dict(gst)
+        else: r['lively'] = LF.lane_stats(LF.files(lab, str(d)), norm, SM=SM)
+        r['lively_gt'] = gst; r['lively_gates'] = LF.verdict(r['lively'], gst)
+        print(lab, 'LIVELY', 'PASS' if r['lively_gates']['pass'] else 'FAIL', json.dumps({k: round(v, 4) if isinstance(v, float) else v
+              for k, v in r['lively'].items()}), 'gates', json.dumps(r['lively_gates']), flush=True)
         res[lab] = r; print(lab, json.dumps({k: (round(v, 4) if isinstance(v, float) else v) for k, v in r.items()}), flush=True)
     Path(a.out).write_text(json.dumps(res, indent=1))
 

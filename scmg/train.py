@@ -209,6 +209,8 @@ def main():
     ap.add_argument('--tail-no-aend', action='store_true', help='11-07 duplex: tails are a PAUSE (silence rows, audio not final): no aend / floor keys')
     ap.add_argument('--causal-allow-extended', action='store_true', help='11-07 duplex: clips extended past the causal precompute (tails) stay uncovered')
     ap.add_argument('--causal-min-cov', type=float, default=0.99)
+    ap.add_argument('--skip-log', default=None, help='11-08 diagnostic: per-step jsonl (skip reason, grad norm, running median, the '
+                    "'_'-prefixed diagnostics of StageCfg skip_diag, batch clip indices); default off")
     ap.add_argument('--causal-spk-atol', type=float, default=1e-5, help='11-07 EX002: CAM++ vs SPK_EMB tolerance of the load check (1e-3)')
     ap.add_argument('--causal-no-spk-check', action='store_true', help='11-07 EX002: skip the load-time CAM++ / mel identity check (sources whose SPK_EMB is not the item-audio CAM++)')
     ap.add_argument('--ctl-tokens', default=None, help='control tokens (scripts/semantic/g1_ctl_tokens.py) of the train split; needs cfg ctl')
@@ -391,7 +393,10 @@ def main():
         return {f'dev_{k}': v / max(n, 1) for k, v in acc.items()}
 
     t0 = time.time(); tl = time.time(); agg = {}; skipped = 0; ogm_state = {}
+    skip_f = open(a.skip_log, 'a', buffering=1) if (a.skip_log and rank == 0) else None
     if sc is not None and sc.ogm_alpha > 0 and a.accum != 1: raise SystemExit('ogm_alpha needs --accum 1')
+    if sc is not None and sc.self_force_scope != 'all' and (a.accum != 1 or world > 1):
+        raise SystemExit('self_force_scope encoders: single process, --accum 1 only')
     best_key = 'dev_rec' if a.stage == 'vae' else 'dev_flow'
     best = json.loads((out / 'BEST.json').read_text()) if (out / 'BEST.json').exists() else dict(value=1e9, step=0)
     model.train()
@@ -406,8 +411,14 @@ def main():
             fin = torch.isfinite(loss.detach()).float()
             if world > 1: dist.all_reduce(fin, op=dist.ReduceOp.MIN)     # all ranks skip together (no allreduce hang)
             if fin.item() < 1:
+                if skip_f: skip_f.write(json.dumps(dict(step=step, reason='loss_nonfinite', clips=b['clip'].tolist(),
+                                                        **{k: float(v) for k, v in l.items() if k.startswith('_') or k.startswith('phys')})) + '\n')
                 skipped += 1; step += 1; continue
             loss.backward()
+            _fz = getattr(model, '_sf_frozen', None)
+            if _fz:                                  # self_force_scope 'encoders': this self-forced batch trains no planner / flow weight
+                for _p in _fz: _p.grad = None
+            model._sf_frozen = None
             if sc is not None and sc.ogm_alpha > 0:
                 if world > 1: raise SystemExit('ogm_alpha: single-process training only')
                 l = dict(l, **ogm_modulate(model, sc, l, ogm_state))
@@ -432,6 +443,10 @@ def main():
             l = lsum
         gn = float(torch.nn.utils.clip_grad_norm_(params, 1e9))
         med = float(np.median(gn_hist[-200:])) if len(gn_hist) >= 50 else None
+        if skip_f and a.accum == 1:
+            why = 'gn_nonfinite' if not math.isfinite(gn) else 'gn_spike' if (med is not None and gn > 20 * med) else 'ok'
+            skip_f.write(json.dumps(dict(step=step, reason=why, gn=gn if math.isfinite(gn) else None, med=med, clips=b['clip'].tolist(),
+                                         **{k: float(v) for k, v in l.items() if k.startswith('_') or k.startswith('phys') or k == 'loss'})) + '\n')
         if not math.isfinite(gn) or (med is not None and gn > 20 * med):
             skipped += 1                                         # gradient spike: skip the update, keep the step count
         else:
