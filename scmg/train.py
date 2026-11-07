@@ -208,6 +208,7 @@ def main():
     ap.add_argument('--causal-allow-extended', action='store_true', help='11-07 duplex: clips extended past the causal precompute (tails) stay uncovered')
     ap.add_argument('--causal-min-cov', type=float, default=0.99)
     ap.add_argument('--causal-spk-atol', type=float, default=1e-5, help='11-07 EX002: CAM++ vs SPK_EMB tolerance of the load check (1e-3)')
+    ap.add_argument('--causal-no-spk-check', action='store_true', help='11-07 EX002: skip the load-time CAM++ / mel identity check (sources whose SPK_EMB is not the item-audio CAM++)')
     ap.add_argument('--ctl-tokens', default=None, help='control tokens (scripts/semantic/g1_ctl_tokens.py) of the train split; needs cfg ctl')
     ap.add_argument('--ctl-focus', type=float, default=0., help='P(train window placed around an annotation control token)')
     ap.add_argument('--ret', default=None, help='retrieval dir[:query file] (scripts/semantic/g1_ret_bank.py; default query RET_train.json); needs cfg ret')
@@ -247,7 +248,8 @@ def main():
         if _cz and not a.causal_dir: raise SystemExit('--sc causal_front / causal_spk / causal_text need --causal-dir')
         if a.causal_dir:
             cov = view.load_causal(a.causal_dir, _sc0.horizons, **({'allow_extended': True} if a.causal_allow_extended else {}),
-                                   **({'spk_atol': a.causal_spk_atol} if a.causal_spk_atol != 1e-5 else {}))
+                                   **({'spk_atol': a.causal_spk_atol} if a.causal_spk_atol != 1e-5 else {}),
+                                   **({'check_spk': False} if a.causal_no_spk_check else {}))
             if cov < a.causal_min_cov: raise SystemExit(f'--causal-dir covers only {cov:.1%} of the train clips')
     ds = WindowDataset(view, a.frames, seed=a.seed * 1000 + rank, semsynth_share=a.semsynth_share, bagger_share=a.bagger_share,
                        tail_share=a.tail_share, **({'p_start0': a.p_start0} if a.p_start0 > 0 else {}),
