@@ -9,6 +9,7 @@ Per run (bootstrap 95 % CI over tokens, 2000 resamples, seed 0):
   point_*   (POINT tokens with a target, against 'given' targets): Score_a, Score_b, STG, ray error (deg) at a_hat
   amp_hit   amplitude bin of the generated span == the token's bin (annotation tokens with a bin); amp_mean (m)
   act_03    P(peak wrist speed (max over hands) within [t - 0.3, t + 0.3] s > action_speed) at every annotation token time
+  count_hit (11-07, tokens with a 'count'): strokes of the generated span (scmg/ctl.py count_np, APEX action speed) == count
   dq_span   (with --pair-none) mean |q - q_none| over the arm joints inside the token spans (rad): is the token used?
 """
 import argparse, json, sys
@@ -32,7 +33,8 @@ def ci(x, n=2000):
 
 def score(geo, toks, det, edges, thr):
     T = len(geo['wrist']); spm = np.maximum(speed(geo['wrist'][:, 0]), speed(geo['wrist'][:, 1]))
-    out = dict(sa=[], sb=[], stg=[], ray=[], hit=[], amp=[], act=[])
+    out = dict(sa=[], sb=[], stg=[], ray=[], hit=[], amp=[], act=[], chit=[], cerr=[])
+    csp = ctl.count_speed(geo['wrist']) if any(t.get('count') is not None for t in toks) else None
     for t in toks:
         if ctl.group_of(t['type']) != 0: continue
         fa, fb = int(round(t['a'] * FPS)), min(T, int(round(t['b'] * FPS)))
@@ -40,6 +42,9 @@ def score(geo, toks, det, edges, thr):
         tf = int(round(t['t'] * FPS)); w = spm[max(0, tf - 15):min(T, tf + 16)]
         if len(w): out['act'].append(float(w.max() > thr))
         cls = ctl.TYPE_NAMES[t['type']]
+        if t.get('count') is not None and t['type'] != ctl.POINT:     # 11-07 count control: same rule as the labels
+            c = ctl.count_np(geo['wrist'], fa, fb, thr, csp)
+            if c is not None: out['chit'].append(float(c == int(t['count']))); out['cerr'].append(abs(c - int(t['count'])))
         if t.get('amp_bin') is not None:
             m = ctl.measure(geo, fa, fb, hand=t.get('hand') if t['type'] == ctl.POINT else None)
             amp = m['amp_hand'] if t['type'] == ctl.POINT and t.get('hand') is not None else m['amp_max']
@@ -64,7 +69,7 @@ def main():
     res = {}
     for spec in a.specs:
         lab, d = spec.split('=', 1)
-        agg = {k: {m: [] for m in ('sa', 'sb', 'stg', 'ray', 'hit', 'amp', 'act')} for k in ('given', 'gt')}
+        agg = {k: {m: [] for m in ('sa', 'sb', 'stg', 'ray', 'hit', 'amp', 'act', 'chit', 'cerr')} for k in ('given', 'gt')}
         dq = []; n = 0
         for s in dev:
             if d == '-':
@@ -90,7 +95,8 @@ def main():
         for k in agg:
             if not agg[k]['act']: continue
             r[k] = dict(point_score_a=ci(agg[k]['sa']), point_score_b=ci(agg[k]['sb']), point_stg=ci(agg[k]['stg']),
-                        point_ray_deg=ci(agg[k]['ray']), amp_hit=ci(agg[k]['hit']), amp_mean=ci(agg[k]['amp']), act_03=ci(agg[k]['act']))
+                        point_ray_deg=ci(agg[k]['ray']), amp_hit=ci(agg[k]['hit']), amp_mean=ci(agg[k]['amp']), act_03=ci(agg[k]['act']),
+                        count_hit=ci(agg[k]['chit']), count_abs_err=ci(agg[k]['cerr']))
         if dq: r['dq_span_rad'] = ci(dq)
         res[lab] = r
         short = {k: {m: (round(v['mean'], 3) if isinstance(v, dict) and v.get('mean') is not None else None) for m, v in r[k].items()}

@@ -27,6 +27,7 @@ Scores (benchmark, per POINT token, seconds instead of 30 fps frames): e_t = |a_
 import math
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 # Token types (11-05 user: pointing / amplitude AND semantic intent in ONE token mechanism). Group 0 = from the BEAT2 human
 # annotation (a segment [a, b], values measured on the GT motion); group 1 = from the TEXT only (g1_lexicon word category at the
@@ -164,7 +165,64 @@ def token_value(tok):
         if tgt is not None: v[:3] = np.asarray(tgt, np.float32) / POS_SCALE; m[0] = 1
         if tok.get('hand') is not None: v[3] = -1. if int(tok['hand']) == 0 else 1.; m[1] = 1
     if tok.get('amp_bin') is not None: v[4] = float(tok['amp_bin']) - 1.; m[2] = 1
+    if ty != POINT and tok.get('count') is not None:          # 11-07 count control (non-POINT annotation tokens): slot 0
+        v[0] = count_value(tok['count']); m[0] = 1
     return ty, v, m
+
+
+# ---------------------------------------------------------------- counts (11-07 §7.55 item 3: "tap / raise N times")
+# count of a span = strokes of the span's dominant hand (larger wrist bounding-box diagonal inside the span): local maxima of the
+# smoothed wrist speed (moving average COUNT_SMOOTH frames at 50 Hz) that exceed every neighbour within +-COUNT_HALF frames and the
+# action speed threshold (APEX.json, 25th pct of train peak speeds), capped at COUNT_MAX ('4 or more'). The hard count (labels,
+# evaluation) and the soft count (training loss) are the same expression with indicators vs sigmoids.
+COUNT_MAX, COUNT_SMOOTH, COUNT_HALF, COUNT_SPAN = 4, 4, 5, (0.1, 4.0)
+COUNT_BETA_H, COUNT_BETA_N = 20.0, 100.0      # 1 / (m/s) sharpness of the soft height / neighbour sigmoids
+
+
+def count_value(n):
+    return (min(int(n), COUNT_MAX) - COUNT_MAX / 2) / (COUNT_MAX / 2)
+
+
+def count_of_value(v):
+    return int(round(float(v) * (COUNT_MAX / 2) + COUNT_MAX / 2))
+
+
+def count_speed(wrist):
+    """wrist [..., T, 2, 3] (m, 50 Hz) -> smoothed speed [..., T, 2] (m/s)."""
+    w = torch.as_tensor(wrist).float()
+    v = torch.linalg.norm(w[..., 1:, :, :] - w[..., :-1, :, :], dim=-1) * 50.
+    v = torch.cat([v[..., :1, :], v], -2)
+    sh = v.shape; x = v.movedim(-2, -1).reshape(-1, 1, sh[-2])
+    x = F.pad(x, (COUNT_SMOOTH // 2, COUNT_SMOOTH - 1 - COUNT_SMOOTH // 2), mode='replicate')
+    x = F.avg_pool1d(x, COUNT_SMOOTH, 1)
+    return x.reshape(*sh[:-2], sh[-1], sh[-2]).movedim(-1, -2)
+
+
+def peak_score(sp, thr, soft=False):
+    """sp [..., T, H] -> per-frame peak indicator (hard) or soft score in [0, 1]."""
+    T = sp.shape[-2]; pad = torch.full_like(sp[..., :COUNT_HALF, :], -1.)
+    x = torch.cat([pad, sp, pad], -2)
+    f = (lambda d, b: torch.sigmoid(b * d)) if soft else (lambda d, b: (d > 0).float())
+    out = f(sp - thr, COUNT_BETA_H)
+    for j in range(1, COUNT_HALF + 1):
+        out = out * f(sp - x[..., COUNT_HALF - j:COUNT_HALF - j + T, :], COUNT_BETA_N) \
+                  * f(sp - x[..., COUNT_HALF + j:COUNT_HALF + j + T, :], COUNT_BETA_N)
+    return out
+
+
+def span_hand(wrist_span):
+    """wrist_span [L, 2, 3] -> dominant hand (larger bounding-box diagonal)."""
+    w = torch.as_tensor(wrist_span).float()
+    return int(torch.argmax(torch.linalg.norm(w.amax(0) - w.amin(0), dim=-1)))
+
+
+def count_np(wrist, fa, fb, thr, sp=None):
+    """hard count of frames [fa, fb) of one clip; wrist [T, 2, 3] numpy / torch. sp = precomputed count_speed(wrist)."""
+    w = torch.as_tensor(np.asarray(wrist)).float(); fa, fb = max(0, int(fa)), min(len(w), int(fb))
+    if fb - fa < 2: return None
+    sp = count_speed(w) if sp is None else sp
+    h = span_hand(w[fa:fb])
+    return min(int(peak_score(sp, thr)[fa:fb, h].sum()), COUNT_MAX)
 
 
 def group_of(ty):

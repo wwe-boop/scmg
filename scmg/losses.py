@@ -118,6 +118,12 @@ class StageCfg:
     ctl_cf_p: float = 0.0          # 11-06 counterfactual control: P(sample's kept POINT tokens get ANOTHER token's target, rolled over
                                    # the batch); their segment [a - 0.3, b + 0.3] is removed from the flow loss and only the ray loss
                                    # (w_ctl_aux, toward the swapped target) supervises it -> following the token is the only way down
+    # 11-07 §7.55 item 3 count control (default off): soft-count loss on the assembled decoded target frames of every kept count
+    # token (scmg/ctl.py peak_score soft = the evaluation's hard count with sigmoids), and counterfactual counts (P per sample: every
+    # kept count token gets a different random count 0..4, the loss pulls toward it). ctl_count_thr = APEX.json action speed (m/s).
+    w_ctl_count: float = 0.0
+    ctl_cf_count_p: float = 0.0
+    ctl_count_thr: float = 0.5918
     w_ctl_aux: float = 0.0         # pointing-ray loss on the decoded apex frame of kept POINT tokens: 1 - cos(elbow->wrist ray,
                                    # wrist->target), official FK (needs the decode path; weighted like w_cont by the noise level)
 
@@ -271,6 +277,13 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
                 newv = cval.clone(); newv[bi, ji, :3] = cval[bi[src], ji[src], :3]
                 cval = torch.where(cf[..., None], newv, cval)
             else: cf = torch.zeros_like(pt)
+        if sc.ctl_cf_count_p > 0:
+            from .ctl import POINT, COUNT_MAX, count_value
+            isc = cm & (batch['ctl_type'] != POINT) & (batch['ctl_g'] == 0) & (cvm[..., 0] > 0)
+            ccf = isc & r(sc.ctl_cf_count_p)[:, None]
+            n0 = torch.round(cval[..., 0] * (COUNT_MAX / 2) + COUNT_MAX / 2)
+            n1 = torch.remainder(n0 + torch.randint(1, COUNT_MAX + 1, n0.shape, device=dev), COUNT_MAX + 1)
+            cval = cval.clone(); cval[..., 0] = torch.where(ccf, (n1 - COUNT_MAX / 2) / (COUNT_MAX / 2), cval[..., 0])
         u = model.ctl_embed(batch['ctl_type'].long() * cm.long(), cval, cvm)
         nowk = torch.arange(K, device=dev).float() * CHUNK_FRAMES / 50.
         if sc.p_async > 0:                # arrives with the word it is attached to; time known once voiced (streaming samples)
@@ -288,7 +301,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         qsec = model.flow_seconds(torch.arange(K, device=dev), cfg.ctx + CHUNK, cfg.ctx)
         cc = model.ctl_flow_cond(u, ct, keep, timed, qsec)
         if cc is not None: ctl_c = cc.flatten(0, 1)
-        ctl = dict(cm=cm, keep=keep, qsec=qsec, cval=cval, cf=cf)
+        ctl = dict(cm=cm, keep=keep, qsec=qsec, cval=cval, cf=cf, cvm=cvm)
     if getattr(cfg, 'ret', False) and 'ret_t' in batch:      # retrieved exemplars: arrive with their word, used once their time is known
         from .ctl import anchor_arrival, visibility
         rt = batch['ret_t'].float(); rm = batch['ret_m'].bool() & torch.isfinite(rt) & ~r(sc.ret_drop)[:, None]
@@ -592,7 +605,8 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         loss = loss + sc.w_int * out['intent']
 
     # ---- decoded continuity / rhythm
-    if sc.w_cont > 0 or sc.w_rhy > 0 or sc.w_phys > 0 or sc.w_foot > 0 or sc.w_safe > 0 or (sc.w_ctl_aux > 0 and ctl is not None):
+    if sc.w_cont > 0 or sc.w_rhy > 0 or sc.w_phys > 0 or sc.w_foot > 0 or sc.w_safe > 0 or \
+            ((sc.w_ctl_aux > 0 or sc.w_ctl_count > 0) and ctl is not None):
         x1hat = torch.where(known[..., None], x1i, xt + (1 - t[..., None]) * v)
         # decode with the context the streamer has: 3 more history chunks before the known context (the decoder looks
         # ~7 latents back) and the next chunk's first latent as look-ahead (inference emits a frame only once the latent
@@ -636,6 +650,9 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         if sc.w_ctl_aux > 0 and ctl is not None:
             out.update(ctl_ray_loss(y.float() * qs + qm, batch, ctl, fv * w_inst[:, None], B, K))
             loss = loss + sc.w_ctl_aux * out['ctl_ray']
+        if sc.w_ctl_count > 0 and ctl is not None:
+            out.update(ctl_count_loss(y.float() * qs + qm, batch, ctl, fv * w_inst[:, None], B, K, sc.ctl_count_thr))
+            loss = loss + sc.w_ctl_count * out['ctl_count']
         if sc.w_phys > 0:
             out.update(phys_reg(y, fv * w_inst[:, None], qm, qs, sc))
             loss = loss + sc.w_phys * (out['phys_joint'] + sc.phys_dyn_w * out['phys_dyn'] + sc.phys_coll_w * out['phys_coll'])
@@ -684,6 +701,43 @@ def ctl_ray_loss(yp, batch, ctl, fw, B, K):
     cos = F.cosine_similarity(w_ - e_, tgt - w_, dim=-1)
     wt = fw[m, lf]
     return dict(ctl_ray=((1 - cos) * wt).sum() / wt.sum().clamp(min=1e-3), ctl_ray_n=torch.tensor(float(len(bi)), device=dev))
+
+
+def ctl_count_loss(yp, batch, ctl, fw, B, K, thr):
+    """yp [M = B K, 2 CF, J] decoded [ctx | target] frames (physical), fw [M, 2 CF]. The target halves of the K chunks of a sample
+    form its window estimate; for every kept count token (non-POINT annotation token with count slot, visible to the chunk of its
+    span start, whole span supervised): smooth-L1(soft count of the span, given count) ('4 or more': hinge below 4)."""
+    from .common import EMBODIMENT
+    if EMBODIMENT != 'g1': raise ValueError('StageCfg.w_ctl_count is the G1 count term (SCMG_J=39)')
+    from .ctl import POINT, COUNT_MAX, arm_points, count_speed, peak_score
+    dev = yp.device; CF = CHUNK_FRAMES; T = K * CF
+    cvm = ctl.get('cvm', batch['ctl_vm']); cval = ctl['cval']
+    fa = torch.round(torch.nan_to_num(batch['ctl_a'].float(), -1e3) * 50.).long()
+    fb = torch.round(torch.nan_to_num(batch['ctl_b'].float(), -1e3) * 50.).long()
+    ka = torch.div(fa.clamp(min=0), CF, rounding_mode='floor').clamp(max=K - 1)
+    ok = ctl['cm'] & (batch['ctl_type'] != POINT) & (batch['ctl_g'] == 0) & (cvm[..., 0] > 0) & (fa >= 0) & (fb <= T) & (fb - fa >= 2)
+    ok = ok & torch.gather(ctl['keep'], 1, ka[:, None, :]).squeeze(1)
+    yw = yp.view(B, K, 2 * CF, -1)[:, :, CF:].reshape(B, T, -1)
+    fw_ = fw.view(B, K, 2 * CF)[:, :, CF:].reshape(B, T)
+    fr = torch.arange(T, device=dev)
+    insp = (fr[None, None] >= fa[..., None]) & (fr[None, None] < fb[..., None])                  # [B, Kc, T]
+    ok = ok & ((fw_[:, None] > 0) | ~insp).all(-1)
+    bi, ji = ok.nonzero(as_tuple=True)
+    if len(bi) == 0: return dict(ctl_count=yp.sum() * 0., ctl_count_n=torch.zeros((), device=dev))
+    ub, inv = torch.unique(bi, return_inverse=True)
+    w = arm_points(yw[ub][..., 10:39])['wrist']                                                  # [nb, T, 2, 3]
+    ps = peak_score(count_speed(w), thr, soft=True)                                               # [nb, T, 2]
+    m = insp[bi, ji].float()                                                                      # [n, T]
+    wd = w.detach()[inv]
+    big = torch.where(m[..., None, None] > 0, wd, torch.full_like(wd, -1e3)).amax(1)
+    sml = torch.where(m[..., None, None] > 0, wd, torch.full_like(wd, 1e3)).amin(1)
+    hand = torch.linalg.norm(big - sml, dim=-1).argmax(-1)                                        # [n]
+    soft = (ps[inv, :, :].gather(2, hand[:, None, None].expand(-1, T, 1)).squeeze(-1) * m).sum(-1)
+    n = torch.round(cval[bi, ji, 0] * (COUNT_MAX / 2) + COUNT_MAX / 2)
+    l = torch.where(n >= COUNT_MAX, F.relu(COUNT_MAX - soft), F.smooth_l1_loss(soft, n, reduction='none'))
+    wt = (fw_[bi] * m).sum(-1) / m.sum(-1).clamp(min=1)
+    return dict(ctl_count=(l * wt).sum() / wt.sum().clamp(min=1e-3), ctl_count_n=torch.tensor(float(len(bi)), device=dev),
+                ctl_count_abs=(soft.detach() - n).abs().mean())
 
 
 _PHYS = {}

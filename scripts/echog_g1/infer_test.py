@@ -36,7 +36,9 @@ CTL_MODES = {
     'amp0': 'gt, every amplitude bin forced to 0 (small)', 'amp2': 'gt, every amplitude bin forced to 2 (large)',
     'shift': 'gt, annotation tokens moved +1.0 s (t, a, b, apex; dropped past the clip end - 0.3 s)',
     'pred': 'semantic-class tokens (no values) predicted from the prefix-causal text by g1_sem_predictor.py (deployable)',
-    'predlex': 'pred + the lexical tokens (deployable)'}
+    'predlex': 'pred + the lexical tokens (deployable)',
+    'nocount': 'gt without the count slot (11-07 count control: count tokens of g1_ctl_counts.py removed)',
+    'count_shuffle': 'gt, every count replaced by a different random count 0..4 (seeded)'}
 
 
 # 11-06 guard: process-global switches read by scmg at import / inference time. A non-default value silently changes every
@@ -98,6 +100,10 @@ def ctl_plan(d, mode, stems, dur, pred=None):
                 if t['type'] == ctl.POINT:
                     dx, di = donor[(x, i)]; dt_ = raw[dx][di]; t.update(target=dt_['target'], hand=dt_['hand'], shuffled_from=f'{dx}:{di}')
                 if ann(t): t['amp_bin'] = int(rng.integers(3))
+        elif mode == 'nocount': ts = [dict(t, count=None) for t in ts]
+        elif mode == 'count_shuffle':          # every count replaced by a different random count (fixed rng, before sharding)
+            for t in ts:
+                if t.get('count') is not None: t.update(count=int((t['count'] + rng.integers(1, 5)) % 5), count_from=t['count'])
         elif mode in ('amp0', 'amp2'):
             for t in ts:
                 if ann(t): t['amp_bin'] = int(mode[-1])

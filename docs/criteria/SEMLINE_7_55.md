@@ -40,3 +40,22 @@ Passes when ALL hold (control = egctrl):
 3. FGD(egsemt own) ≤ FGD(egctrl own) + 0.05 (means of 3 seeds);
 4. ΔBA within the egctrl seed range ± its spread;
 5. echog_semt.py test ALL_OK (zero-init identity, null text exact, gradients reach the module).
+
+## Item 3 on SCMG: pointing + counts (written 2026-11-07 before the run; scripts/semantic/ctl_count_g1.sh)
+Count labels (g1_ctl_counts.py, scmg/ctl.py count_np): non-POINT annotation tokens with a 0.1–4 s span get count = strokes of the
+span's dominant hand (larger wrist bounding-box diagonal): local maxima of the 4-frame-smoothed 50 Hz wrist speed above every neighbour
+within ±5 frames and above the APEX.json action speed (0.592 m/s), capped at 4 ("4 or more"). Dev: 857 tokens, distribution
+0.356 / 0.350 / 0.163 / 0.070 / 0.061, chance agreement Σp² = 0.284, majority 0.356. The evaluation applies the SAME rule to the
+generated 50 Hz motion.
+Models: ctlcnt (new: ctlcf recipe + count slot, soft-count loss w 1, counterfactual counts p 0.5, 2000 steps) and ctlcf (existing,
+4000 steps, pointing only). Inference seeds 0/1/2, per_clip, offline, CFG 2.5, 10 steps; modes none / gt (400 dev clips, official
+benchmark), shuffle, and for ctlcnt nocount / count_shuffle (annotation clips).
+Pass (3-seed means), per model:
+P1 pointing: STG(gt, given targets) − STG(none, scored against the same dev targets) ≥ +0.10, and under shuffle the STG against the
+   GIVEN targets exceeds the STG against the dev GT targets (the given target is followed);
+P2 counts (ctlcnt): count hit (gt) ≥ 2 × 0.284 = 0.569, and under count_shuffle the hit against the GIVEN counts exceeds the hit
+   against the dev GT counts; reported next to the nocount hit (empirical baseline from audio / text alone);
+P3 quality: FGD of the none AND gt runs ≤ 1.497; ΔBA within the sf0 seed range ± its spread;
+P4 tests: test_count.py ALL_OK (labels reproduced by the evaluation rule, soft limit = hard count, training reaches the modules),
+   test_ctl.py ALL_OK (default paths bitwise vs HEAD).
+Item 3 on ECHO-G is a separate step (needs a token path into the official SGDiT); not part of this run.
