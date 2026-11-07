@@ -69,3 +69,14 @@ ECHO-G; control = egctrl of that run (Wav2Vec2 kept). Passes when ALL hold: 1. p
 recording-bootstrap intervals not crossing 0, OR pair_win(egpros own) − pair_win(egpros notext) ≥ +0.10 with intervals above 0;
 2. swap text sensitivity above egctrl's; 3. FGD(egpros own) ≤ FGD(egctrl own) + 0.05; 4. ΔBA within the egctrl seed range ± spread;
 5. echog_semt.py test ALL_OK.
+
+## Pointing-only lane on SCMG at the 2000-step protocol (written 2026-11-07 before the run; scripts/semantic/ctl_point_g1.sh)
+ctlpt = the ctlcf recipe without counts (adsc + ctl + ctl_flow, ctl_w 4, w_ctl_aux 3, ctl_field_drop 0.2, ctl_cf_p 0.5, ctl_lr_scale 10,
+ctl_focus 0.5, tokens ctl-tokens-hos), hos-base warm start, 2000 steps, training seed 0. Inference seeds 0/1/2, per_clip, offline,
+CFG 2.5, 10 steps; none / gt on the 400 dev clips, shuffle on the annotation clips. Passes when ALL hold (3-seed means):
+1. STG(gt run, given targets) − STG(none run, same dev targets) ≥ +0.10;
+2. under shuffle, STG against the GIVEN targets > STG against the dev GT targets;
+3. FGD(gt run) ≤ 1.497;
+4. ΔBA (BA_signed_gap) of the gt run inside the sf0 range ± 0.003, i.e. |ΔBA| ≤ 0.0120 (sf0 seeds −0.0075 / −0.0062 / −0.0090;
+   a value closer to 0 than −0.0032 counts as inside: it is nearer the ground truth).
+If it passes, ctlpt is the controllability row.
