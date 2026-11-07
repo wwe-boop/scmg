@@ -20,3 +20,12 @@ Reported (not gates): RG penetration all pairs, RG unsafe (margin) arm/torso and
 correction RMSE, fallback frames, per-chunk solve time (p50 / p99). GT shown in every RG column (penetration 2.69 % arm/torso,
 6.79 % all pairs). Pass -> the deployed G1 safety layer becomes cbf_qp + rg pairs (test-side tables only on "run the main
 table"); fail -> negatives row + diagnosis.
+ADDENDUM 11-08 00:0x (coordinator; before the 6 dev runs finished, psync s1/s2 still running; offline s0/s1 had shown
+p99 213-247 ms per 333 ms chunk on a loaded machine): latency is a main-table column, so a 4th gate:
+  4. per-chunk safety-layer solve time (K 10 frames = 333 ms at 30 fps), measured single-process on an idle CPU (no other job of
+     ours running, load average reported), same chunked streaming protocol as safety_run (layer.step per chunk, stats 'times'):
+     cbf_qp + rg pairs p99 <= 100 ms, and the end-to-end p95 increase <= 30 ms, i.e. p95(cbf_qp + rg pairs) - p95(cbf_qp) <= 30 ms
+     (the layer runs serially after each generated chunk, so its time adds to the end-to-end latency).
+  The layer may be optimised for speed before the verdict (broad-phase prefilter / early-exit distance cap / iteration cap) only
+  if its outputs on the dev runs stay identical or the gates 1-3 are re-measured on the optimised version; the verdict uses the
+  version that is timed.
