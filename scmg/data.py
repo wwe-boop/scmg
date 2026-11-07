@@ -249,6 +249,27 @@ class View:
               f'mel check {nmel} clips', flush=True)
         return self.causal['coverage']
 
+    def restrict(self, frac=None, n_speakers=None, seed=0):
+        """11-07 data ablation: sample only a subset of the train clips (added to the holdout mask; weights() zeroes the rest).
+        n_speakers: the first N speakers of a seeded permutation of the sorted speaker list; frac: whole RECORDINGS (clip id
+        minus '_utt_NNNN') kept iff crc32(seed:recording) / 2^32 < frac. Returns a summary dict."""
+        import zlib, re as _re
+        spk = [c['items'][0].get('speaker', '') for c in self.clips]
+        keep = np.ones(len(self.clips), bool)
+        chosen = None
+        if n_speakers:
+            allspk = sorted(set(spk)); order = np.random.default_rng(seed).permutation(len(allspk))
+            chosen = sorted(allspk[i] for i in order[:int(n_speakers)])
+            keep &= np.array([x in chosen for x in spk])
+        if frac is not None and frac < 1:
+            rec = [_re.sub(r'_utt_\d+$', '', str(c['items'][0]['id'])) for c in self.clips]
+            keep &= np.array([zlib.crc32(f'{seed}:{r}'.encode()) / 2 ** 32 < frac for r in rec])
+        if not keep.any(): raise ValueError('data restriction leaves no clip')
+        self.holdout = ~keep if getattr(self, 'holdout', None) is None else (self.holdout | ~keep)
+        fr = np.array([c['frames'] for c in self.clips], np.float64)
+        return dict(clips=int(keep.sum()), of=len(keep), frames_share=float(fr[keep].sum() / fr.sum()), speakers=chosen,
+                    n_speakers=len(set(np.array(spk)[keep])))
+
     def tts_array(self, item_id):
         """[codec, 2048] fp16 memory map of one item's TTS hidden states, or None (no export)."""
         e = self.tts['index'].get(item_id)
