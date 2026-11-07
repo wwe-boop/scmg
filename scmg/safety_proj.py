@@ -353,6 +353,10 @@ class ChunkQP:
         b = np.concatenate([u[eq], u[up], -l[lo]])
         cones = ([clarabel.ZeroConeT(int(eq.sum()))] if eq.any() else []) + [clarabel.NonnegativeConeT(int(up.sum() + lo.sum()))]
         st_ = clarabel.DefaultSettings(); st_.verbose = False; st_.max_iter = 200
+        # 11-08 (EX002 3c-3b p99): KKT backend. Clarabel's 'auto' (default here, unchanged for the G1 layers) switches some chunks
+        # (larger / denser collision sets) to multithreaded faer (32 threads on the 9950X): 550-600 ms instead of 55-70 ms with qdldl,
+        # the backend of every other chunk. The EX002 runner pins SCMG_SAFETY_KKT=qdldl.
+        st_.direct_solve_method = os.environ.get('SCMG_SAFETY_KKT', 'auto')
         sol = clarabel.DefaultSolver(P, q, Ac, b, cones, st_).solve()
         status = str(sol.status)
         if not status.endswith('Solved') or 'Almost' in status and False:
@@ -608,7 +612,8 @@ class RuckigLayer(_Base):
 
 class ProjectionLayer(_Base):
     def __init__(self, lim, coll, objective='l2', K=10, B=10, w=None, d_safe=2e-3, act=0.01, max_iter=4,
-                 pos_margin=1e-5, shrink=0.995, encoder=None, window=64, steps=15, lr=None, lam=1.0, mu=1e3, smooth=0.0):
+                 pos_margin=1e-5, shrink=0.995, encoder=None, window=64, steps=15, lr=None, lam=1.0, mu=1e3, smooth=0.0,
+                 tail_smooth=1e-6):
         assert objective in ('l2', 'perceptual')
         self.lim, self.coll, self.obj, self.n = lim, coll, objective, lim.n
         J = lim.n
@@ -617,9 +622,11 @@ class ProjectionLayer(_Base):
         self.w = np.ones(J) if w is None else np.asarray(w, float)
         self.enc, self.window, self.steps, self.lr, self.lam, self.mu = encoder, window, steps, lr, lam, mu
         self.smooth = smooth
+        self.tail_smooth = tail_smooth            # 11-08: weight of the braking-tail velocity term (1e-6 = the original; EX002 1e-3)
         if objective == 'perceptual' and encoder is None:
             raise ValueError('perceptual objective needs an FGDEncoder')
         self.name = 'proj_l2' if objective == 'l2' else ('proj_perc_s' if smooth else 'proj_perc')
+        import clarabel, osqp                    # 11-08: import the solvers at construction, not inside the first chunk's budget
         self.reset()
 
     def reset(self):
@@ -642,7 +649,7 @@ class ProjectionLayer(_Base):
         tgt = np.full((N, self.n), np.nan); tgt[:k] = target_k
         W = np.tile(self.w, (N, 1))
         for it in range(self.it):
-            x, st = qp.solve(tgt, W)
+            x, st = qp.solve(tgt, W, tail_smooth=self.tail_smooth)
             self.stats['qp_solves'] += 1
             if x is None:
                 self.stats['qp_fail'] += 1; return None, qp

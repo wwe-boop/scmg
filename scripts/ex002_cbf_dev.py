@@ -9,13 +9,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 def run(a):
+    os.environ.setdefault('SCMG_SAFETY_KKT', 'qdldl')     # 11-08: pinned KKT backend (EX002_CBF_1108.md 3c-3b amendment)
     from scmg import safety_proj as S
     from scmg.safety_ex002_3f import make_cbf_3f, make_slack_3f, EX002RMLimits, K_3F
     if a.layer == 'cbf_qp': L, lim, coll = make_cbf_3f()
     elif a.layer == 'cbf_slack': L, lim, coll = make_slack_3f()
     else:                                    # proj_l2: the C3 chunk projection (module 3c-3)
         from scmg.safety_proj_ex002 import EX002Collision, B_EX
-        lim = EX002RMLimits(); coll = EX002Collision(lim.E); L = S.ProjectionLayer(lim, coll, 'l2', K=K_3F, B=a.B or B_EX, d_safe=1e-3); L.start = 'rest'; L.reset()
+        lim = EX002RMLimits(); coll = EX002Collision(lim.E); L = S.ProjectionLayer(lim, coll, 'l2', K=K_3F, B=a.B or B_EX, d_safe=1e-3, tail_smooth=a.tail_smooth); L.start = 'rest'; L.reset()
     src = Path(a.src) / a.proto / f's{a.seed}'; out = Path(a.out) / a.proto / f's{a.seed}'; out.mkdir(parents=True, exist_ok=True)
     for g in (Path(a.src) / a.proto).glob('gt_*.npy'):
         d = Path(a.out) / a.proto / g.name
@@ -57,5 +58,6 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser(); sp = ap.add_subparsers(dest='cmd', required=True)
     r = sp.add_parser('run'); r.add_argument('--src', required=True); r.add_argument('--out', required=True); r.add_argument('--proto', required=True)
     r.add_argument('--seed', type=int, required=True); r.add_argument('--layer', default='cbf_qp', choices=['cbf_qp', 'cbf_slack', 'proj_l2']); r.add_argument('--B', type=int, default=0)
+    r.add_argument('--tail-smooth', type=float, default=1e-3, help='proj_l2 braking-tail velocity weight (11-08: 1e-3, chosen by conditioning)')
     c = sp.add_parser('check'); c.add_argument('--src', required=True); c.add_argument('--out', required=True)
     a = ap.parse_args(); run(a) if a.cmd == 'run' else check(a)
