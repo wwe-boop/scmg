@@ -79,4 +79,7 @@ class BaggerPool:
             s['intent'] = np.full(T, -1, np.int16); s['gest'] = np.full(T, -1, np.int16)
         if v.tts is not None:
             raise ValueError('BAgger TTS-hidden conditioning is not supported; use audio features')
+        if getattr(v, 'causal', None) is not None:      # 11-08: no causal precompute for corrective rollouts -> 'not covered' rows
+            from .data import causal_placeholder
+            s.update(causal_placeholder(v, T, f, T)); s['cz_tend'] = np.full(K, np.nan, np.float32)
         return s

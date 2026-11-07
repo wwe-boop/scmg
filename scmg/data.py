@@ -330,8 +330,7 @@ class WindowDataset(torch.utils.data.IterableDataset):
         self.bagger_share = bagger_share
         self.tail_share = tail_share        # 11-06: share of windows drawn around a speech offset of a tail clip (floor views)
         if tail_share > 0 and (view.floor is None or not view.tail_clips): raise ValueError('tail_share needs a floor view with tails')
-        if bagger_share > 0 and getattr(view, 'causal', None) is not None:
-            raise ValueError('causal inputs (cz_*) are not produced for BAgger samples')
+        # 11-08: BAgger samples carry the 'not covered' causal rows (cz_ok False -> original inputs), see BaggerPool.sample
         self.ctl_focus = ctl_focus    # 11-05: P(window placed around a random annotation control token); 0 = sampling unchanged
         if ctl_focus > 0 and not getattr(view, 'ctl_index', None): raise ValueError('ctl_focus needs View(ctl_tokens=...)')
         if bagger_share > 0:
@@ -510,6 +509,17 @@ def causal_tend(v, item_id, kn):
     return np.asarray(v.causal['tend'][r0:r0 + nr], np.float32)
 
 
+def causal_placeholder(v, T, f, L):
+    """the 'not covered' causal rows (cz_ok False, cz_feat = the window feat, zeros elsewhere): the loss keeps the original inputs.
+    Used by causal_rows for clips outside the precompute and (11-08) by BAgger samples, which have no causal precompute."""
+    from .common import CHUNK, U80
+    from .causal_feat import FRONT_COLS, stream_lat_grid
+    cz = v.causal; grid = stream_lat_grid(T // CHUNK_FRAMES, cz['horizons'], CHUNK, U80)
+    return dict(**({'cz_spkmean': cz['spk_mean']} if 'spk_mean' in cz else {}), cz_ok=np.bool_(False), cz_feat=f.copy(),
+                cz_pro=np.zeros((len(grid), T, len(FRONT_COLS)), np.float32), cz_spk=np.zeros((5, SPK), np.float32), cz_spkv=np.zeros(5, np.float32),
+                cz_spkt=np.array([min(50 * g, L) for g in (1, 2, 4, 8)] + [L], np.int64))
+
+
 def causal_rows(v, c, s, n, T, f):
     """cz_* sample keys (training-matched causal inputs, 11-05; window = clip frames [s, s + n), T rows):
       cz_ok    bool: the clip (one item) is in the precompute
@@ -526,9 +536,7 @@ def causal_rows(v, c, s, n, T, f):
     from .causal_feat import FRONT_COLS, front_prosody, stream_lat_grid
     cz = v.causal; it = c['items'][0]; L = c['frames']
     grid = stream_lat_grid(T // CHUNK_FRAMES, cz['horizons'], CHUNK, U80)
-    out = dict(**({'cz_spkmean': cz['spk_mean']} if 'spk_mean' in cz else {}), cz_ok=np.bool_(False), cz_feat=f.copy(), cz_pro=np.zeros((len(grid), T, len(FRONT_COLS)), np.float32),
-               cz_spk=np.zeros((5, SPK), np.float32), cz_spkv=np.zeros(5, np.float32),
-               cz_spkt=np.array([min(50 * g, L) for g in (1, 2, 4, 8)] + [L], np.int64))
+    out = causal_placeholder(v, T, f, L)
     e = cz['index'].get(it['id']) if len(c['items']) == 1 else None
     if e is not None and 'feat' not in e: e = None   # an item's token-end entry of a recording precompute
     if e is None:                                    # 11-07 EX002: a recording entry (precompute_causal --recording)
