@@ -186,6 +186,8 @@ def main():
     ap.add_argument('--save-every', type=int, default=2000); ap.add_argument('--eval-every', type=int, default=1000)
     ap.add_argument('--log-every', type=int, default=50)
     ap.add_argument('--unfreeze-flow', action='store_true')
+    ap.add_argument('--train-only', default=None, help='11-07: comma-separated parameter-name prefixes; every other parameter is '
+                    'frozen (requires_grad False: its weights and EMA stay bitwise those of --init), e.g. ctl_ (default: all train)')
     ap.add_argument('--cfg', default='{}', help='JSON overrides of the model Config (e.g. ablations)')
     ap.add_argument('--sc', default='{}', help='JSON overrides of the StageCfg')
     ap.add_argument('--semsynth-share', type=float, default=0.4)
@@ -317,6 +319,9 @@ def main():
             if a.unfreeze_flow:
                 for n, p in model.named_parameters():
                     if n.startswith(('flow.', 'f_')): p.requires_grad_(True)
+    if a.train_only:
+        pref = tuple(x for x in a.train_only.split(',') if x)
+        for n, p in model.named_parameters(): p.requires_grad_(n.startswith(pref))
     params = [p for p in model.parameters() if p.requires_grad]
     n_train = sum(p.numel() for p in params); n_all = sum(p.numel() for p in model.parameters())
     if rank == 0: print(f'stage {a.stage}: trainable {n_train / 1e6:.2f}M / {n_all / 1e6:.2f}M', flush=True)

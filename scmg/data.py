@@ -587,6 +587,16 @@ def load_ctl_tokens(d, view_dir, items, clips, split):
 
 
 def collate(batch):
+    keys = set(batch[0])
+    if any(set(b) != keys for b in batch[1:]):
+        # 11-07: windows of a source without control tokens (e.g. BAgger samples next to a --ctl-tokens view) get the padding
+        # control arrays (type 0 = no token, times NaN); any other key mismatch is still an error
+        allk = set().union(*map(set, batch)); miss = {k for k in allk if any(k not in b for b in batch)}
+        if not all(k.startswith('ctl_') for k in miss): raise KeyError(f'collate: inconsistent sample keys {sorted(miss)}')
+        ref = {k: next(b[k] for b in batch if k in b) for k in miss}
+        pad = lambda k: np.full_like(ref[k], np.nan) if k in ('ctl_t', 'ctl_a', 'ctl_b', 'ctl_apex') else np.zeros_like(ref[k])
+        batch = [dict(b, **{k: pad(k) for k in miss if k not in b}) for b in batch]
+        keys = [k for k in batch[0]]
     return {k: torch.as_tensor(np.stack([b[k] for b in batch])) for k in batch[0]}
 
 

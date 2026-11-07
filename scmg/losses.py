@@ -166,6 +166,11 @@ class StageCfg:
     yield_rest_s: float = 1.4
     yield_human: str = ''
     ctl_count_thr: float = 0.5918
+    # 11-07 EX002 finger commands (default off): soft extended-finger count loss (w_ctl_finger) and counterfactual counts
+    w_ctl_finger: float = 0.0
+    w_ctl_ray_el: float = 0.0      # 11-08 module 7 (default off): extra elevation term 1 - cos(el(ray) - el(wrist -> target)) on the POINT apex frame
+    w_ctl_raise: float = 0.0       # 11-08 module 7 (default off): hinge relu(shoulder z - 0.05 - wrist z) (m) when the target is above the shoulder
+    ctl_cf_finger_p: float = 0.0
     w_ctl_aux: float = 0.0         # pointing-ray loss on the decoded apex frame of kept POINT tokens: 1 - cos(elbow->wrist ray,
                                    # wrist->target), official FK (needs the decode path; weighted like w_cont by the noise level)
 
@@ -518,6 +523,12 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
                 newv = cval.clone(); newv[bi, ji, :3] = cval[bi[src], ji[src], :3]
                 cval = torch.where(cf[..., None], newv, cval)
             else: cf = torch.zeros_like(pt)
+        if sc.ctl_cf_finger_p > 0:        # 11-07 EX002: every kept finger command gets random counts 0..3 (P per sample)
+            from .ctl import POINT
+            isf = cm & (batch['ctl_type'] != POINT) & (batch['ctl_g'] == 0) & (cvm[..., 0] > 0)
+            fcf = isf & r(sc.ctl_cf_finger_p)[:, None]
+            rnd = (torch.randint(0, 4, cval[..., :2].shape, device=dev).float() - 1.5) / 1.5
+            cval = cval.clone(); cval[..., :2] = torch.where(fcf[..., None], rnd, cval[..., :2])
         if sc.ctl_cf_count_p > 0:
             from .ctl import POINT, COUNT_MAX, count_value
             isc = cm & (batch['ctl_type'] != POINT) & (batch['ctl_g'] == 0) & (cvm[..., 0] > 0)
@@ -885,7 +896,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
 
     # ---- decoded continuity / rhythm
     if sc.w_cont > 0 or sc.w_rhy > 0 or sc.w_phys > 0 or sc.w_foot > 0 or sc.w_safe > 0 or \
-            ((sc.w_ctl_aux > 0 or sc.w_ctl_count > 0) and ctl is not None):
+            ((sc.w_ctl_aux > 0 or sc.w_ctl_count > 0 or sc.w_ctl_finger > 0) and ctl is not None):
         x1hat = torch.where(known[..., None], x1i, xt + (1 - t[..., None]) * v)
         # decode with the context the streamer has: 3 more history chunks before the known context (the decoder looks
         # ~7 latents back) and the next chunk's first latent as look-ahead (inference emits a frame only once the latent
@@ -929,8 +940,17 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             sf = contract_loss(y.float() * qs + qm, fv_all * w_inst[:, None])   # the executable contract holds in the bridge too
             out.update(sf); loss = loss + sc.w_safe * (sf['safe_lim'] + sf['safe_lr'] + sc.safe_torso_w * sf['safe_torso'])
         if sc.w_ctl_aux > 0 and ctl is not None:
-            out.update(ctl_ray_loss(y.float() * qs + qm, batch, ctl, fv * w_inst[:, None], B, K))
+            out.update(ctl_ray_loss(y.float() * qs + qm, batch, ctl, fv * w_inst[:, None], B, K, extra=sc.w_ctl_ray_el > 0 or sc.w_ctl_raise > 0))
             loss = loss + sc.w_ctl_aux * out['ctl_ray']
+            if sc.w_ctl_ray_el > 0: loss = loss + sc.w_ctl_ray_el * out['ctl_ray_el']
+            if sc.w_ctl_raise > 0: loss = loss + sc.w_ctl_raise * out['ctl_raise']
+        if sc.w_ctl_finger > 0 and ctl is not None:
+            if '_upper' not in _EX:
+                import json as _json
+                from .data import VIEW as _V
+                _EX['_upper'] = torch.tensor(_json.load(open(f'{_V}/META.json'))['ex002']['upper'], dtype=torch.float32)
+            out.update(ctl_finger_loss(y.float() * qs + qm, batch, ctl, fv * w_inst[:, None], B, K, _EX['_upper'].to(dev)))
+            loss = loss + sc.w_ctl_finger * out['ctl_finger']
         if sc.w_ctl_count > 0 and ctl is not None:
             out.update(ctl_count_loss(y.float() * qs + qm, batch, ctl, fv * w_inst[:, None], B, K, sc.ctl_count_thr))
             loss = loss + sc.w_ctl_count * out['ctl_count']
@@ -970,11 +990,11 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     return out
 
 
-def ctl_ray_loss(yp, batch, ctl, fw, B, K):
+def ctl_ray_loss(yp, batch, ctl, fw, B, K, extra=False):
     """yp [M, 2 * CHUNK_FRAMES, J] decoded [ctx | target] frames (physical), fw [M, F] frame weights. For every kept POINT
     token visible to the chunk that contains its GT apex frame: 1 - cos(elbow -> wrist ray, wrist -> target) at that frame."""
     from .common import EMBODIMENT
-    if EMBODIMENT != 'g1': raise ValueError('StageCfg.w_ctl_aux is the G1 pointing term (SCMG_J=39)')
+    if EMBODIMENT not in ('g1', 'ex002'): raise ValueError('StageCfg.w_ctl_aux: G1 (SCMG_J=39) or EX002 (SCMG_J=34) pointing term')
     from .ctl import POINT, POS_SCALE, arm_points
     dev = yp.device
     fap = torch.round(torch.nan_to_num(batch['ctl_apex'].float(), -1e3) * 50.).long()           # [B, Kc] window frame
@@ -986,14 +1006,48 @@ def ctl_ray_loss(yp, batch, ctl, fw, B, K):
     bi, ji, kk = bi[vis], ji[vis], kk[vis]
     if len(bi) == 0: return dict(ctl_ray=yp.sum() * 0., ctl_ray_n=torch.zeros((), device=dev))
     m = bi * K + kk; lf = fap[bi, ji] - (kk - 1) * CHUNK_FRAMES                               # local frame in [ctx | target]
-    q = yp[m, lf][:, None, 10:39]                                                              # [n, 1, 29]
-    g = arm_points(q); hand = (batch['ctl_v'][bi, ji, 3] > 0).long()
-    ar = torch.arange(len(bi), device=dev)
-    w_ = g['wrist'][ar, 0, hand]; e_ = g['elbow'][ar, 0, hand]
+    hand = (batch['ctl_v'][bi, ji, 3] > 0).long(); ar = torch.arange(len(bi), device=dev)
+    if EMBODIMENT == 'ex002':                                                                 # 11-07: EX002 exact FK, base frame
+        from .ex002_ctl import points_t
+        g = points_t(yp[m, lf]); w_ = g['wrist'][ar, hand]; e_ = g['elbow'][ar, hand]
+    else:
+        q = yp[m, lf][:, None, 10:39]                                                          # [n, 1, 29]
+        g = arm_points(q)
+        w_ = g['wrist'][ar, 0, hand]; e_ = g['elbow'][ar, 0, hand]
     tgt = ctl.get('cval', batch['ctl_v'])[bi, ji, :3].float() * POS_SCALE
     cos = F.cosine_similarity(w_ - e_, tgt - w_, dim=-1)
     wt = fw[m, lf]
-    return dict(ctl_ray=((1 - cos) * wt).sum() / wt.sum().clamp(min=1e-3), ctl_ray_n=torch.tensor(float(len(bi)), device=dev))
+    out = dict(ctl_ray=((1 - cos) * wt).sum() / wt.sum().clamp(min=1e-3), ctl_ray_n=torch.tensor(float(len(bi)), device=dev))
+    if extra and EMBODIMENT == 'ex002':                                                       # 11-08 module 7 (default off)
+        el = lambda v: torch.atan2(v[..., 2], v[..., :2].norm(dim=-1).clamp(min=1e-6))
+        d = tgt - w_; out['ctl_ray_el'] = ((1 - torch.cos(el(w_ - e_) - el(d))) * wt).sum() / wt.sum().clamp(min=1e-3)
+        s_ = g['shoulder'][ar, hand]; up = (tgt[:, 2] > s_[:, 2]).float()
+        out['ctl_raise'] = (F.relu(s_[:, 2] - 0.05 - w_[:, 2]) * up * wt).sum() / wt.sum().clamp(min=1e-3)
+    return out
+
+
+def ctl_finger_loss(yp, batch, ctl, fw, B, K, upper):
+    """EX002 finger commands (11-07): for every kept non-POINT annotation token with a finger value (slots 0 / 1 = extended
+    fingers left / right, (n - 1.5) / 1.5), visible to the chunk of its time: smooth-L1 between the soft extended-finger counts
+    (scmg/ex002_ctl.py soft_counts) of the decoded frame at the token time and the commanded counts, both hands."""
+    from .common import EMBODIMENT
+    if EMBODIMENT != 'ex002': raise ValueError('StageCfg.w_ctl_finger is the EX002 finger term (SCMG_J=34)')
+    from .ctl import POINT
+    from .ex002_ctl import soft_counts
+    dev = yp.device; cvm = ctl.get('cvm', batch['ctl_vm'])
+    ft = torch.round(torch.nan_to_num(batch['ctl_t'].float(), -1e3) * 50.).long(); kt = torch.div(ft, CHUNK_FRAMES, rounding_mode='floor')
+    ok = ctl['cm'] & (batch['ctl_type'] != POINT) & (batch['ctl_g'] == 0) & (cvm[..., 0] > 0) & (ft >= 0) & (kt < K)
+    bi, ji = ok.nonzero(as_tuple=True)
+    if len(bi) == 0: return dict(ctl_finger=yp.sum() * 0., ctl_finger_n=torch.zeros((), device=dev))
+    kk = kt[bi, ji]; vis = ctl['keep'][bi, kk, ji]; bi, ji, kk = bi[vis], ji[vis], kk[vis]
+    if len(bi) == 0: return dict(ctl_finger=yp.sum() * 0., ctl_finger_n=torch.zeros((), device=dev))
+    m = bi * K + kk; lf = ft[bi, ji] - (kk - 1) * CHUNK_FRAMES
+    sc_ = soft_counts(yp[m, lf], upper)                                                        # [n, 2]
+    tg = ctl['cval'][bi, ji, :2].float() * 1.5 + 1.5
+    wt = fw[m, lf]
+    l = F.smooth_l1_loss(sc_, tg, reduction='none').mean(-1)
+    return dict(ctl_finger=(l * wt).sum() / wt.sum().clamp(min=1e-3), ctl_finger_n=torch.tensor(float(len(bi)), device=dev),
+                ctl_finger_abs=(sc_.detach() - tg).abs().mean())
 
 
 def ctl_count_loss(yp, batch, ctl, fw, B, K, thr):
@@ -1034,6 +1088,7 @@ def ctl_count_loss(yp, batch, ctl, fw, B, K, thr):
 
 
 _PHYS = {}
+_EX = {}
 
 
 def phys_reg(y, fw, qm, qs, sc, gt=None):
