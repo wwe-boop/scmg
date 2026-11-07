@@ -374,3 +374,66 @@ Liveliness guard added to the quality gates (dev, per protocol, scripts/video/st
   with the minimum-jerk ramp (like the finger override; arm joints 1-4 untouched). Gates: count hit >= 0.9; hand height >= chest
   (wrist >= shoulder - 0.20 m) on >= 80 % of command frames; palm-normal angle to forward median <= 45 deg; quality (i) / (ii) +
   liveliness guard; ramp jerk reported.
+## 7b / 8b run setup (2026-11-08 ~04:40; coordinator: base = sibag-s2 after agent A's corrected liveliness selection; gates exactly as cfc519d)
+Fresh plans seed 1110 / shuffle 20261110: PLAN_dev_m78b_dense.json (1089 events, 559 aim; sha256 2b5e232a…e44e), PLAN_dev_m78b_sparse.json
+(303 events, 164 aim; sha256 c15b311f…af5). 7b = lane-4 recipe + w_ctl_ray_az 6 / w_ctl_ray_el 6 / w_ctl_raise 2.5 (true freeze, 2000 steps).
+8b = the lane-4 control model ctl4 (sibag-s2 true freeze) with ex002_present.py plan1 (one token, present_hand) + tokens/PRESENT_WRIST.json
+(library wrist pose: left (0.050, 0.003, 0.356), right (0.069, -0.012, -0.339) rad for arm_joint5-7, 163k / 186k frames) + minimum-jerk override.
+Code exp/ctl-port (merge of exp/text-path 98169eb); liveliness guard = scripts/video/static_share.py (NORM_DEV.json) on the given runs.
+## Modules 7b / 8b result on sibag-s2 (dlctt3a4rulv5svl, LANE_DONE ~06:46 2026-11-08; DLC A800; fresh plans 1110, seeds 0-2)
+Liveliness guard reported both ways: (P) protocol guard = EVAL_PROTOCOL §5 / agent A's lively_floor_ex002.py (exp/duplex 5d6f017, read
+by path, unchanged; 13 moving upper-body points; decides pass / fail: still <= 0.033, wrist speed >= 0.308, amplitude >= 0.090, held <= 10 %,
+stutter <= 1.129); (S) my pre-registered static_share.py guard (6 points: still <= 0.038, speed >= 0.308, amp >= 0.090). Check: (P) on the
+no-token runs reproduces A's sibag-s2 numbers (offline 0.023 / 0.336 / 0.099, psync 0.022 / 0.360 / 0.101; dev GT 0.017 / 0.411 / 0.120).
+Module 7b (azimuth term 2x, elevation 2x, raise 2.5; true freeze on sibag-s2):
+- PRIMARY FAIL: median forearm angular error offline 33.2 / psync 35.2 deg (gate 25; unblended 26.0 / 29.5; no-token 49.5 / 50.9);
+  elevation above-shoulder offline -6.1 / psync -8.2 deg (gate |.| <= 5); azimuth 26.1 / 27.6 deg.
+- STG passes: offline 0.404 vs 0.245 = +0.158 [+0.137, +0.177]; psync 0.383 vs 0.242 = +0.142 [+0.122, +0.161]; shuffle follows
+  (0.403 vs 0.319; 0.382 vs 0.312).
+- Gate (i) passes: offline 90.76 <= 100.65, psync 94.56 <= 102.48. Gate (ii) FAILS: offline 100.95 plain / 101.94 override > 99.37; psync
+  107.69 / 109.76 > 101.07. Finger hit (override) 1.000; executability after CBF 100 %.
+- Liveliness (sparse given, 5b + override): (P) offline 0.021 / 0.340 / 0.097 / held 0 / stutter 1.065, psync 0.020 / 0.360 / 0.098 / 0 / 1.059
+  -> pass; (S) still 0.025-0.029, speed 0.333-0.363, amp 0.094-0.099 -> pass. Dense plan (report): amplitude 0.076 / 0.077 (< 0.090).
+- Verdict: FAIL (angular error, elevation, gate (ii)).
+Module 8b (one presentation token + library wrist pose + minimum-jerk override on ctl4):
+- Count hit 1.000 PASS. Presenting hand raised (wrist >= shoulder - 0.20 m): mean share of command frames offline 0.46 / psync 0.45 (no-token
+  0.20 / 0.16), events with >= 80 % raised 0.28 / 0.28 -> FAIL (gate 80 %). Palm-forward angle (presenting hand) 71.6 / 71.4 deg (no-token
+  75.1 / 73.3) -> FAIL (gate 45).
+- Gate (i) passes (90.74 / 94.54); gate (ii) offline 95.02 <= 99.37 passes, psync 102.59 > 101.07 FAILS. Ramp over-limit 3.3-4.7 %.
+- Liveliness (sparse given): (P) offline 0.019 / 0.346 / 0.096 / 0 / 1.054, psync 0.019 / 0.361 / 0.097 / 0 / 1.053 -> pass; (S) pass. Dense
+  (report): amplitude 0.061 / 0.059.
+- Verdict: FAIL (hand height, palm angle, psync gate (ii)).
+## Module 9 (pre-registered 2026-11-08 ~07:40, before any module-9 number): keyframe insertion with causal re-conditioning
+Coordinator diagnosis after 7b / 8b: tokens alone cannot hit precise geometry on this arm; pointing and presenting have explicit geometric
+targets, so solve for them. Post-processing + re-conditioning, no retraining (ports to a new base unchanged). Base sibag-s2; tokens = the
+lane-4 control model ctl4 (true freeze). New fresh plans seed 1111 / shuffle 20261111 (dense + sparse); seeds 0-2; offline AND psync, each
+against its own no-token C / δ (the no-token runs are sibag-s2 bitwise).
+Method (scripts/ex002/ex002_keyframe.py, default off; bench_ex002.py --inpaint-dir, default off):
+1. keyframe per command, damped least squares (Gauss-Newton + Levenberg damping, 20 iterations) on the commanded arm's 7 joints only, exact
+   FK (scmg/kinematics), joint limits = META bounds -/+ 0.03 rad, sphere-proxy self-penetration as a residual (weight 10), regularisation
+   sqrt(0.05) (q - q_seed), seeded from the token-only pose at the command time. point: forearm ray (elbow -> wrist) toward the target;
+   present (finger commands; hand with the larger count, ties -> right): wrist at shoulder + (0.30, 0.06 toward the midline, -0.12) m and
+   palm normal (cross(index base - wrist, third base - wrist)) along +-x (sign of the seed). A keyframe with penetration > 0 after the solve
+   is REJECTED (no insertion for that event; rejection share reported).
+2. insertion in joint space: minimum-jerk ramps of 0.3 s, hold [t - 0.1, t + 0.6] (point) / [t - 0.4, t + 0.4] (present); finger override
+   (minimum-jerk 0.3 s) after.
+3. causal re-conditioning: the inserted frames are encoded by the VAE and inpainted (RePaint-style latent inpainting already in
+   scmg/infer.py) on the insertion spans with cosine-ramped weights while the SAME model / tokens / seed regenerate the clip (bench_ex002
+   --inpaint-dir, offline and psync) -> the generator's history after release is the inserted motion; the keyframes are then re-applied in
+   joint space on the re-generated output (re-solved from its pose) for exact geometry. Final = re-conditioned output (no 5b blend; the
+   continuation after release is the point of the re-conditioning).
+Rows reported: token-only (5b + minimum-jerk override, no IK), IK post-processing without re-conditioning (5b + IK), module 9 (re-conditioned).
+Gates for module 9 (per protocol; primary as 7b / 8b; the angle is easy with IK, so the side gates are the real test):
+- pointing: median forearm angular error <= 25 deg; |median elevation error, above-shoulder targets| <= 5 deg; STG(given) - STG(none) >= +0.10
+  with the shuffle follow (shuffle runs get keyframes toward the SHUFFLED targets).
+- present: count hit >= 0.9; presenting hand raised (wrist >= shoulder - 0.20 m) mean share of command frames >= 0.80; palm-normal angle to
+  forward (presenting hand) median <= 45 deg.
+- quality (i) sparse FGD v2 outside +-1 s <= C + δ; (ii) sparse whole clip <= C + δ.
+- ramp jerk: share of ramp frames over the limits34 jerk limits <= token-only + 2 percentage points, for the finger ramps (ex002_exec.py
+  --ramp 0.3) and for the arm insertion ramps (ex002_keyframe.py release, same frames in both rows).
+- executability after CBF 100 % of clips.
+- liveliness: protocol guard (A's lively_floor_ex002.py: still <= 0.033, wrist speed >= 0.308, amplitude >= 0.090, held <= 10 %, stutter <= 1.129)
+  decides; my static_share guard reported; on the sparse given runs; dense plan report-only (the 7b / 8b dense amplitude drop to 0.061 noted).
+- release continuity: median over insertions of the peak arm-joint acceleration norm in +-0.1 s around the release <= the p95 of the same
+  quantity over all dev GT frames (ex002_keyframe.py release).
+Plus 2-3 qualitative renders (point and present) through the Isaac renderer.
