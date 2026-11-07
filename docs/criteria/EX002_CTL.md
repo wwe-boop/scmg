@@ -194,3 +194,9 @@ ex002_exec.py on the blended arrays (post-processing of the DLC generations; sco
   Finger hit with the override 1.000 (shuffle follows 1.000 vs 0.058); plain 0.288 / 0.350.
 Diagnosis: the obeyed pointing gesture (approach + apex + return) is not contained in +-0.6 s of the command time; cutting it to the
 blend window removes most of the STG gain. Dense whole clip 183 (report-only).
+## Module 5b (pre-registered 2026-11-08 ~00:45, before any 5b number): asymmetric command-local window
+Diagnostic used to set it (not a gate metric): mean arm-joint distance |y_given - y_none| around the sparse aim commands (seed 0)
+peaks at +0.0..+0.4 s (1.06-1.11 rad vs ~0.5 baseline) and stays elevated to about +1.0 s (pointing hold), rising from -0.4 s.
+Window: w = 1 on [t - 0.3, t + 0.9] s, cosine ramps of 0.3 s -> 0 outside [t - 0.6, t + 1.2] s (aim and finger alike). The ramp past
++1.0 s now reaches windows of gate (i), so gate (i) is real evidence again. Same gates, same scoring scripts (ex002_local_blend.py
+gains --pre / --post; the symmetric module-5 call is unchanged).

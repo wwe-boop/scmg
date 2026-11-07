@@ -10,10 +10,14 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 FPS = 50
 
 
-def weight(T, ts, inner, outer):
-    fr = np.arange(T) / FPS; w = np.zeros(T)
+def weight(T, ts, inner, outer, pre=None, post=None):
+    # symmetric (module 5): 1 for |t - t_cmd| <= inner, cosine to 0 at outer; asymmetric (5b): 1 on [t - pre, t + post], same ramp width
+    fr = np.arange(T) / FPS; w = np.zeros(T); r = outer - inner
     for t in ts:
-        d = np.abs(fr - t); x = np.clip((outer - d) / (outer - inner), 0, 1); w = np.maximum(w, 0.5 - 0.5 * np.cos(np.pi * x))
+        if pre is None: d = np.abs(fr - t) - inner
+        else: d = np.where(fr < t - pre, (t - pre) - fr, np.where(fr > t + post, fr - (t + post), 0.))
+        x = np.clip(1 - np.maximum(d, 0) / r, 0, 1) if pre is not None else np.clip((outer - np.abs(fr - t)) / r, 0, 1)
+        w = np.maximum(w, 0.5 - 0.5 * np.cos(np.pi * x))
     return w
 
 
@@ -21,6 +25,7 @@ def main():
     ap = argparse.ArgumentParser(); ap.add_argument('--none', required=True); ap.add_argument('--given', required=True)
     ap.add_argument('--plan', required=True); ap.add_argument('--out', required=True); ap.add_argument('--inner', type=float, default=.6)
     ap.add_argument('--outer', type=float, default=.9); ap.add_argument('--finger-override'); ap.add_argument('--mode', default='given')
+    ap.add_argument('--pre', type=float); ap.add_argument('--post', type=float)
     a = ap.parse_args()
     from ex002_ctl_run import finger_override, tokens_for
     P = json.loads(Path(a.plan).read_text()); by = {}
@@ -29,7 +34,7 @@ def main():
     shapes = json.loads(Path(a.finger_override).read_text())['shapes'] if a.finger_override else None
     for f in sorted(n1.glob('*.npy'), key=lambda p: int(p.stem)):
         ci = int(f.stem); y1 = np.load(f); y0 = np.load(n0 / f.name); T = min(len(y0), len(y1)); y0, y1 = y0[:T], y1[:T]
-        w = weight(T, [e['t'] for e in by.get(ci, [])], a.inner, a.outer)[:, None]
+        w = weight(T, [e['t'] for e in by.get(ci, [])], a.inner, a.outer, a.pre, a.post)[:, None]
         y = ((1 - w) * y0 + w * y1).astype(np.float32)
         if shapes is not None: y = finger_override(y, tokens_for(by.get(ci, []), a.mode), shapes)
         np.save(out / f.name, y)
