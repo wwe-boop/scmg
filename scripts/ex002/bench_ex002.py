@@ -99,6 +99,11 @@ def infer(a):
                                   spk_refresh=a.spk_refresh, feat_mode=a.causal_feat)
             kw = dict(H=2 * U80, text_mode='voiced', x2_rate=15., x2_lag=0.15, deploy_timing=True, causal_inputs=ci_)
         if a.ctl_lookahead > 0 and 'ctl_type' in cond: kw['ctl_lookahead'] = a.ctl_lookahead
+        if a.inpaint_dir and (Path(a.inpaint_dir) / f'{ci}.npz').exists():   # 11-08 module 9 (default off): keyframe re-conditioning
+            from scmg.common import CHUNK
+            from ex002_keyframe import make_inpaint
+            ip_ = make_inpaint(Path(a.inpaint_dir) / f'{ci}.npz', m, vae, torch.as_tensor(qm, device=dev), torch.as_tensor(qs, device=dev), nch * CHUNK + 16, int(seed) % (2 ** 31), dev)
+            if ip_ is not None: kw['inpaint'] = ip_
         cmd, _, tk = generate(m, vae, s['feat'], cond, st, nch, steps=a.steps, seed=seed, standby=qm, ctx_t=m.ctx_t, cfg_w=a.cfg_w, **kw)
         y = cmd[:L].astype(np.float32)
         np.save(o, y)
@@ -149,6 +154,7 @@ def main():
     p.add_argument('--spk-refresh', default='grades', choices=['tick', 'grades']); p.add_argument('--causal-feat', default='inc', choices=['prefix', 'inc'])
     p.add_argument('--plan', default=None, help='11-08 (default off): ex002_ctl_run plan; with --mode given / shuffle its commands become control tokens')
     p.add_argument('--mode', default='none', choices=['none', 'given', 'shuffle'])
+    p.add_argument('--inpaint-dir', default=None, help='11-08 module 9 (default off): <ci>.npz of ex002_keyframe.py insert -> latent inpainting of the insertion spans')
     p.add_argument('--ctl-lookahead', type=float, default=0., help='streaming: commands visible this many s before their time (0 = generate default)')
     p = sub.add_parser('eval'); p.add_argument('--out', required=True); p.add_argument('--gt-as-gen', action='store_true', help='sanity: GT scored as the generation (FGD v2 = 0)')
     p.add_argument('specs', nargs='+')
