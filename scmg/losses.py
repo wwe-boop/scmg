@@ -348,9 +348,9 @@ def yield_cf_prepare(model, vae, batch, sc, stats, stream, H, K, x1, q):
 
 
 def ycf_sil(stats, dev):
-    """normalised feat89 row of digital silence (infer_interrupt SIL_RAW: logmel log(1e-6), prosody 0)."""
+    """normalised feat89 row of digital silence (logmel log(1e-6) in float16 = -13.8125 as causal_feat emits it, prosody 0)."""
     import numpy as _np
-    raw = _np.concatenate([_np.full(80, _np.log(1e-6)), _np.zeros(9)]).astype(_np.float32)
+    raw = _np.concatenate([_np.full(80, _np.log(1e-6)), _np.zeros(9)]).astype(_np.float16).astype(_np.float32)   # f16 as causal_feat
     fm = _np.asarray(stats['fm_raw'], _np.float32); fsd = _np.asarray(stats['fs_raw'], _np.float32)
     return torch.as_tensor((raw - fm) / fsd, device=dev)
 

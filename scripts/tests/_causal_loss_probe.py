@@ -24,7 +24,7 @@ m, _ = build_model(dict(prev['base_cfg']), dict(prev['extra_cfg']), dict(prev['e
 for k, v in cfg.items(): setattr(m.cfg, k, v)
 m.add_modules(); m.to(dev).train()
 stats = json.loads(open(stats_p).read())
-st = dict(qm=torch.tensor(stats['q_mean'], device=dev), qs=torch.tensor(stats['q_std'], device=dev))
+st = dict(qm=torch.tensor(stats['q_mean'], device=dev), qs=torch.tensor(stats['q_std'], device=dev), fm_raw=stats['f_mean'], fs_raw=stats['f_std'])
 sc = StageCfg(**json.loads(sc_j))
 b = {k: v.to(dev) for k, v in torch.load(bp, weights_only=False).items() if k not in drop}
 torch.manual_seed(0); torch.cuda.manual_seed_all(0)
