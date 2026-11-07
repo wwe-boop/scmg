@@ -42,3 +42,11 @@ retargeted so far (of 1044), PARTIAL human refs, scratch only, not reported):
    the G1 median yield time of the SAME BEAT2 post-speech tails (79 retraction windows, interrupt-baseline-1105 dev_final _meta)
    (--tr 1.8); the EX002 median is reported next to it.
 Coordinator to confirm 1-3 before the final run (all tails retargeted).
+Addendum 11-08 01:4x (coordinator confirmed 1-3 with conditions; before any reported number):
+- collision columns: primary "retargeter WBC clearance (ours)" (release06 EX002.clearance, every frame); second column "MuJoCo
+  scene, structural-contact-limited" = scene.xml contacts minus parent-child links (116 pairs) minus pairs in >= 50 % of dev GT
+  frames (13 more); partial-set smoke: dev GT 1.3 % (WBC) vs 76 % (scene), i.e. the scene column is reported only as the
+  structural-contact-limited diagnostic.
+- RKD-post: vs all human post-speech windows; not comparable with G1's retraction-window RKD (stated in the paper). The
+  retraction-window count is re-reported with all 1044 tails; RKD-retract is a secondary column only if it reaches >= 30.
+- T_r = 1.8 s (G1, same tails), the EX002 human median next to it.

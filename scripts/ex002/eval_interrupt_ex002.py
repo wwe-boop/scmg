@@ -5,8 +5,10 @@ Motion files: 50 Hz q34 rad .npy. Methods (label=kind:dir[:ref]):
   GT:<gt dir>       the dev GT itself (gt_<ci>.npy; sanity: no interruption happened, the human keeps talking)
   GTMIS:<gt dir>    mismatched GT: another recording's GT window spliced at f_i (sanity: react / v3 near chance)
 Per interruption: react (s), v3 ratio, yield (R_sil height + 5 cm), peak jerk, kin descriptors (RKD vs the human retraction windows),
-unsafe = META joint limits | limits34 velocity | MuJoCo self-collision (scene.xml; contact pairs present in >= 50 % of dev GT
-frames = structural, excluded). Sanity rows: RKD human half-split floor.
+unsafe = META joint limits | limits34 velocity | collision: primary "retargeter WBC clearance (ours)" (release06 EX002.clearance,
+every frame); second column "MuJoCo scene, structural-contact-limited" (scene.xml contacts minus parent-child links minus pairs in
+>= 50 % of dev GT frames). RKD-post vs all human post-speech windows (not comparable with G1's retraction-window RKD); RKD-retract
+only if >= 30 retraction windows. Sanity rows: RKD-post human half-split floor, GT, mismatched GT.
     PYTHONPATH=<repo>:<mujoco> python eval_interrupt_ex002.py --interrupts I.json --human H --gt-dir G --out R.json label=kind:dir[:ref] ..."""
 import argparse, json, sys
 from pathlib import Path
@@ -17,12 +19,6 @@ import icommon_ex002 as I
 ap = argparse.ArgumentParser()
 ap.add_argument('--interrupts', required=True); ap.add_argument('--human', required=True); ap.add_argument('--gt-dir', required=True)
 ap.add_argument('--out', required=True); ap.add_argument('--per-item', default=None); ap.add_argument('--collision-stride', type=int, default=1)
-ap.add_argument('--collision', default='wbc', choices=['wbc', 'scene'],
-                help="wbc (default, 11-08): the retargeter's exact WBC-pair check (release06 smplx2ex002_3f.robot.EX002.clearance: "
-                     "runtime-rm003 349 rows, sound GJK predicate; certified the training data, GT 0 %%) on every frame; scene: raw "
-                     "scene.xml contacts minus pairs in >= 50 %% of GT frames (diagnostic only: no contact exclusions, GT ~76 %% unsafe)")
-ap.add_argument('--rkd-ref', default='all', choices=['all', 'retract'],
-                help="RKD reference windows: all human post-speech windows (default, 11-08) or only the retraction windows")
 ap.add_argument('--tr', type=float, default=None, help='B2 settle time T_r override (s); default: the human_ref median')
 ap.add_argument('--prefix', default='executed', choices=['executed', 'generated'],
                 help="B3 frames before f_i: 'executed' = the method's own uninterrupted output (what was already played; the chunk "
@@ -33,7 +29,6 @@ ap.add_argument('methods', nargs='+')
 a = ap.parse_args()
 H = json.loads(Path(a.human + '.json').read_text()); hw = np.load(a.human + '_windows.npz')
 HK_all = np.stack([I.kin_features(I.fk(w), I.SEC) for w in hw['q_ctx'].astype(np.float64)]); HK_ret = HK_all[hw['retract'].astype(bool)]
-HK = HK_all if a.rkd_ref == 'all' else HK_ret
 T_r = H['T_r'] if a.tr is None else a.tr; rest = np.array(H['rest']['R_sil']['joints']); rest_z = np.array(H['rest']['R_sil']['hand_z'])
 ints = json.loads(Path(a.interrupts).read_text())['interrupts']
 meta = json.loads((Path(a.view) / 'META.json').read_text()); ex = meta['ex002']
@@ -62,29 +57,30 @@ def contacts(q):
 
 
 gts = {ci: np.load(f'{a.gt_dir}/gt_{ci}.npy').astype(np.float64) for ci in sorted({r['ci'] for r in ints})}
-structural = set()
-if a.collision == 'scene':
-    cnt, tot = {}, 0
-    for q in gts.values():
-        for t in range(0, len(q), 10):
-            tot += 1
-            for p in contacts(q[t]): cnt[p] = cnt.get(p, 0) + 1
-    structural = {p for p, c in cnt.items() if c >= 0.5 * tot}
-else:
-    import os
-    os.environ.setdefault('MUJOCO_GL', 'disable')
-    sys.path.insert(0, '/mnt/cpfs/zbl-cpfs-new/USERS/zehan/gesture-dlc-20260928/smplx2ex002-r2-20261022/candidates/codex-dlc-release06-beat-nearoff')
-    from smplx2ex002_3f import robot as RB
-    if list(ex['names34'] if isinstance(ex['names34'], list) else eval(ex['names34'])) != RB.CONTROLLED: raise ValueError('names34 != retargeter CONTROLLED')
-    WBC = RB.EX002()
+# column 2 (diagnostic, "MuJoCo scene, structural-contact-limited"): scene.xml contacts minus adjacent links (parent-child bodies)
+# minus pairs present in >= 50 % of the dev GT frames (sampled every 10th frame)
+adjacent = {tuple(sorted((b, int(mm.body_parentid[b])))) for b in range(1, mm.nbody)}
+cnt, tot = {}, 0
+for q in gts.values():
+    for t in range(0, len(q), 10):
+        tot += 1
+        for p in contacts(q[t]) - adjacent: cnt[p] = cnt.get(p, 0) + 1
+structural = {p for p, c in cnt.items() if c >= 0.5 * tot}
+# column 1 (primary, "retargeter WBC clearance (ours)"): release06 smplx2ex002_3f.robot.EX002.clearance, every frame
+import os
+os.environ.setdefault('MUJOCO_GL', 'disable')
+sys.path.insert(0, '/mnt/cpfs/zbl-cpfs-new/USERS/zehan/gesture-dlc-20260928/smplx2ex002-r2-20261022/candidates/codex-dlc-release06-beat-nearoff')
+from smplx2ex002_3f import robot as RB
+if list(ex['names34'] if isinstance(ex['names34'], list) else eval(ex['names34'])) != RB.CONTROLLED: raise ValueError('names34 != retargeter CONTROLLED')
+WBC = RB.EX002()
 
 
 def unsafe(q, f):
     w = q[f - 1:f + I.WIN]; v = np.gradient(w, 1 / I.FPS, axis=0)[1:]; w = w[1:]
     pv = bool(((w < lo - 1e-6) | (w > hi + 1e-6)).any()); vv = bool((np.abs(v) > vmax).any())
-    if a.collision == 'scene': cv = any(contacts(w[t]) - structural for t in range(0, len(w), a.collision_stride))
-    else: cv = any(not WBC.clearance(w[t])[0] for t in range(0, len(w), a.collision_stride))
-    return dict(pos=pv, vel=vv, coll=bool(cv), any=bool(pv or vv or cv))
+    cv = any(not WBC.clearance(w[t])[0] for t in range(0, len(w), a.collision_stride))                       # primary
+    cs = any(contacts(w[t]) - adjacent - structural for t in range(0, len(w), a.collision_stride))             # column 2
+    return dict(pos=pv, vel=vv, coll=bool(cv), any=bool(pv or vv or cv), coll_scene=bool(cs), any_scene=bool(pv or vv or cs))
 
 
 def motion(kind, d, ref, r):
@@ -133,15 +129,19 @@ for spec in a.methods:
     out['react_s'] = float(np.mean(rc)) if rc else None
     v3 = np.array([x['v3_ratio'] for x in rows if x.get('v3_ratio') is not None])
     out['abrupt_v3'] = float((v3 > I.V3_RATIO).mean()) if len(v3) else None; out['v3_ratio_med'] = float(np.median(v3)) if len(v3) else None
-    for k in ('pos', 'vel', 'coll', 'any'): out[f'unsafe_{k}'] = float(np.mean([x[f'unsafe_{k}'] for x in rows]))
-    out['rkd'], out['rkd_per_feature'] = I.kin_distance(np.stack(kins), HK)
+    for k in ('pos', 'vel', 'coll', 'any', 'coll_scene', 'any_scene'): out[f'unsafe_{k}'] = float(np.mean([x[f'unsafe_{k}'] for x in rows]))
+    out['rkd_post'], out['rkd_post_per_feature'] = I.kin_distance(np.stack(kins), HK_all)       # RKD-post: all post-speech windows
+    out['rkd_retract'] = I.kin_distance(np.stack(kins), HK_ret)[0] if len(HK_ret) >= 30 else None   # secondary, only if >= 30 windows
     out['jerk_median'] = float(np.median([x['jerk'] for x in rows]))
     res[lab] = out
-    print(f"{lab:14s} n {out['n']} | yield {out['yield_rate']} ({out['yield_s']}) | v3 {out['abrupt_v3']} | RKD {out['rkd']:.3f} | unsafe {out['unsafe_any']:.4f} | react {out['react_s']}", flush=True)
-res['_meta'] = dict(T_r=T_r, T_r_source='human_ref median' if a.tr is None else 'override', rkd_ref=a.rkd_ref, collision=a.collision,
+    print(f"{lab:14s} n {out['n']} | yield {out['yield_rate']} ({out['yield_s']}) | v3 {out['abrupt_v3']} | RKD-post {out['rkd_post']:.3f} RKD-retract {out['rkd_retract']} | unsafe WBC {out['unsafe_any']:.4f} scene {out['unsafe_any_scene']:.4f} | react {out['react_s']}", flush=True)
+res['_meta'] = dict(T_r=T_r, T_r_source='human_ref median' if a.tr is None else 'override', T_r_ex002_human=H['T_r'],
+                    collision_primary='retargeter WBC clearance (ours): release06 smplx2ex002_3f EX002.clearance, runtime-rm003 349 rows',
+                    collision_scene='MuJoCo scene, structural-contact-limited: scene.xml contacts minus parent-child links minus pairs in >= 50 % of dev GT frames',
                     collision_stride=a.collision_stride, n_interrupts=len(ints), n_human_windows=int(len(HK_all)), n_human_retract=int(len(HK_ret)),
-                    n_rkd_ref=int(len(HK)),
-                    rkd_human_half_split=I.kin_distance(HK[0::2], HK[1::2])[0], rkd_all_vs_retract=I.kin_distance(HK_all, HK_ret)[0] if len(HK_ret) > 1 else None,
-                    structural_pairs=len(structural), prefix=a.prefix, rule=__doc__.split('\n')[0])
-print('RKD human half-split floor', round(res['_meta']['rkd_human_half_split'], 3), '| RKD ref', a.rkd_ref, len(HK), '| n retract', len(HK_ret), '| T_r', T_r)
+                    rkd_post_half_split=I.kin_distance(HK_all[0::2], HK_all[1::2])[0],
+                    rkd_retract_half_split=I.kin_distance(HK_ret[0::2], HK_ret[1::2])[0] if len(HK_ret) >= 30 else None,
+                    rkd_note='RKD-post (all post-speech windows) is not comparable with the G1 retraction-window RKD',
+                    adjacent_pairs=len(adjacent), structural_pairs=len(structural), prefix=a.prefix, rule=__doc__.split('\n')[0])
+print('RKD-post human half-split floor', round(res['_meta']['rkd_post_half_split'], 3), '| windows', len(HK_all), '| n retract', len(HK_ret), '| T_r', T_r, '(EX002 human', H['T_r'], ')')
 Path(a.out).write_text(json.dumps(res, indent=1))
