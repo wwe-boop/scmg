@@ -395,6 +395,8 @@ def main():
     t0 = time.time(); tl = time.time(); agg = {}; skipped = 0; ogm_state = {}
     skip_f = open(a.skip_log, 'a', buffering=1) if (a.skip_log and rank == 0) else None
     if sc is not None and sc.ogm_alpha > 0 and a.accum != 1: raise SystemExit('ogm_alpha needs --accum 1')
+    if sc is not None and sc.self_force_scope != 'all' and (a.accum != 1 or world > 1):
+        raise SystemExit('self_force_scope encoders: single process, --accum 1 only')
     best_key = 'dev_rec' if a.stage == 'vae' else 'dev_flow'
     best = json.loads((out / 'BEST.json').read_text()) if (out / 'BEST.json').exists() else dict(value=1e9, step=0)
     model.train()
@@ -413,6 +415,10 @@ def main():
                                                         **{k: float(v) for k, v in l.items() if k.startswith('_') or k.startswith('phys')})) + '\n')
                 skipped += 1; step += 1; continue
             loss.backward()
+            _fz = getattr(model, '_sf_frozen', None)
+            if _fz:                                  # self_force_scope 'encoders': this self-forced batch trains no planner / flow weight
+                for _p in _fz: _p.grad = None
+            model._sf_frozen = None
             if sc is not None and sc.ogm_alpha > 0:
                 if world > 1: raise SystemExit('ogm_alpha: single-process training only')
                 l = dict(l, **ogm_modulate(model, sc, l, ogm_state))

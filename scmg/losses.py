@@ -94,6 +94,13 @@ class StageCfg:
     self_force_cfg: float = 0.0   # >0: joint audio/text CFG; local null-audio visibility matches Streamer(cfg_null_fix=True)
     self_force_mix: float = 0.0   # per round, independently replace each generated chunk with GT with this probability
     self_force_noise: float = 0.0 # Gaussian std in normalised latent space; applied before GT mixing / padding restore
+    self_force_scope: str = 'all'  # 11-08 (default 'all' = unchanged): which parameters learn from a self-forced batch.
+                                   # 'encoders' = exposure-robust conditioning: every nn.Linear executed by the no-grad generation
+                                   # pass (planner, Local Flow and their input / output projections) gets NO gradient on that
+                                   # batch (grad None -> AdamW skips it); the gradient still flows through their activations to
+                                   # the condition encoders (audio / text / speaker / source ...). This is exactly what the
+                                   # pre-dcd50fb code did by accident (autocast weight cache filled under no_grad) -- the
+                                   # recipe of the lively EX002 sibag-s0/1/2. Single process, --accum 1 only (train.py checks).
     dim_mask: tuple = ()           # 11-04 ECHO-G G1 'leg masking' report lane (default off): motion channels with ZERO weight in
                                    # the decoded-motion losses (w_cont / rhythm unaffected: arms only); pair with the VAE's
                                    # dim_mask so the latents do not carry them at all (view META.json lists legs / root indices)
@@ -668,6 +675,12 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         # planner and the Local Flow got NO gradient (324 of 406 tensors None).  Same autocast dtype, cache off.
         from .model import autocast_dtype
         _ac = torch.autocast('cuda', dtype=autocast_dtype(), enabled=torch.is_autocast_enabled(), cache_enabled=False)
+        if sc.self_force_scope not in ('all', 'encoders'): raise ValueError(f'self_force_scope {sc.self_force_scope!r}')
+        _sf_mods, _sf_hooks = [], []
+        if sc.self_force_scope == 'encoders':     # record the Linear modules the generation pass executes (= legacy cache set)
+            for _m in model.modules():
+                if isinstance(_m, torch.nn.Linear):
+                    _sf_hooks.append(_m.register_forward_hook(lambda mod, i, o: _sf_mods.append(mod)))
         with torch.no_grad(), _ac:
             src = lat_k
             for _round in range(max(1, sc.self_force_rounds)):
@@ -712,6 +725,13 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
                     gen = torch.where(use_gt, lat_k, gen)
                 gen = torch.where(lmask.view(B, K, CHUNK)[..., None], gen, lat_k)
                 src = gen
+        for _h in _sf_hooks: _h.remove()
+        if sc.self_force_scope == 'encoders':     # train.py sets grad None for these after backward (before clipping / step)
+            _seen = {}
+            for _m in _sf_mods:
+                for _p in _m.parameters(recurse=False):
+                    if _p.requires_grad: _seen[id(_p)] = _p
+            model._sf_frozen = list(_seen.values())
         hist = gen
         if bagger is not None:
             gen = torch.where(bagger[:, None, None, None], lat_k, gen)
