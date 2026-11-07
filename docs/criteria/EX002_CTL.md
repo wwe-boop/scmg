@@ -374,3 +374,9 @@ Liveliness guard added to the quality gates (dev, per protocol, scripts/video/st
   with the minimum-jerk ramp (like the finger override; arm joints 1-4 untouched). Gates: count hit >= 0.9; hand height >= chest
   (wrist >= shoulder - 0.20 m) on >= 80 % of command frames; palm-normal angle to forward median <= 45 deg; quality (i) / (ii) +
   liveliness guard; ramp jerk reported.
+## 7b / 8b run setup (2026-11-08 ~04:40; coordinator: base = sibag-s2 after agent A's corrected liveliness selection; gates exactly as cfc519d)
+Fresh plans seed 1110 / shuffle 20261110: PLAN_dev_m78b_dense.json (1089 events, 559 aim; sha256 2b5e232a…e44e), PLAN_dev_m78b_sparse.json
+(303 events, 164 aim; sha256 c15b311f…af5). 7b = lane-4 recipe + w_ctl_ray_az 6 / w_ctl_ray_el 6 / w_ctl_raise 2.5 (true freeze, 2000 steps).
+8b = the lane-4 control model ctl4 (sibag-s2 true freeze) with ex002_present.py plan1 (one token, present_hand) + tokens/PRESENT_WRIST.json
+(library wrist pose: left (0.050, 0.003, 0.356), right (0.069, -0.012, -0.339) rad for arm_joint5-7, 163k / 186k frames) + minimum-jerk override.
+Code exp/ctl-port (merge of exp/text-path 98169eb); liveliness guard = scripts/video/static_share.py (NORM_DEV.json) on the given runs.
