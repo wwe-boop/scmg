@@ -282,8 +282,27 @@ class RetractStreamer(Streamer):
             return (1 + s) * v - s * real_ref(xt, t, known, *ra, **rk)
         return fv
 
+    rec = None; plan_noise = 0.; _pg = None
+
     def tick(self, *a, **kw):
+        """11-07 end head: with rec (a list) every post-interruption tick appends the conditional planner output of its chunk
+        (read-only); plan_noise > 0 adds N(0, plan_noise) to the history latents of that planner call (label collection)."""
         if self.due(): self._apply()
+        if not (self.applied and self.rec is not None): return self._tick_r(*a, **kw)
+        real = self.m.plan; st = dict(n=0)
+        def plan(lat, *pa, **pk):
+            st['n'] += 1
+            if st['n'] == 1 and self.plan_noise:
+                if self._pg is None: self._pg = torch.Generator(device=self.dev).manual_seed(int(self.seed_) + 1)
+                lat = lat + self.plan_noise * torch.randn(lat.shape, device=self.dev, generator=self._pg)
+            h = real(lat, *pa, **pk)
+            if st['n'] == 1: self.rec.append(dict(k=self.k, h=h[0, self._W - 1 - LOOK].float().cpu().numpy()))
+            return h
+        self.m.plan = plan
+        try: return self._tick_r(*a, **kw)
+        finally: del self.m.plan
+
+    def _tick_r(self, *a, **kw):
         if self.applied and self.diff:
             if self.retract or self.guide: raise ValueError('--diff-guide is exclusive with --retract / --yield-guide')
             self.m.flow_velocity = self._diffguided()
@@ -331,6 +350,8 @@ def main():
     ap.add_argument('--text-causal', default=None); ap.add_argument('--x2-rate', type=float, default=15.0); ap.add_argument('--x2-lag', type=float, default=0.15)
     ap.add_argument('--wav-dir', default=None); ap.add_argument('--words-dir', default=None); ap.add_argument('--pstats', default=None)
     ap.add_argument('--campplus', default='/home/xr-25b7/bulk/models-ro/campplus'); ap.add_argument('--asr-lag', type=float, default=0.5)
+    ap.add_argument('--record-plan', action='store_true', help='end head: save the post-interruption conditional planner outputs (<name>.plan.npz)')
+    ap.add_argument('--plan-noise', type=float, default=0., help='end-head label collection: N(0, s) on the planner history latents after the interruption')
     ap.add_argument('--spk-refresh', default='tick', choices=['tick', 'grades']); ap.add_argument('--causal-feat', default='prefix', choices=['prefix', 'inc'])
     a = ap.parse_args()
     if EMBODIMENT != 'g1': raise SystemExit('run with SCMG_J=39')
@@ -416,6 +437,7 @@ def main():
                                    **kw, **dict(ikw, retract=None, guide=0., floor=0))
         st = RetractStreamer(m, vae, s['feat'], cond, stats, H=H, steps=a.steps, seed=clip_seed(a.seed, a.seed_mode, stem), standby=qm, ctx_t=m.ctx_t,
                              cfg_w=a.cfg_w, cfg_t=None, noise_scale=1.0, comp=comp, diff=a.diff_guide if r is not None else 0., **kw, **ikw, **mkw)
+        if a.record_plan and r is not None: st.rec = []; st.plan_noise = a.plan_noise; st.seed_ = clip_seed(a.seed, a.seed_mode, stem)
         if r is None:
             for i in range(n_run):                               # == scmg.infer.generate (robot=None)
                 st.tick(None, None, None)
@@ -441,6 +463,10 @@ def main():
                        **({} if not cin else dict(spk_refresh=a.spk_refresh, causal_feat=a.causal_feat, post_feat_calls=sorted(set(st.causal.calls)) if st.applied else None)))
             meta = dict(real_num_frames=n30o, clip_frames30=n30)
             np.save(o.with_suffix('.q50.npy'), cmd.astype(np.float32))
+            if st.rec is not None:                               # chunk k of the (re-based) clock ends at ((k + 1) CHUNK + o) latents
+                ks = np.array([x['k'] for x in st.rec], np.int64)
+                np.savez(o.with_suffix('.plan.npz'), k=ks, h=np.stack([x['h'] for x in st.rec]).astype(np.float32), o=st.o, t_i=t_i,
+                         t_end=((ks + 1) * CHUNK + st.o) * STRIDE / 50., plan_noise=a.plan_noise)
         torch.save(dict(robot_repr=torch.from_numpy(r30), fps=30.0, representation_units='physical',
                         representation_schema='projecthermes-g1-39d-standard-v2', source=stem, generator=gen, **meta), o.with_suffix('.pt.tmp'))
         os.replace(o.with_suffix('.pt.tmp'), o)

@@ -25,7 +25,7 @@ else
   A=(--view $C/echog-g1-v1/test --split test --text-cache $C/scmg/text-e5-echog-g1-v1-test --text-causal $B/models/text-e5-causal-echog-g1-v1-test
      --wav-dir $EG/ds/audio --words-dir $CZ/words-vc)
   ssh zehan-server "cat >> $I/TEST_USAGE.jsonl" <<EOF
-{"time": "$(date -Is)", "split": "val_common subset 600 clips x 3 interrupts (interrupts_test.json)", "model": "$CK", "setting": "FINAL SYSTEM interruption column, CAUSAL psync continuation: R0causal + B2_p + B3c (frozen pipeline of final_test_r0causal.sh, continuation infer_retract --protocol psync grades/inc, psync_r0.sh, code $(cd $CODE && git rev-parse --short HEAD)), per_clip seed 0, abruptness v3", "purpose": "report: final main-table interruption column; registered before the run", "host": "xr-xx"}
+{"time": "$(date -Is)", "split": "val_common subset 600 clips x 3 interrupts (interrupts_test.json)", "model": "$CK (sha256 $(sha256sum $CK | cut -c1-16))", "setting": "FINAL SYSTEM interruption column, CAUSAL psync continuation: R0causal + B2_p + B3c (frozen pipeline of final_test_r0causal.sh, continuation infer_retract --protocol psync grades/inc, psync_r0.sh, code $(cd $CODE && git rev-parse --short HEAD)), per_clip seed 0, abruptness v3", "purpose": "report: final main-table interruption column; registered before the run", "host": "xr-xx"}
 EOF
 fi
 A+=(--ckpt $CK --vae $VAE --stats $C/scmg/STATS_echog_g1_v1.json --protocol psync --pstats $CODE/scripts/echog_g1/PROSODY_STATS_echog_g1_hos_train.json
