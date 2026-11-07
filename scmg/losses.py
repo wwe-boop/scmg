@@ -73,6 +73,9 @@ class StageCfg:
     phys_dyn_w: float = 1.0        # 11-04 landing L1: weight of the velocity/acc/jerk term inside w_phys (0 = joint limits +
                                    # self-collision only; the full term made the upper arm ~20% smaller than the human)
     phys_coll_w: float = 1.0       # weight of the self-collision term inside w_phys
+    skip_diag: bool = False        # 11-08 diagnostic (train.py --skip-log): per-term |d loss / d y| of the physics / continuity
+                                   # terms, model and GT max penetration on the same frame / pair subset (no extra random draw);
+                                   # '_'-prefixed out keys, not in the loss. Default off = bit-identical
     p_async: float = 0.0           # ADSC: among STREAMING samples, probability that the text also streams (else text final);
                                    # streaming samples never see timing of not-yet-voiced tokens (offline samples do)
     p_async_seg: float = 0.3       # text arrival unit: TTS segment (robot TTS / sentence-level engines) vs X2Streaming-TTS
@@ -927,9 +930,21 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         if sc.w_ctl_count > 0 and ctl is not None:
             out.update(ctl_count_loss(y.float() * qs + qm, batch, ctl, fv * w_inst[:, None], B, K, sc.ctl_count_thr))
             loss = loss + sc.w_ctl_count * out['ctl_count']
-        if sc.w_phys > 0:
+        if sc.w_phys > 0 and not sc.skip_diag:
             out.update(phys_reg(y, fv * w_inst[:, None], qm, qs, sc))
             loss = loss + sc.w_phys * (out['phys_joint'] + sc.phys_dyn_w * out['phys_dyn'] + sc.phys_coll_w * out['phys_coll'])
+        elif sc.w_phys > 0:                                    # 11-08 skip diagnostic: the same terms + gradient / penetration probes
+            pr = phys_reg(y, fv * w_inst[:, None], qm, qs, sc, gt=gt_frames)
+            out.update({k_: v_ for k_, v_ in pr.items() if not k_.startswith('_')})
+            terms = dict(phys_joint=sc.w_phys * pr['phys_joint'], phys_dyn=sc.w_phys * sc.phys_dyn_w * pr['phys_dyn'],
+                         phys_coll=sc.w_phys * sc.phys_coll_w * pr['phys_coll'], cont=sc.w_cont * (rl['rec'] + 0.3 * rl['vel'] + 0.1 * rl['acc']))
+            loss = loss + terms['phys_joint'] + terms['phys_dyn'] + terms['phys_coll']
+            for k_, v_ in terms.items():
+                if not (y.requires_grad and v_.requires_grad): continue           # dev evaluation (no grad)
+                gy = torch.autograd.grad(v_, y, retain_graph=True, allow_unused=True)[0]
+                out[f'_gy_{k_}'] = float(gy.float().norm()) if gy is not None else 0.
+            out.update({k_: v_ for k_, v_ in pr.items() if k_.startswith('_')})
+            out['_K'] = float(K)
         if sc.w_rhy > 0:
             yt = y[:, CHUNK_FRAMES:].reshape(B, K * CHUNK_FRAMES, Jn)
             gt = gt_frames[:, CHUNK_FRAMES:].reshape(B, K * CHUNK_FRAMES, Jn)
@@ -1017,7 +1032,7 @@ def ctl_count_loss(yp, batch, ctl, fw, B, K, thr):
 _PHYS = {}
 
 
-def phys_reg(y, fw, qm, qs, sc):
+def phys_reg(y, fw, qm, qs, sc, gt=None):
     """y [M, F, J] decoded [ctx | target] frames (normalised), fw [M, F] frame weights (validity x low-noise trust).
     Returns phys_joint (hardware-limit hinge^2), phys_dyn (|v|,|a|,|j| beyond the robot's limits, relative, hinge^2),
     phys_coll (self-penetration^2 in cm^2 over a random frame / pair subset)."""
@@ -1052,4 +1067,12 @@ def phys_reg(y, fw, qm, qs, sc):
     pi = torch.randint(0, npair, (min(sc.phys_pairs, npair),), device=dev)
     pen = kin.penetration(tg[idx], pi, d_safe=0.005) * 100.                          # cm
     out['phys_coll'] = (pen ** 2).sum(-1).mean() * (npair / len(pi))
+    if gt is not None:              # skip diagnostic: same frames / pairs on the GT (no extra random draw)
+        with torch.no_grad():
+            gq = (gt.float() * qs + qm)[:, q.shape[1] // 2:].reshape(-1, q.shape[-1])
+            gp = kin.penetration(gq[idx], pi, d_safe=0.005) * 100.
+            pf = pen.detach().max(-1).values; gf = gp.max(-1).values; fpw = q.shape[1] - q.shape[1] // 2
+            out.update(_pen_max_cm=float(pf.max()), _gt_pen_max_cm=float(gf.max()), _pen_mean_cm2=float((pen.detach() ** 2).sum(-1).mean()),
+                       _gt_pen_mean_cm2=float((gp ** 2).sum(-1).mean()), _pen_argmax_window=float(idx[int(pf.argmax())] // fpw),
+                       _gt_pen_frames=float((gf > 0).float().mean()), _pen_frames=float((pf > 0).float().mean()))
     return out
