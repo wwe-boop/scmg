@@ -1,4 +1,4 @@
-# Video -> EX002 motion: robot-side re-gate and leg-region fix (quick checks, written 2026-11-07 23:15 before any run)
+# Video -> EX002 motion: robot-side re-gate and leg-region fix (quick checks, written 2026-11-07 23:08 before any run)
 
 Coordinator approval 2026-11-07 ~23:00 (user request: "看有没有神经网络动作重定向能够利用 DLC 然后将大量的真实视频转为动作，比如 B 站和 Seamless"):
 CPU-only quick checks (c)1 and (c)2; no DLC scale-up until the gates below pass and the result is reported. Secondary to the EX002
