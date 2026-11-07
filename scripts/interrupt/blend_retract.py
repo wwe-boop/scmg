@@ -28,7 +28,9 @@ ap.add_argument('--tex-smooth', type=float, default=0., help='causal EMA (s) app
 ap.add_argument('--prefix-from', default=None, help='dir of the uninterrupted outputs <stem>.pt: frames < f_i are taken from them '
                 'bit for bit (strict causality at 30 fps; the continuation file may differ there by the to30 resampling / decoder look-ahead)')
 ap.add_argument('--full-clip', action='store_true', help='inputs are uninterrupted full-clip outputs <stem>.pt (with --w0 1 --tex 0: B2 files)')
+ap.add_argument('--tr-json', default=None, help='11-07 end head: per-interrupt T_r (end_head.py apply output; overrides --tr)')
 a = ap.parse_args()
+trj = json.loads(Path(a.tr_json).read_text())['tr'] if a.tr_json else None
 rest = np.array(json.loads(Path(a.human).read_text())['rest'][a.rest]['joints'])
 rows = json.loads(Path(a.interrupts).read_text())['interrupts']
 keep = set(sorted({r['stem'] for r in rows})[::a.every])
@@ -42,7 +44,8 @@ for r in rows:
     if a.prefix_from:
         u = np.asarray(torch.load(Path(a.prefix_from) / f"{r['stem']}.pt", map_location='cpu', weights_only=False)['robot_repr'], np.float64)
         c = c.copy(); c[:f] = u[:f]
-    rr = I.retract_after(c, f, rest, a.tr)                  # f_i + 64 frames (the clip end is padded by holding)
+    tr = trj[f"{r['stem']}@{r['frac']:.1f}"]['tr'] if trj is not None else a.tr
+    rr = I.retract_after(c, f, rest, tr)                  # f_i + 64 frames (the clip end is padded by holding)
     if len(rr) > len(c): c = np.concatenate([c, np.repeat(c[-1:], len(rr) - len(c), 0)])   # full clips ending < f_i + 64
     else: rr = rr[:len(c)]
     if len(rr) < len(c): c = c[:len(rr)]
@@ -57,6 +60,6 @@ for r in rows:
             for k in range(len(hp)): sm = sm + a2 * (hp[k] - sm); hp[k] = sm
         ch = 10 + I.UPPER; y[f:, ch] += a.tex * b[:, :1] * hp[:, ch]
     x['robot_repr'] = torch.from_numpy(y.astype(np.float32))
-    x.setdefault('generator', {})['blend_retract'] = dict(source=str(a.in_dir), rest=a.rest, tr=a.tr, tb=a.tb, w0=a.w0, prefix_from=a.prefix_from, tex=a.tex, tex_tau=a.tex_tau, tex_smooth=a.tex_smooth)
+    x.setdefault('generator', {})['blend_retract'] = dict(source=str(a.in_dir), rest=a.rest, tr=tr, tr_json=a.tr_json, tb=a.tb, w0=a.w0, prefix_from=a.prefix_from, tex=a.tex, tex_tau=a.tex_tau, tex_smooth=a.tex_smooth)
     torch.save(x, out / f"{r['stem']}@{r['frac']:.1f}.pt"); n += 1
 print('BLEND_DONE', n)

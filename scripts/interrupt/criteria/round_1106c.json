@@ -1,0 +1,9 @@
+{
+ "written": "2026-11-06, before the runs of this round (after the metric change of criteria/metric_change_1106.json)",
+ "what": "dev yld model + T_r keyframe inpainting with SOFT pins (chunk restart, T_r 1.4, rest R_sil): tr2h w 0.3, tr2h w 0.5, tr2hd (critically damped trajectory target, 95 % at T_r, w 1)",
+ "dev_subset": "every 3rd sorted dev stem, 300 interruptions; audio end, chunk restart, causal prefix conditions; + safety projection (smooth 300) = _p rows",
+ "pass": {"yield_rate_min": 0.90, "abrupt_induced_max": 0.10, "rkd": "below B2_p (dev subset 1.014), clip-bootstrap 95 % interval of the difference excluding 0", "unsafe_max": 0.01},
+ "known_before_launch": {"tr2h14_p (hard pins)": {"yield": 0.919, "abrupt_induced": 0.477, "rkd": 0.463, "unsafe": 0.007},
+                         "base rate note": "continuations without any intervention score 36-48 % induced (ctrl 36.0, B3c 36.7, yld 46.3); human retraction windows 36.7 %"},
+ "if_pass": "candidate: + inference seed 1, full dev (900), then one test run (registered) together with the causal-protocol B2 / B3c / R0 rows"
+}

@@ -16,6 +16,11 @@ Metrics (hands = wrist_yaw links, pose-only official FK, pelvis frame):
                         not reached -> counted as 2.13 s; yield_rate [%, higher] = share reached within the window
   jerk    [m/s^3, lower]: peak hand jerk in [t_i - 0.1 s, t_i + 2.13 s); abrupt_rate [%, lower] = share above the human
                         post-speech P95 (human_ref.json)
+  abrupt_v3 [%, lower] (MAIN abruptness, v3 11-06, criteria/metric_change_v3_1106.json): peak hand jerk over [t_i, t_i + 1.8 s]
+                        divided by the same peak of the method's OWN uninterrupted output (same clip / seed) > 1.5
+  abrupt_induced [%, lower] (v2, secondary; MAIN abruptness 11-06 before v3, criteria/metric_change_1106.json): peak hand jerk on [t_i, t_i + 0.5 s]
+                        above the P95 of the same motion's per-sample jerk on the 2.13 s before t_i
+  abrupt_pre        : the same abrupt test on the 2.13 s before t_i (the model's own jerkiness while speaking; 11-06)
   rkd     [lower]     : retraction-kinematics distance to the human RETRACTION windows (post-speech windows whose hands are
                         above rest height at the offset and come down; rkd_all = to all post-speech windows): mean over 5 speaker-normalised
                         descriptors (icommon.kin_features: log speed ratio 0-1 s / 1-2 s after vs 1 s before, hand height
@@ -135,9 +140,13 @@ for spec in a.methods:
             n = min(len(U), f + I.WIN); PU = I.fk(U[:n])
             dev_ = np.linalg.norm(P[f:n, list(I.HANDS)] - PU[f:n, list(I.HANDS)], axis=-1).max(1) > 0.02
             row['react'] = float(np.argmax(dev_) / I.FPS) if dev_.any() else None; row['react_cens'] = (n - f) / I.FPS
+            row['v3_ratio'] = I.v3_ratio(P, PU, f)                          # 11-06 v3 main abruptness (paired counterfactual)
         for rk in rest_z:
             ty, need = I.yield_time(P, f, rest_z[rk]); row[f'need_{rk}'] = need; row[f'yield_{rk}'] = ty
         row['jerk'] = I.peak_jerk(P, f - I.PRE, f + I.WIN); row['acc'] = I.peak_acc(P, f - I.PRE, f + I.WIN)
+        row['jerk_pre'] = I.peak_jerk(P, max(0, f - I.WIN), f)          # 11-06: the same peak jerk on the 2.13 s BEFORE t_i
+        ia = I.induced_abrupt(P, f)                                       # 11-06 main abruptness (interruption-induced)
+        row['abrupt_ind'] = None if ia is None else ia[2]; row['jerk_ind_ratio'] = None if ia is None else ia[0] / max(ia[1], 1e-9)
         v = I.hand_speed(P).mean(1); row['energy'] = float(v[f + 32:f + I.WIN].mean() / max(v[max(0, f - 30):f].mean(), 1e-6))
         row.update({f'unsafe_{k}': x for k, x in unsafe(mo, f).items()})
         # the same contract on the 2.13 s BEFORE t_i (identical motion for B1 / B2 / B3 of one base output): separates the
@@ -161,6 +170,12 @@ for spec in a.methods:
     jk = np.array([x['jerk'] for x in rows]); out.update(jerk_median=float(np.median(jk)), jerk_p95=float(np.percentile(jk, 95)),
                                                        abrupt_rate=float((jk > P95).mean()), acc_median=float(np.median([x['acc'] for x in rows])))
     out['energy_median'] = float(np.median([x['energy'] for x in rows]))
+    jp = np.array([x['jerk_pre'] for x in rows]); out['abrupt_pre'] = float(np.nanmean(jp > P95))   # model's own jerkiness while speaking
+    v3 = np.array([x['v3_ratio'] for x in rows if x.get('v3_ratio') is not None])
+    out['abrupt_v3'] = float((v3 > I.V3_RATIO).mean()) if len(v3) else None; out['n_v3'] = int(len(v3))
+    out['v3_ratio_med'] = float(np.median(v3)) if len(v3) else None; out['v3_ratio_p90'] = float(np.percentile(v3, 90)) if len(v3) else None
+    ai = [x['abrupt_ind'] for x in rows if x['abrupt_ind'] is not None]
+    out['abrupt_induced'] = float(np.mean(ai)) if ai else None; out['n_induced'] = len(ai)
     for k in ('pos', 'vel', 'coll', 'any', 'pre', 'new'): out[f'unsafe_{k}'] = float(np.mean([x[f'unsafe_{k}'] for x in rows]))
     out['fgd'] = E.FGD.frechet_distance(np.concatenate(lats), H_lat)
     out['rkd'], out['rkd_per_feature'] = I.kin_distance(np.stack(kins), H_kin)
@@ -173,7 +188,7 @@ for spec in a.methods:
     res[lab] = out
     print(f"{lab:14s} n {out['n']} | react {out['react_s'] if out['react_s'] is None else round(out['react_s'], 3)} | yield {out['yield_s_R_sil']:.2f}s "
           f"rate {100 * out['yield_rate_R_sil']:.1f}% (R_gt {out['yield_s_R_gt']:.2f}s {100 * out['yield_rate_R_gt']:.1f}%) | jerk med {out['jerk_median']:.0f} "
-          f"abrupt {100 * out['abrupt_rate']:.1f}% | RKD {out['rkd']:.3f} (all {out['rkd_all']:.3f}) FGD {out['fgd']:.3f} | unsafe {100 * out['unsafe_any']:.1f}% (vel {100 * out['unsafe_vel']:.1f} coll "
+          f"v3 {('-' if out['abrupt_v3'] is None else f"{100 * out['abrupt_v3']:.1f}% (ratio med {out['v3_ratio_med']:.2f} p90 {out['v3_ratio_p90']:.2f})")} | v2 {100 * (out['abrupt_induced'] or 0):.1f}% | abrupt(old) {100 * out['abrupt_rate']:.1f}% (pre {100 * out['abrupt_pre']:.1f}%) | RKD {out['rkd']:.3f} (all {out['rkd_all']:.3f}) FGD {out['fgd']:.3f} | unsafe {100 * out['unsafe_any']:.1f}% (vel {100 * out['unsafe_vel']:.1f} coll "
           f"{100 * out['unsafe_coll']:.1f} pos {100 * out['unsafe_pos']:.1f}; pre {100 * out['unsafe_pre']:.1f} new {100 * out['unsafe_new']:.1f}) | energy {out['energy_median']:.2f}", flush=True)
 res['_meta'] = dict(T_r=T_r, human_jerk_p95=P95, structural=[(mujoco.mj_id2name(mm, mujoco.mjtObj.mjOBJ_BODY, x), mujoco.mj_id2name(mm, mujoco.mjtObj.mjOBJ_BODY, y)) for x, y in structural],
                     n_interrupts=len(ints), human_windows=len(HW))

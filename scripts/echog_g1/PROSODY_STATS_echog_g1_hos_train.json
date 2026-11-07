@@ -1,0 +1,18 @@
+{
+ "E_mean": -25.8922054160437,
+ "E_std": 6.6097661480212375,
+ "logf0_mean": 5.170818097531814,
+ "logf0_std": 0.3339657235759905,
+ "dur_mean": 0.28931999442320716,
+ "dur_std": 0.20661967666612904,
+ "syllables": 308421,
+ "clips": 12838,
+ "view": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/views/echog-g1-v1-hos",
+ "split": "train",
+ "n_request": 100000,
+ "seed": 0,
+ "rule": "numpy default_rng(seed).choice over the split items sorted by id; E over E > -80 dB, log f0 over voiced, duration over > 0 (scripts/feat_causality.py speaker_stats measurement)",
+ "seconds": 36.4,
+ "clip_ids_sha": "6a3f1c69d950df320820720e2a6c27779a0695d162b8c8306bbdbc35e2aa84e0",
+ "note": "read through the local mirror ~/bulk/cpfs-mirror (SCMG_LOCAL_MIRROR); audio / words: ECHO-G ds/audio, ds/annotations/words; train split only (no D-spk speakers, dev holdout or val_common)"
+}

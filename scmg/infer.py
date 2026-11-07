@@ -28,12 +28,24 @@ class Streamer:
                  standby=None, device='cuda', hist_measured=False, ctx_t=1.0, cfg_w=1.0, cfg_text=True, cfg_t=None,
                  text_mode='final', x2_rate=15.0, x2_lag=0.15, seg_lead=0.3, deploy_timing=False,
                  elastic=None, window_lm_text=False, g_override=None, trim_start=True, cfg_null_fix=True, still_refresh=None,
-                 audio_off=False, cfg_ctl=None, inpaint=None, ctl_lookahead=0.0):
+                 audio_off=False, causal_inputs=None, asr_lag=0.5, trace=None, cfg_ctl=None, inpaint=None, ctl_lookahead=0.0):
         """feat [T, 89] normalised (whole utterance; access is restricted to what has arrived);
         cond: dict(text [K,768], ttime [K] absolute s, tmask [K], spk [192], spk_valid, source, ref [R,J], ref_valid)
         (+ tts_h [T/4, 2048], tts_hm [T/4] for models with cfg.tts_h: TTS hidden rows aligned to feat frame 0, row r = frames
-        [4r, 4r+4); a row is visible exactly when the audio of its frames is -- the same arrival rule as feat)."""
-        require_causal_text(cond.get('text_c'), text_mode == 'x2', 'Streamer text_mode=x2')
+        [4r, 4r+4); a row is visible exactly when the audio of its frames is -- the same arrival rule as feat).
+        11-05 causal streaming inputs (design v5 section 3; defaults = the unchanged path, bit-identical):
+          causal_inputs: scmg.causal_feat.CausalInputs -- every tick recomputes feat89 from the arrived PCM prefix
+            (t_k = (4k + H) latents, words complete by t_k, fixed prosody statistics, committed beats) and the speaker
+            vector from the PCM prefix (empty embedding < 1 s); `feat` then only sets the clip length.
+          text_mode 'voiced' / 'asr': a token is visible once every word it overlaps is (scmg.causal_feat.visible_words =
+            ECHO-G stream_core.visible_tokens 'voiced'; 'asr' = word end + asr_lag) at the current tick: every window chunk
+            reads the visibility at min(its own start, the current chunk start), so no condition tensor of tick k
+            depends on a word finished after t_k; prefix-causal e5 rows (text_c); cond needs wtime [n_words, 2]
+            (start, end s) and tword [K, 2] (first / last word index of each token row, -1 = none). ADSC text state:
+            0 nothing / 1 partial / 2 only once the audio is final and everything is visible (the total token count is
+            future information while the audio streams).
+          trace: a list -> one dict of the tick's condition tensors (cpu) appended per tick (tests)."""
+        require_causal_text(cond.get('text_c'), text_mode in ('x2', 'voiced', 'asr'), f'Streamer text_mode={text_mode}')
         self.m, self.vae, self.dev = model.eval(), vae.eval(), device
         self.feat = torch.as_tensor(feat, device=device).float()
         self.cond = {k: torch.as_tensor(v, device=device) for k, v in cond.items()}
@@ -55,6 +67,17 @@ class Streamer:
         # at x2_rate tokens/s, never later than onset - x2_lag); 'segment' = TTS segment text arrives seg_lead s before its audio.
         # deploy_timing: token times exist only once voiced (TTS text_progress anchors) -- automatic for ADSC models.
         self.text_mode, self.deploy_timing = text_mode, deploy_timing
+        self.causal, self.trace, self.asr_lag = causal_inputs, trace, asr_lag
+        self.x2_rate, self.x2_lag = x2_rate, x2_lag
+        if text_mode in ('voiced', 'asr'):
+            if H >= INF or elastic is not None: raise ValueError(f'text_mode {text_mode} needs a fixed streaming horizon H')
+            if 'wtime' not in cond or 'tword' not in cond: raise ValueError(f'text_mode {text_mode} needs cond wtime / tword')
+            self._wt = np.asarray(cond['wtime'], np.float64).reshape(-1, 2); self._tw = np.asarray(cond['tword'], np.int64)
+            if len(self._tw) != len(cond['tmask']): raise ValueError('tword rows != tmask rows')
+        if causal_inputs is not None:
+            if H >= INF: raise ValueError('causal_inputs needs a streaming horizon H < INF')
+            if still_refresh is not None: raise ValueError('still_refresh reads the whole-clip speech flag: not with causal_inputs')
+            if causal_inputs.Tpad != self.feat.shape[0]: raise ValueError(f'causal_inputs Tpad {causal_inputs.Tpad} != feat rows {self.feat.shape[0]}')
         # elastic look-ahead (latents, max): per tick H = largest trained horizon (0/2/4/8 x 80 ms) covered by the audio that has
         # actually arrived -- the first chunk starts as soon as any audio is there, later chunks use the TTS buffer ahead
         self.elastic = elastic
@@ -92,6 +115,8 @@ class Streamer:
         # nothing below changes. cfg_ctl None: the tokens are part of the conditional branch of the existing CFG; a number: a
         # separate guidance term cfg_ctl * (v(with tokens) - v(without tokens)) on top of it (one more Local Flow pass).
         self.has_ctl = bool(getattr(model.cfg, 'ctl', False)) and 'ctl_type' in self.cond
+        from .ctl import YIELD as _YID
+        self._yield_id = _YID
         self.has_ret = bool(getattr(model.cfg, 'ret', False)) and 'ret_t' in self.cond      # 11-06 retrieved exemplars (same CFG group)
         self.cfg_ctl = cfg_ctl if (self.has_ctl or self.has_ret) else None
         if self.cfg_ctl is not None and model.cfg.mtc: raise ValueError('cfg_ctl is not implemented for mtc models')
@@ -159,6 +184,16 @@ class Streamer:
             self._tts = (None, None)
         return c0, f0, feat[None]
 
+    def _word_tvis(self, c0, W):
+        """[1, W, K] token visibility (text_mode voiced / asr) of the window chunks, evaluated at min(chunk start, now)."""
+        from .causal_feat import visible_words, token_visible
+        now_k = self.k * CHUNK_FRAMES / 50.; ahead = self.H * STRIDE / 50.
+        out = np.zeros((W, len(self._tw)), bool)
+        for w in range(W):
+            now = min((c0 + w) * CHUNK_FRAMES / 50., now_k)
+            out[w] = token_visible(visible_words(self._wt, now, ahead, self.text_mode, self.x2_rate, self.x2_lag, self.asr_lag), self._tw)
+        return torch.as_tensor(out, device=self.dev)[None]
+
     @torch.no_grad()
     def _emit(self, final=False):
         m = self.m
@@ -193,6 +228,12 @@ class Streamer:
         executed: [F, J] executed frames so far (rad), used only by the history = measured ablation."""
         m, cfg = self.m, self.m.cfg
         torch.cuda.synchronize(); t0 = time.perf_counter()
+        spk_k = None
+        if self.causal is not None:                                  # recompute from the arrived prefix (counted in the tick time)
+            Tk = min(self.feat.shape[0], (self.k * CHUNK + self.H) * STRIDE)
+            self.feat = torch.as_tensor(self.causal.feat(Tk), device=self.dev).float()
+            sv, sval = self.causal.spk(Tk)
+            spk_k = (torch.as_tensor(sv, device=self.dev).float(), torch.tensor(float(sval), device=self.dev))
         c0, f0, feat = self._window()
         W = self._W                                                  # W, or shorter at the clip start with trim_start
         cur = W - 1 - LOOK                                           # index of chunk k in the window
@@ -206,7 +247,7 @@ class Streamer:
         # chunks before the clip start do not exist: hide their audio (zeros) is enough; text times relative to window
         c = self.cond
         tt = c['ttime'] - f0 / 50.
-        raw = c['text_c'] if self.text_mode == 'x2' else c['text']   # token streaming: causal features
+        raw = c['text_c'] if self.text_mode in ('x2', 'voiced', 'asr') else c['text']   # token streaming: causal features
         text, tmask = m.text_tokens(raw[None].float(), tt[None].float(), c['tmask'][None].bool())
         tsec = m.token_seconds(tt[None].float())                    # flow_text_xattn: token times (window origin)
         tvis = lvis = sstate = None; dual = False
@@ -216,15 +257,24 @@ class Streamer:
             final = torch.tensor([self.text_mode == 'final'], device=self.dev)
             tm0 = c['tmask'][None].bool()
             nan = lambda n: torch.full((1, n), float('nan'), device=self.dev)
-            arr = (self.arr_text - f0 / 50.)[None] if self.arr_text is not None else nan(tm0.shape[1])
-            tvis = arrival_mask(arr, tm0, final, now)
+            if self.text_mode in ('voiced', 'asr'):
+                tvis = self._word_tvis(c0, W) & tm0[:, None, :]
+            else:
+                arr = (self.arr_text - f0 / 50.)[None] if self.arr_text is not None else nan(tm0.shape[1])
+                tvis = arrival_mask(arr, tm0, final, now)
             if 'tidm' in c:
                 larr = (self.arr_lm - f0 / 50.)[None] if self.arr_lm is not None else nan(c['tidm'].shape[0])
                 lvis = arrival_mask(larr, c['tidm'][None].bool(), final, now)
             if adsc_m:
                 kg = torch.arange(W, device=self.dev) + c0
                 afin = torch.full((1, W), self.H >= INF, device=self.dev) | ((kg * CHUNK + min(self.H, 10 ** 6)) * STRIDE >= self.feat.shape[0])[None]
-                sstate = stream_state(tvis, tm0, afin)
+                if self.text_mode in ('voiced', 'asr'):              # text 'final' (2) only once the audio is final
+                    nv = tvis.sum(-1); nt = tm0.sum(-1, keepdim=True)
+                    sstate = torch.where(afin & (nv >= nt), 2, torch.where(nv > 0, 1, 0)) * 2 + afin.long()
+                else:
+                    sstate = stream_state(tvis, tm0, afin)
+                if getattr(self, 'floor_k0', None) is not None:         # 11-06 floor token from chunk floor_k0 on (default off)
+                    sstate = sstate + 6 * self.floor_val * (kg >= self.floor_k0).long()[None]
             if (self.deploy_timing or adsc_m) and self.H < INF:              # timing only for tokens voiced by now + H
                 heard = now + self.H * STRIDE / 50.
                 ttw = tt.float()
@@ -241,6 +291,8 @@ class Streamer:
             nowc = torch.arange(W, device=self.dev).float() * CHUNK_FRAMES / 50.
             arr_c = (anchor_arrival((self.arr_text - f0 / 50.)[None], tt[None].float(), c['tmask'][None].bool(), ctl_tt)
                      if (self.arr_text is not None and self.text_mode != 'final') else ctl_tt)
+            if bool((c['ctl_type'] == self._yield_id).any()):         # 11-07 duplex: a YIELD event arrives at its own time
+                arr_c = torch.where((c['ctl_type'] == self._yield_id)[None], ctl_tt, arr_c)
             heard_c = (nowc + (self.H * STRIDE / 50. if self.H < INF else 1e9))[None]
             stream_c = torch.tensor([bool((self.deploy_timing or adsc_m) and self.H < INF)], device=self.dev)
             if self.ctl_lookahead > 0:
@@ -271,7 +323,13 @@ class Streamer:
                                    torch.tensor([bool((self.deploy_timing or adsc_m) and self.H < INF)], device=self.dev))
         st_flow = st_plan = None                                     # 11-07 sem_time: conditional branch only (0 without visible words)
         if getattr(cfg, 'sem_time', False): st_flow, st_plan = m.sem_time_cond(text, tmask, tvis, tsec, W)
-        g = m.global_cond(c['spk'][None].float(), c['spk_valid'][None].float(), c['source'][None].long())
+        spk, spk_valid = spk_k if spk_k is not None else (c['spk'], c['spk_valid'])
+        g = m.global_cond(spk[None].float(), spk_valid[None].float(), c['source'][None].long())
+        if self.trace is not None:
+            cv = (tvis[0, cur] if tvis is not None else tmask[0]).cpu()
+            self.trace.append(dict(k=self.k, c0=c0, feat=feat.cpu(), spk=spk.cpu(), spk_valid=spk_valid.cpu(), raw=raw.cpu(),
+                                   ttime=c['ttime'].cpu(), tmask=tmask.cpu(), tvis=None if tvis is None else tvis.cpu(), cur_vis=cv,
+                                   sstate=None if sstate is None else sstate.cpu()))
         # committed latents of the window chunks (zeros before the start)
         z = cfg.z
         def window(src):

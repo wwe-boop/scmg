@@ -72,6 +72,8 @@ class Config:
     vox_ref_gate: bool = False     # VoxCPM style reference: zero-gated add onto the speaker token (11-02 review fix) instead of
                                    # an extra LM token (which changed the base output at initialisation)
     adsc: bool = False             # Asynchronous Dual-Stream Conditioning: per-chunk text/audio visibility + stream-state token
+    floor: bool = False            # 11-06 floor-state token (0 speaking / 1 after speech, holding the floor / 2 yielding), adsc only:
+                                   # encoded as stream state + 6 * floor; row 0 fixed at zero (padding_idx) -> floor 0 = old function
     # 11-03 opt-in: Qwen3-TTS Talker hidden states (data.View(tts_hidden=...), one 2048-d row per 80 ms) projected
     # (LayerNorm -> Linear, zero-init) and ADDED to the audio-encoder input tokens; dropped / masked exactly like audio
     vox_text_xattn: bool = False   # 11-03 text route around the FSQ: chunks cross-attend to LM text-token states (voxplanner)
@@ -434,6 +436,10 @@ class SCMG(nn.Module):
             self.vox.ref_gate = nn.Parameter(torch.zeros(1))
         if cfg.adsc and not hasattr(self, 'stream_emb'):
             self._init_adsc()
+        if getattr(cfg, 'floor', False) and not hasattr(self, 'floor_emb'):
+            if not cfg.adsc: raise ValueError('floor needs adsc (the floor rides on the stream-state token)')
+            self.floor_emb = nn.Embedding(3, self.cfg.d, padding_idx=0); nn.init.zeros_(self.floor_emb.weight)
+            self.floor_emb.to(self.stream_emb.weight.device)
         if hasattr(self, 'vox') and (cfg.vox_text_xattn or cfg.vox_slots or cfg.vox_word_aux):
             self.vox.add_text_path(cfg)
         if hasattr(self, 'vox') and cfg.vox_prefsq_norm and self.vox.prefsq_norm is None:
@@ -457,10 +463,17 @@ class SCMG(nn.Module):
                 self.f_text = nn.ModuleList([WordTimeXAttn(d, cfg.heads) for _ in range(cfg.flow_layers)])
             self.f_text.to(self.f_in.weight.device)
         if getattr(cfg, 'ctl', False) and not hasattr(self, 'ctl_type'):
-            from .ctl import NV, NVM, NTYPES
+            from .ctl import NV, NVM, NTYPES, NTYPES_V1
             with torch.random.fork_rng(devices=[]):
                 torch.manual_seed(20261106)
-                self.ctl_type = nn.Embedding(NTYPES, d)                         # scmg/ctl.py TYPE_NAMES (0 = padding)
+                e1 = nn.Embedding(NTYPES_V1, d)                                 # scmg/ctl.py TYPE_NAMES (0 = padding): the same draws
+                # 11-07 duplex: rows of the appended types (YIELD) start at zero (no RNG draw: every other init is unchanged);
+                # checkpoints with NTYPES_V1 rows load with those rows padded by zeros (hook below)
+                self.ctl_type = nn.Embedding(NTYPES, d, _weight=torch.cat([e1.weight.data, torch.zeros(NTYPES - NTYPES_V1, d)]))
+                def _pad_rows(state, prefix, *args, _n=NTYPES):
+                    w = state.get(prefix + 'weight')
+                    if w is not None and w.shape[0] < _n: state[prefix + 'weight'] = torch.cat([w, torch.zeros(_n - w.shape[0], w.shape[1], dtype=w.dtype, device=w.device)])
+                self.ctl_type._register_load_state_dict_pre_hook(_pad_rows)
                 self.ctl_val = nn.Linear(NV * 2 * cfg.ctl_freqs + NVM, d)
                 self.ctl_enc = nn.Sequential(nn.SiLU(), nn.Linear(d, d))
                 self.ctl_text = nn.Linear(d, d); nn.init.zeros_(self.ctl_text.weight); nn.init.zeros_(self.ctl_text.bias)
@@ -637,12 +650,21 @@ class SCMG(nn.Module):
     def plan(self, lat, a, amask, text, tmask, g, mt=None, mt_mask=None, tids=None, tidm=None, sref=None,
              tvis=None, lvis=None, sstate=None, padd=None):
         """lat [B, K, CHUNK, z] latents of chunks 0..K-1 (teacher forcing: chunk k's input is chunk k-1);
-        a [B, N, d]; amask [B, K, N]; returns h [B, K, d]."""
+        a [B, N, d]; amask [B, K, N]; g [B, d]; returns h [B, K, d].
+        11-05 training-matched causal inputs (default shapes = the unchanged path): a [B, K, N, d] and / or g [B, K, d] =
+        the audio encoding / global condition AS OF chunk k's stream time t_k. h_k is then the planner run in which EVERY
+        position j <= k reads its audio from encoding k and the AdaLN condition g_k -- exactly what scmg.infer.Streamer does
+        at tick k (the whole window re-encoded from the prefix of t_k, one speaker vector); see _plan_as_of."""
+        if a.dim() == 4 or g.dim() == 3:
+            return self._plan_as_of(lat, a, amask, text, tmask, g, mt, mt_mask, tids, tidm, sref, tvis, lvis, sstate)
         B, K = lat.shape[:2]
         own = (amask & self._own_chunk(K, a.shape[1], a.device)[None]).float()          # visible audio of chunk k
         pooled = torch.einsum('bkn,bnd->bkd', own, a) / own.sum(-1, keepdim=True).clamp(min=1)
         pooled = torch.where(own.sum(-1, keepdim=True) > 0, pooled, self.audio_null)
-        semb = self.stream_emb(sstate) if (sstate is not None and hasattr(self, 'stream_emb')) else None
+        if sstate is not None and hasattr(self, 'floor_emb') and bool((sstate >= 6).any()):   # floor > 0 somewhere (11-06)
+            semb = self.stream_emb(sstate % 6) + self.floor_emb(torch.div(sstate, 6, rounding_mode='floor'))
+        else:
+            semb = self.stream_emb(sstate) if (sstate is not None and hasattr(self, 'stream_emb')) else None
         if self.cfg.planner == 'voxcpm':
             return self.vox(lat, pooled, tids, tidm, g, sref, lvis=lvis, semb=semb)[0]
         prev = torch.cat([self.p_start.expand(B, 1, -1), self.p_in(lat[:, :-1].flatten(-2))], 1)
@@ -655,6 +677,38 @@ class SCMG(nn.Module):
             if isinstance(blk, GatedXBlock): x = blk(x, g, causal, text, tm, mt, mt_mask)
             else: x = blk(x, g, causal, text, tm)
         return self.p_norm(x)
+
+    def _plan_as_of(self, lat, a, amask, text, tmask, g, mt, mt_mask, tids, tidm, sref, tvis, lvis, sstate):
+        """plan() with a per-target audio encoding a [B, K, N, d] (a [B, N, d] = the same for every target) and / or a
+        per-target global condition g [B, K, d]. The K target runs are folded into ONE planner pass over K x K tokens
+        (target-major, token (k, j) = position j of the run for target k): self-attention only inside a run and causal,
+        AdaLN condition g_k for every token of run k, the text cross-attention mask of position j (its own arrival time,
+        as the Streamer's window chunks), output h_k = token (k, k). With a / g identical for every target this equals
+        plan() (scripts/tests/test_causal_train.py)."""
+        if self.cfg.planner == 'voxcpm' or mt is not None:
+            raise ValueError('per-target causal inputs: chunk planner without the multi-token memory only')
+        B, K = lat.shape[:2]; dev = lat.device; d = self.cfg.d
+        N = a.shape[-2]
+        a4 = a if a.dim() == 4 else a[:, None].expand(B, K, N, a.shape[-1])
+        g3 = g if g.dim() == 3 else g[:, None].expand(B, K, g.shape[-1])
+        own = (amask & self._own_chunk(K, N, dev)[None]).float()                       # [B, K(pos j), N]
+        cnt = own.sum(-1)                                                              # [B, K(pos)]
+        pooled = torch.einsum('bjn,bknd->bkjd', own, a4) / cnt.clamp(min=1)[:, None, :, None]   # [B, K(target), K(pos), d]
+        pooled = torch.where((cnt > 0)[:, None, :, None], pooled, self.audio_null)
+        prev = torch.cat([self.p_start.expand(B, 1, -1), self.p_in(lat[:, :-1].flatten(-2))], 1)          # [B, K(pos), d]
+        x = prev[:, None] + self.p_audio(pooled) + sincos(torch.arange(K, device=dev), d)[None, None]
+        if sstate is not None and hasattr(self, 'stream_emb'): x = x + self.stream_emb(sstate)[:, None]
+        x = x.reshape(B, K * K, d)
+        tri = torch.ones(K, K, dtype=torch.bool, device=dev).tril()
+        mask = torch.block_diag(*([tri] * K))[None]                                    # [1, K*K, K*K]
+        tm = self.chunk_text_mask(tmask, tvis, K)                                      # [B, K(pos), Kt]
+        tm = tm[:, None].expand(B, K, K, tm.shape[-1]).reshape(B, K * K, tm.shape[-1])
+        c = g3[:, :, None].expand(B, K, K, g3.shape[-1]).reshape(B, K * K, g3.shape[-1])
+        for blk in self.planner:
+            if isinstance(blk, GatedXBlock): x = blk(x, c, mask, text, tm)
+            else: x = blk(x, c, mask, text, tm)
+        h = self.p_norm(x).view(B, K, K, d)
+        return h[:, torch.arange(K, device=dev), torch.arange(K, device=dev)]
 
     @staticmethod
     def _own_chunk(K, N, device):
@@ -693,13 +747,14 @@ class SCMG(nn.Module):
 
     def local_audio(self, a, H, K):
         """Gather per-chunk audio windows: tokens [4k - back, 4k + CHUNK + max lookahead), masked by visibility.
-        Returns aw [B, K, W, d], mask [B, K, W]."""
-        B, N, d = a.shape; back = self.cfg.flow_audio_back
+        a [B, N, d], or [B, K, N, d] (chunk k gathers from its own encoding). Returns aw [B, K, W, d], mask [B, K, W]."""
+        B, N, d = a.shape[0], a.shape[-2], a.shape[-1]; back = self.cfg.flow_audio_back
         W = back + 2 * CHUNK                                   # current chunk + up to one chunk of extra look-ahead
         start = torch.arange(K, device=a.device) * CHUNK - back
         idx = start[:, None] + torch.arange(W, device=a.device)[None]            # [K, W]
         valid = (idx >= 0) & (idx < N)
-        g = a[:, idx.clamp(0, N - 1)]                                            # [B, K, W, d]
+        if a.dim() == 4: g = a[:, torch.arange(K, device=a.device)[:, None], idx.clamp(0, N - 1)]
+        else: g = a[:, idx.clamp(0, N - 1)]                                      # [B, K, W, d]
         vis = idx[None] < (torch.arange(K, device=a.device)[None, :, None] * CHUNK + H[:, None, None])
         return g, valid[None] & vis
 

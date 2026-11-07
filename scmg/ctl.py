@@ -35,9 +35,12 @@ import torch.nn.functional as F
 SEM_CLASSES = ['deictic', 'iconic', 'metaphoric', 'beat']
 LEX_CLASSES = ['we', 'self', 'you', 'third', 'neg', 'number', 'big', 'small', 'up', 'down', 'this', 'there', 'quest', 'mental']
 TYPE_NAMES = ['pad'] + SEM_CLASSES + ['lex_' + c for c in LEX_CLASSES]
+NTYPES_V1 = len(TYPE_NAMES)    # 11-07 exp/duplex: types appended after this keep every existing id and encoding unchanged
+TYPE_NAMES = TYPE_NAMES + ['yield']   # 11-07 duplex mode: the interrupt event (the robot must yield the floor), group 0, no values
 TYPE_ID = {n: i for i, n in enumerate(TYPE_NAMES)}
 NTYPES = len(TYPE_NAMES)
 POINT = TYPE_ID['deictic']
+YIELD = TYPE_ID['yield']
 GESTURE = TYPE_ID['iconic']   # legacy name (amplitude-only types: iconic / metaphoric / beat)
 TYPES = {c: TYPE_ID[c] for c in SEM_CLASSES}
 NV, NVM = 5, 3                 # value channels / value-mask channels
