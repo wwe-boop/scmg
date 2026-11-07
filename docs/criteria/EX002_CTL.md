@@ -338,3 +338,23 @@ both protocols. Next: module 7 (aim direction, pre-registered) on this base, gat
 | czm psync s0 / s1 / s2 | 0.200 / 0.195 / 0.181 | 0.166 / 0.173 / 0.173 | 0.074 / 0.076 / 0.074 | 0.234 / 0.241 / 0.236 |
 czm is clearly more static than sibag-s2 (still share x5-7, wrist speed -38 % offline / -50 % psync, amplitude -15 % / -25 %) although its FGD v2
 is lower (offline 67.8 vs 91.2): FGD v2 does not penalise under-motion enough on dev; the judge's "static / held" impression is real.
+## Modules 7 / 8 result (dlc1gin7d7ehjneq, LANE_DONE 04:10 2026-11-08; czm base, fresh plans 1109, seeds 0-2, DLC A800)
+Module 7 (ray elevation 3x + shoulder-raise loss, true freeze):
+- PRIMARY gates FAIL: median forearm angular error offline 28.5 deg / psync 29.1 deg (gate <= 25; port 31.0 / 31.1, no-token 40.7 / 38.8);
+  median elevation error for above-shoulder targets offline +6.9 / psync +7.8 deg (gate |.| <= 5; port +2.9 / +0.1) -> the arm now
+  overshoots upward; median wrist - shoulder z -0.10 m (port -0.19, no-token -0.21).
+- STG passes with a wide margin: offline 0.472 vs 0.285 = +0.188 [+0.165, +0.210], psync 0.462 vs 0.293 = +0.169 [+0.151, +0.187];
+  shuffle follows (0.451 vs 0.338; 0.455 vs 0.344). Azimuth median 23.8 / 22.4 deg (port 24.0 / 22.8) -> azimuth unchanged.
+- Quality gates pass: (i) offline 70.92 <= 89.42, psync 92.06 <= 106.24; (ii) offline 73.38 / 73.35 (minjerk) <= 83.89, psync
+  87.35 / 88.64 <= 107.10. Finger override 1.000; executability after CBF 100 %. Report-only dense whole clip 290 / 325.
+- Verdict: FAILS its pre-registered primary gate (angular error) although it raises STG from +0.07 to +0.19; the remaining error is
+  azimuth (~23 deg) and a now-positive elevation bias.
+Module 8 (present-count: frontal presentation aims + minimum-jerk override on the port model):
+- Count hit 1.000 (both protocols) PASS.
+- Hand height >= chest (wrist >= shoulder - 0.20 m): mean share of command frames offline 0.63 / psync 0.66 (port 0.26 / 0.22); events-
+  hands with >= 80 % of frames raised 0.41 / 0.44 -> FAIL (gate >= 80 %).
+- Palm-normal angle to forward (sign-agnostic) median 77.8 / 75.4 deg (port 79.0 / 78.0) -> FAIL (gate <= 45): the aim raises the
+  forearm but does not turn the palm.
+- Quality: (i) passes (70.96 / 92.13); (ii) FAILS offline 93.59 > 83.89, psync 114.14 > 107.10 (two simultaneous POINT tokens per
+  count command move the whole clip). Ramp over-limit 1.7-2.5 % (minjerk).
+- Verdict: FAIL. A presentation pose needs a palm / wrist-orientation target (or a library pose), not only a forearm direction.
