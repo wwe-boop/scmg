@@ -306,3 +306,11 @@ finger, K-half speakers), issued at the count command's time, plus the finger ov
 else cosine 0.15 s); blended with 5b. Gates: count hit >= 0.9; hand height >= chest (wrist z >= shoulder z - 0.20 m) on >= 80 % of
 command frames (+-0.4 s); palm-normal angle to the forward direction (+x, toward the listener; normal from the cross product of
 index-base and third-finger-base vectors from the wrist) median <= 45 deg; quality gates (i) / (ii); ramp jerk reported.
+Module 8 target, fixed before any module-8 generation (tokens/PRESENT.json, ex002_present.py target, 3000 train items, 163k / 186k
+raised-hand frames): the presentation target follows the POINT convention, so it is built from the median FOREARM direction
+(elbow -> wrist) of the raised-hand frames (the "wrist -> forward" wording above, made exact): left (0.76, -0.22, 0.62), right
+(0.77, 0.26, 0.58) = forward, toward the midline, 35-38 deg up; target = rest shoulder + 2.25 m x direction. (The shoulder -> wrist
+direction, computed first, points 23 deg DOWN because the raised set allows the wrist 0.20 m below the shoulder; a target from it
+would lower the hand, so it was not used.)
+Module 7 code: scmg/losses.py StageCfg w_ctl_ray_el / w_ctl_raise (default 0 = bitwise unchanged path), run with w_ctl_aux 3,
+w_ctl_ray_el 6 (elevation 3x in total), w_ctl_raise 5.
