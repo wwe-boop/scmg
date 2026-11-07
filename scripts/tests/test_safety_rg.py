@@ -1,6 +1,7 @@
 """11-07 RoboGesture collision pairs in the G1 safety layers (scmg/safety_rg.py, safety_run.py --rg-pairs; default off).
     PYTHONPATH=<official src>:<pydeps/safeproj> python scripts/tests/test_safety_rg.py   env BASE_TREE (code before) RAW (dir of raw
-    robot_repr .pt) STEMS (stem list) SP (scratch)
+    robot_repr .pt) STEMS (stem list) SP (scratch). Inputs: DEV outputs only (e.g. RAW = causal-train-1105/isodev-1107/dev/czm2kws/
+    bench/psync/seed_000, STEMS = echog-g1-hos-assets/dev_stems.txt); the test split is not read, not even for bitwise checks.
  a default: safety_run.py --layers cbf_qp without --rg-pairs == BASE_TREE bitwise on 4 clips
  b gradients: RGCollision.near rows == central finite differences of RGCollision.distances (arm / waist joints) on near frames
  c HAND_CMD == RoboGesture's median hand command over its filtered generations (first 60 clips, every 3rd frame)
@@ -30,6 +31,8 @@ def run(code, out, stl, extra=()):
     return r.returncode == 0
 
 
+if 'val_common' in E['STEMS'] or 'vc_every8' in E['STEMS'] or '/test/' in E['RAW'] or 'cbf-perclip' in E['RAW']:
+    raise SystemExit('test_safety_rg: dev inputs only (RAW / STEMS point at the test split)')
 rg = RGCollision(S.G1_JOINTS); g1 = S.G1Collision()
 stems = [l.strip() for l in open(E['STEMS']) if l.strip()]
 load = lambda d, s: torch.load(f'{d}/{s}.pt', map_location='cpu', weights_only=False)['robot_repr'].double().numpy()[:, 10:]
