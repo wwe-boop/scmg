@@ -9,7 +9,10 @@ B  interrupted runs (restart chunk and latent, audio end, fractions 0.3 / 0.6): 
 C  causality after the interruption: replacing the PCM after max(t_i, the audio the last pre-interruption tick had seen) by
    noise leaves the interrupted output bitwise unchanged; the same noise changes the uninterrupted run (the region is read
    when it is not interrupted); every post-interruption feat89 call reads at most the frames before t_i
-D  text: the kept tokens are exactly the tokens whose words all ended by t_i; tokens are withdrawn at the interruption"""
+D  text: the kept tokens are exactly the tokens whose words all ended by t_i; tokens are withdrawn at the interruption
+E  (11-07) --audio silence: pre-interruption frames == uninterrupted psync (bitwise); noise in the PCM after the cut leaves the
+   output unchanged (bitwise); the post-interruption feat89 rows after t_i are digital-silence features (raw logmel mean
+   <= -13, prosody 0) and the feat calls read past t_i (the stream goes on); the output differs from --audio end"""
 import json, os, subprocess, sys, tempfile
 from pathlib import Path
 import numpy as np
@@ -115,4 +118,26 @@ ok('C noise after the cut: interrupted output unchanged (bitwise)', all(torch.eq
 nn = run(CODE, 'scripts/interrupt/infer_retract.py', 'noint_noise', ['--no-interrupt', '--stems', str(SP / 'stems.txt')], wav=str(nw))
 NN = pts(nn, stems)
 ok('C the same noise changes the uninterrupted run (positive control)', all(not torch.equal(NN[s]['robot_repr'], N[s]['robot_repr']) for s in stems))
+
+# ---- E (--audio silence)
+ds_ = run(CODE, 'scripts/interrupt/infer_retract.py', 'int_chunk_sil', ['--interrupts', str(SP / 'ints6.json'), '--audio', 'silence', '--restart', 'chunk'])
+dsn = run(CODE, 'scripts/interrupt/infer_retract.py', 'int_chunk_sil_noise', ['--interrupts', str(SP / 'ints6.json'), '--audio', 'silence', '--restart', 'chunk'], wav=str(nw))
+n6 = [f"{r['stem']}@0.6" for r in rows6]; PS_, PSN = pts(ds_, n6), pts(dsn, n6)
+good, info = True, []
+for r, n in zip(rows6, n6):
+    g = PS_[n]['generator']['interrupt']; q = np.load(ds_ / f'{n}.q50.npy'); keep = (g['k_int'] * 4 - 1) * 4
+    good &= np.array_equal(q[:keep], q_ref[r['stem']][:keep]); info.append(f'{n}:{keep}')
+ok('E silence: pre-interruption frames == uninterrupted psync (bitwise)', good, ' '.join(info))
+ok('E silence: noise after the cut leaves the output unchanged (bitwise)', all(torch.equal(PS_[n]['robot_repr'], PSN[n]['robot_repr']) for n in n6))
+ok('E silence: output differs from --audio end', all(not torch.equal(PS_[n]['robot_repr'], PC[n]['robot_repr']) for n in n6))
+pst = CF.load_pstats(E['PSTATS']); mok, minfo = True, []
+for r, n in zip(rows6, n6):
+    calls = PS_[n]['generator']['post_feat_calls']; n50 = int(round(r['t_i'] * 50)); Ta = max(calls)
+    ci = idx[r['stem']]; c = view.clips[ci]; L = c['frames']
+    pcm16, wave = CF.clip_audio(Path(E['WAV']) / f"{r['stem']}.wav"); w = CF.clip_words(Path(E['WORDS']) / f"{r['stem']}.json", L)
+    pz = np.concatenate([np.array(pcm16[:n50 * CF.HOP], np.int16), np.zeros(Ta * CF.HOP, np.int16)])
+    raw = np.asarray(CF.IncFeat89(pz, [x for x in w if CF.ended(x['end_time'], r['t_i'])], c['items'][0]['lang'], Ta + 8, pst).prefix(Ta), np.float32)
+    post = raw[n50 + 3:Ta]; mel = float(post[:, :80].mean(1).max()) if len(post) else 0.
+    mok &= Ta > n50 + 20 and mel <= -13. and float(np.abs(post[:, 80:88]).max()) == 0.; minfo.append(f'{n}: calls up to {Ta} (n50 {n50}) max logmel {mel:.2f}')
+ok('E silence: post-interruption rows are digital-silence feat89 and the stream continues past t_i', mok, '; '.join(minfo))
 print('ALL_OK' if not FAIL else f'FAILED {FAIL}'); sys.exit(1 if FAIL else 0)
