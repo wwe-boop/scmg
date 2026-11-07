@@ -19,3 +19,10 @@ human retraction windows), unsafe (data-v36_1 META joint limits + limits34 veloc
 ex002-rm003-v4-20261020/model-r1/scene.xml with structural pairs excluded from GT statistics).
 Sanity checks before any method row: (1) RKD human half-split floor; (2) GT tails scored as a method: yield ~= the human rate,
 RKD ~= the floor; (3) mismatched GT (another clip's tail spliced at t_i): react / v3 near chance; reported in the same table.
+Addendum 11-07 23:0x (before any EX002 interruption metric; found while checking the first generation run dlc1cu0r2jgn1e3a):
+frames before t_i are only bitwise equal to the uninterrupted psync output for 344 / 476 interruptions. All 132 differences start
+at a frame = 12 mod 16, 1-3 frames before f_i: the VAE decoder looks one latent (4 frames) ahead, so when f_i falls after the
+start of the last latent before the restart chunk boundary, re-decoding after the restart rewrites up to 3 already-played frames
+(median 9e-4 rad at the first differing frame, up to 0.139 rad). Rule: B3 rows are scored on the EXECUTED prefix -- the method's
+own uninterrupted output before f_i, its continuation from f_i on (eval_interrupt_ex002.py --prefix executed, default; the file
+as written = --prefix generated, diagnostic only). The G1 interruption runs share this decoder property (not re-scored here).

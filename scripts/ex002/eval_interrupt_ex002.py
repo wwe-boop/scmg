@@ -17,6 +17,9 @@ import icommon_ex002 as I
 ap = argparse.ArgumentParser()
 ap.add_argument('--interrupts', required=True); ap.add_argument('--human', required=True); ap.add_argument('--gt-dir', required=True)
 ap.add_argument('--out', required=True); ap.add_argument('--per-item', default=None); ap.add_argument('--collision-stride', type=int, default=2)
+ap.add_argument('--prefix', default='executed', choices=['executed', 'generated'],
+                help="B3 frames before f_i: 'executed' = the method's own uninterrupted output (what was already played; the chunk "
+                     "restart re-decodes the last latent before the boundary, up to 3 frames before f_i), 'generated' = the file as written")
 ap.add_argument('--view', default='/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/train-v1-20261101/views/data-v36_1')
 ap.add_argument('--scene', default='/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/ex002-rm003-v4-20261020/model-r1/scene.xml')
 ap.add_argument('methods', nargs='+')
@@ -77,7 +80,11 @@ def motion(kind, d, ref, r):
         f2 = min(f, len(o) - I.WIN - 1); g = gts[ci][:f].copy()
         return np.concatenate([g, o[f2:f2 + I.WIN] - o[f2] + g[-1]]), gts[ci]
     y = np.load(f"{d}/{ci}@{r['item']}@{r['frac']:.1f}.npy").astype(np.float64)
-    return y[:f + I.WIN], (np.load(f'{ref}/{ci}.npy').astype(np.float64) if ref else None)
+    U = np.load(f'{ref}/{ci}.npy').astype(np.float64) if ref else None
+    if a.prefix == 'executed':
+        if U is None: raise ValueError('--prefix executed needs the uninterrupted reference dir (B3:<dir>:<ref>)')
+        y = np.concatenate([U[:f], y[f:]])
+    return y[:f + I.WIN], U
 
 
 res = {}; per = open(a.per_item, 'w') if a.per_item else None
@@ -115,6 +122,6 @@ for spec in a.methods:
     print(f"{lab:14s} n {out['n']} | yield {out['yield_rate']} ({out['yield_s']}) | v3 {out['abrupt_v3']} | RKD {out['rkd']:.3f} | unsafe {out['unsafe_any']:.4f} | react {out['react_s']}", flush=True)
 res['_meta'] = dict(T_r=T_r, n_interrupts=len(ints), n_human_windows=int(len(HK_all)), n_human_retract=int(len(HK)),
                     rkd_human_half_split=I.kin_distance(HK[0::2], HK[1::2])[0], rkd_all_vs_retract=I.kin_distance(HK_all, HK)[0],
-                    structural_pairs=len(structural), rule=__doc__.split('\n')[0])
+                    structural_pairs=len(structural), prefix=a.prefix, rule=__doc__.split('\n')[0])
 print('RKD human half-split floor', round(res['_meta']['rkd_human_half_split'], 3), '| n retract', len(HK), '| T_r', T_r)
 Path(a.out).write_text(json.dumps(res, indent=1))
