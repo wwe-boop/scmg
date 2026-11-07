@@ -329,3 +329,48 @@ w_ctl_ray_el 6 (elevation 3x in total), w_ctl_raise 5.
 - Override rule (pre-registered): minimum-jerk keeps finger hit >= 0.9 and gate (ii) on both protocols -> it becomes the DEFAULT override.
 VERDICT: the port passes quality, finger, executability and identity, and FAILS the pointing gate (+0.07 < +0.10, CI excludes 0.10) on
 both protocols. Next: module 7 (aim direction, pre-registered) on this base, gated on the median angular error and STG.
+## czm vs sibag-s2 stillness (coordinator request 2026-11-08 ~03:00; static_share.py, dev 43 clips, per_clip seeds 0-2)
+| run | still-frame share | mean wrist speed (m/s) | wrist amplitude (m, per-axis std) | elbow flare |
+|---|---|---|---|---|
+| dev GT | 0.019 | 0.411 | 0.120 | 0.261 |
+| sibag-s2 offline s0 / s1 / s2 | 0.031 / 0.027 / 0.027 | 0.328 / 0.338 / 0.341 | 0.097 / 0.101 / 0.099 | 0.268 / 0.268 / 0.261 |
+| czm offline s0 / s1 / s2 | 0.140 / 0.140 / 0.148 | 0.209 / 0.207 / 0.206 | 0.084 / 0.085 / 0.083 | 0.258 / 0.253 / 0.255 |
+| czm psync s0 / s1 / s2 | 0.200 / 0.195 / 0.181 | 0.166 / 0.173 / 0.173 | 0.074 / 0.076 / 0.074 | 0.234 / 0.241 / 0.236 |
+czm is clearly more static than sibag-s2 (still share x5-7, wrist speed -38 % offline / -50 % psync, amplitude -15 % / -25 %) although its FGD v2
+is lower (offline 67.8 vs 91.2): FGD v2 does not penalise under-motion enough on dev; the judge's "static / held" impression is real.
+## Modules 7 / 8 result (dlc1gin7d7ehjneq, LANE_DONE 04:10 2026-11-08; czm base, fresh plans 1109, seeds 0-2, DLC A800)
+Module 7 (ray elevation 3x + shoulder-raise loss, true freeze):
+- PRIMARY gates FAIL: median forearm angular error offline 28.5 deg / psync 29.1 deg (gate <= 25; port 31.0 / 31.1, no-token 40.7 / 38.8);
+  median elevation error for above-shoulder targets offline +6.9 / psync +7.8 deg (gate |.| <= 5; port +2.9 / +0.1) -> the arm now
+  overshoots upward; median wrist - shoulder z -0.10 m (port -0.19, no-token -0.21).
+- STG passes with a wide margin: offline 0.472 vs 0.285 = +0.188 [+0.165, +0.210], psync 0.462 vs 0.293 = +0.169 [+0.151, +0.187];
+  shuffle follows (0.451 vs 0.338; 0.455 vs 0.344). Azimuth median 23.8 / 22.4 deg (port 24.0 / 22.8) -> azimuth unchanged.
+- Quality gates pass: (i) offline 70.92 <= 89.42, psync 92.06 <= 106.24; (ii) offline 73.38 / 73.35 (minjerk) <= 83.89, psync
+  87.35 / 88.64 <= 107.10. Finger override 1.000; executability after CBF 100 %. Report-only dense whole clip 290 / 325.
+- Verdict: FAILS its pre-registered primary gate (angular error) although it raises STG from +0.07 to +0.19; the remaining error is
+  azimuth (~23 deg) and a now-positive elevation bias.
+Module 8 (present-count: frontal presentation aims + minimum-jerk override on the port model):
+- Count hit 1.000 (both protocols) PASS.
+- Hand height >= chest (wrist >= shoulder - 0.20 m): mean share of command frames offline 0.63 / psync 0.66 (port 0.26 / 0.22); events-
+  hands with >= 80 % of frames raised 0.41 / 0.44 -> FAIL (gate >= 80 %).
+- Palm-normal angle to forward (sign-agnostic) median 77.8 / 75.4 deg (port 79.0 / 78.0) -> FAIL (gate <= 45): the aim raises the
+  forearm but does not turn the palm.
+- Quality: (i) passes (70.96 / 92.13); (ii) FAILS offline 93.59 > 83.89, psync 114.14 > 107.10 (two simultaneous POINT tokens per
+  count command move the whole clip). Ramp over-limit 1.7-2.5 % (minjerk).
+- Verdict: FAIL. A presentation pose needs a palm / wrist-orientation target (or a library pose), not only a forearm direction.
+## Modules 7b / 8b (pre-registered 2026-11-08 ~04:20; queued for the base agent A re-selects with liveliness guards; NOT started)
+Common: true freeze (--train-only ctl_) on the re-selected base, its own recipe, 2000 steps; new fresh plans (seed 1110 / shuffle
+20261110), inference seeds 0-2, offline AND psync, each protocol against its own no-token C / δ; 5b blend; minimum-jerk override.
+Liveliness guard added to the quality gates (dev, per protocol, scripts/video/static_share.py on the whole clips): still-frame share
+<= 2 x dev GT (0.019 -> <= 0.038), mean wrist speed >= 0.75 x GT (0.411 -> >= 0.308 m/s), wrist amplitude >= 0.75 x GT (0.120 ->
+>= 0.090 m); for the 5b + override configuration, given runs on the sparse plan.
+- 7b (aim direction, second try): ray loss weighted toward azimuth (w_ctl_aux on the full 1 - cos term as before plus an azimuth term
+  1 - cos(az(ray) - az(target)) at 2x), elevation term weight 2x (w_ctl_ray_el = 2 x w_ctl_aux), raise weight halved (w_ctl_raise 2.5).
+  Gates: median forearm angular error <= 25 deg AND |median elevation error, above-shoulder targets| <= 5 deg AND STG gain >= +0.10
+  with the shuffle follow; quality (i) / (ii) + liveliness guard; executability after CBF 100 %.
+- 8b (present-count, second try): ONE POINT token per count command (the hand with the larger commanded count; ties -> right) toward
+  the frontal presentation target, plus a wrist / palm orientation target: the median wrist joint angles (arm_joint5-7) of the library
+  presentation pose (train-GT frames, K-half speakers, hand raised and >= 1 extended finger) blended in joint space over the command window
+  with the minimum-jerk ramp (like the finger override; arm joints 1-4 untouched). Gates: count hit >= 0.9; hand height >= chest
+  (wrist >= shoulder - 0.20 m) on >= 80 % of command frames; palm-normal angle to forward median <= 45 deg; quality (i) / (ii) +
+  liveliness guard; ramp jerk reported.

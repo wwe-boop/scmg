@@ -91,3 +91,17 @@ Note (coordinator 2026-11-08): the utterance-level still-frame share (built Seam
 flare 0.293 vs 0.296) removes the main risk raised in (c)1 (static / elbows-out data); the pilot reports the same two numbers.
 Pilot smoke (speech_server, 2 tracks / 22 windows, release 20261107-234556-video-pilot): whole chain ran; 21 / 22 windows pass the
 (c)1 gate; 16 utterances / 44.5 s kept (projection ~0.6-0.7 h per 100 tracks).
+## Option-3 pilot result (dlc1i5g16zc45pk2, 00:44-02:51 2026-11-08; outputs CKPT/zehan/gesture-scmg/video-regate-1107/pilot)
+- 100 whole tracks (one per participant) = 1255 windows / 6.35 h retargeted, 0 physical rejects; (c)1 rule: R0 passes 191 / 0.92 h, new
+  accepts 955 / 4.90 h (R1-R3 reject nothing; R4 keeps 955 of 1064 rejects), back-off windows excluded (29 + 29).
+- Utterance pipeline: new accepts 1014 utterances / 0.811 h / 87 speakers; the R0-passing windows were added in a supplementary CPU pass on
+  speech_server (pilot-r0: 197 utterances / 0.158 h; the pilot driver had only selected new accepts) -> USABLE 0.969 h per 100 tracks,
+  1211 utterances, 90 speakers.
+- Still-frame share of the usable utterances 0.161 (0.146 for the new accepts; data-v36_1 human train 0.169, dev GT 0.019); utterances
+  with still share >= 0.5: 12 %; near-body fraction of the accepted windows 0.70; elbow flare 0.284.
+- Scale-up rule (pre-registered): usable >= 1 h per 100 tracks AND still share <= 0.60 -> FAILS on hours (0.969 < 1.0; still share passes).
+  No larger run. G6 stays deferred (built so far 0.647 h + 0.969 h = 1.62 h < 5 h).
+Pilot spot renders (10 newly accepted windows, seed 20261108; robot Isaac front + human stick figure; ~/bulk/video-regate-1107/pilot/pair,
+sheets): 9 / 10 pass (fail: P3100 holds the arms crossed at the chest throughout, the robot keeps the hands low at the hips); gestures with
+the hands away from the body are followed (P0506, P1313, P0359A); 5 / 10 are static or mostly static windows (hands on the thighs or hanging
+at the sides; the robot shows the elbows-out rest or arms down) -- the utterance pipeline then keeps only the speaking parts (still share 0.16).

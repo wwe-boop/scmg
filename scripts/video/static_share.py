@@ -50,13 +50,18 @@ def main():
     for spec in a.specs:
         lab, d = spec.split('=', 1)
         fs = [l.strip() for l in open(d[1:])] if d.startswith('@') else sorted(glob.glob(d + '/*.npy'))
-        st, fl, fr = 0, [], 0
+        st, fl, fr, per = 0, [], 0, []
         for f in fs:
             q = np.load(f)
             if q.ndim != 2 or q.shape[1] != 34 or len(q) < 3: continue
-            vv = (speed(geo(q)) / norm).mean(1); st += int((vv < a.thr).sum()); fr += len(q); fl.append(flare(q))
-        res[lab] = dict(files=len(fs), frames=fr, still_share=st / max(fr, 1), elbow_flare_mean=float(np.concatenate(fl).mean()) if fl else None)
-        print(lab, json.dumps(res[lab]), flush=True)
+            G = geo(q); sp = speed(G); vv = (sp / norm).mean(1); st += int((vv < a.thr).sum()); fr += len(q); fl.append(flare(q))
+            # 11-08: per clip wrist speed (m/s, mean of both wrists) and amplitude (m, mean per-axis std of the wrist positions)
+            per.append(dict(file=Path(f).name, still_share=float((vv < a.thr).mean()), wrist_speed=float(sp[:, 4:6].mean()),
+                            wrist_amp=float(G[:, 4:6].std(0).mean())))
+        res[lab] = dict(files=len(fs), frames=fr, still_share=st / max(fr, 1), elbow_flare_mean=float(np.concatenate(fl).mean()) if fl else None,
+                        wrist_speed_mean=float(np.mean([x['wrist_speed'] for x in per])) if per else None,
+                        wrist_amp_mean=float(np.mean([x['wrist_amp'] for x in per])) if per else None, per_clip=per)
+        print(lab, json.dumps({k: v for k, v in res[lab].items() if k != 'per_clip'}), flush=True)
     if a.out: Path(a.out).write_text(json.dumps(res, indent=1))
 
 
