@@ -380,3 +380,26 @@ Fresh plans seed 1110 / shuffle 20261110: PLAN_dev_m78b_dense.json (1089 events,
 8b = the lane-4 control model ctl4 (sibag-s2 true freeze) with ex002_present.py plan1 (one token, present_hand) + tokens/PRESENT_WRIST.json
 (library wrist pose: left (0.050, 0.003, 0.356), right (0.069, -0.012, -0.339) rad for arm_joint5-7, 163k / 186k frames) + minimum-jerk override.
 Code exp/ctl-port (merge of exp/text-path 98169eb); liveliness guard = scripts/video/static_share.py (NORM_DEV.json) on the given runs.
+## Modules 7b / 8b result on sibag-s2 (dlctt3a4rulv5svl, LANE_DONE ~06:46 2026-11-08; DLC A800; fresh plans 1110, seeds 0-2)
+Liveliness guard reported both ways: (P) protocol guard = EVAL_PROTOCOL §5 / agent A's lively_floor_ex002.py (exp/duplex 5d6f017, read
+by path, unchanged; 13 moving upper-body points; decides pass / fail: still <= 0.033, wrist speed >= 0.308, amplitude >= 0.090, held <= 10 %,
+stutter <= 1.129); (S) my pre-registered static_share.py guard (6 points: still <= 0.038, speed >= 0.308, amp >= 0.090). Check: (P) on the
+no-token runs reproduces A's sibag-s2 numbers (offline 0.023 / 0.336 / 0.099, psync 0.022 / 0.360 / 0.101; dev GT 0.017 / 0.411 / 0.120).
+Module 7b (azimuth term 2x, elevation 2x, raise 2.5; true freeze on sibag-s2):
+- PRIMARY FAIL: median forearm angular error offline 33.2 / psync 35.2 deg (gate 25; unblended 26.0 / 29.5; no-token 49.5 / 50.9);
+  elevation above-shoulder offline -6.1 / psync -8.2 deg (gate |.| <= 5); azimuth 26.1 / 27.6 deg.
+- STG passes: offline 0.404 vs 0.245 = +0.158 [+0.137, +0.177]; psync 0.383 vs 0.242 = +0.142 [+0.122, +0.161]; shuffle follows
+  (0.403 vs 0.319; 0.382 vs 0.312).
+- Gate (i) passes: offline 90.76 <= 100.65, psync 94.56 <= 102.48. Gate (ii) FAILS: offline 100.95 plain / 101.94 override > 99.37; psync
+  107.69 / 109.76 > 101.07. Finger hit (override) 1.000; executability after CBF 100 %.
+- Liveliness (sparse given, 5b + override): (P) offline 0.021 / 0.340 / 0.097 / held 0 / stutter 1.065, psync 0.020 / 0.360 / 0.098 / 0 / 1.059
+  -> pass; (S) still 0.025-0.029, speed 0.333-0.363, amp 0.094-0.099 -> pass. Dense plan (report): amplitude 0.076 / 0.077 (< 0.090).
+- Verdict: FAIL (angular error, elevation, gate (ii)).
+Module 8b (one presentation token + library wrist pose + minimum-jerk override on ctl4):
+- Count hit 1.000 PASS. Presenting hand raised (wrist >= shoulder - 0.20 m): mean share of command frames offline 0.46 / psync 0.45 (no-token
+  0.20 / 0.16), events with >= 80 % raised 0.28 / 0.28 -> FAIL (gate 80 %). Palm-forward angle (presenting hand) 71.6 / 71.4 deg (no-token
+  75.1 / 73.3) -> FAIL (gate 45).
+- Gate (i) passes (90.74 / 94.54); gate (ii) offline 95.02 <= 99.37 passes, psync 102.59 > 101.07 FAILS. Ramp over-limit 3.3-4.7 %.
+- Liveliness (sparse given): (P) offline 0.019 / 0.346 / 0.096 / 0 / 1.054, psync 0.019 / 0.361 / 0.097 / 0 / 1.053 -> pass; (S) pass. Dense
+  (report): amplitude 0.061 / 0.059.
+- Verdict: FAIL (hand height, palm angle, psync gate (ii)).
