@@ -94,6 +94,9 @@ class StageCfg:
     # the other modality keeps its independent 10 % dropout, so the joint null (CFG unconditional branch) is still learned
     force_drop_text: bool = False
     force_drop_audio: bool = False
+    # 11-07 §7.55 item 2: the audio carries only word-content-free signals -- the 80 mel columns of feat89 are zeroed (= the
+    # normalised mean) and TTS hidden rows hidden in EVERY training batch; inference must use infer_test.py --prosody-only. Default off.
+    audio_prosody_only: bool = False
     # 11-06 modality-balanced gradient modulation (OGM-GE, Peng et al. CVPR 2022; default off): every step the flow loss is also
     # evaluated (no grad, same noise / times / history) with the audio dropped and with the text dropped; their increase over the
     # full loss = each modality's contribution. scmg.train scales the GRADIENT of the dominant modality's encoder by
@@ -145,6 +148,8 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
     require_causal_text(batch.get('text_c'), sc.p_async > 0 and sc.p_async_seg < 1, 'ADSC training')
     cfg = model.cfg; dev = batch['q'].device
     q, mask, feat = batch['q'], batch['mask'], batch['feat']
+    if sc.audio_prosody_only: feat = feat.clone(); feat[..., :80] = 0.
+    if sc.audio_prosody_only and 'tts_hm' in batch: batch = dict(batch, tts_hm=torch.zeros_like(batch['tts_hm']))
     B, T, Jn = q.shape; N = T // STRIDE; K = N // CHUNK
     from .bagger import target_chunks
     supervise, bagger = target_chunks(batch, K)

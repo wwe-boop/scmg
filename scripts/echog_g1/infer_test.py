@@ -151,6 +151,8 @@ def main():
     ap.add_argument('--cfg-ctl', type=float, default=None, help='separate control-token guidance (Streamer cfg_ctl); None = joint CFG')
     ap.add_argument('--ctl-pred', default=None, help='PRED.json of scripts/semantic/g1_sem_predictor.py (text-only predicted semantic tokens; modes pred / predlex)')
     ap.add_argument('--ret', default=None, help='retrieval dir:query file (scripts/semantic/g1_ret_bank.py, e.g. <dir>:RET_dev-auto.json); model with cfg ret')
+    ap.add_argument('--prosody-only', action='store_true', help='zero the 80 mel columns of feat89 (models trained with sc '
+                    'audio_prosody_only; 11-07 §7.55 item 2): the audio gives only prosody / timing')
     ap.add_argument('--seed-mode', default='run', choices=['run', 'per_clip'],
                     help="noise seed per clip: run = --seed for every clip (old default); per_clip = --seed + crc32(stem) (11-06 protocol)")
     ap.add_argument('--allow-env', action='store_true', help='allow non-default SCMG_SEM_SCALE / SCMG_BF16 / SCMG_SEED0 / SCMG_STRIDE')
@@ -204,6 +206,7 @@ def main():
         ds = WindowDataset(view, nch * CHUNK_FRAMES, max_tokens=256)
         s = ds.sample(ci, 0, np.random.default_rng(ci))
         s['ref'] = np.zeros_like(s['ref']); s['ref_valid'] = np.float32(0.)
+        if a.prosody_only: s['feat'] = np.array(s['feat']); s['feat'][:, :80] = 0.
         if a.no_spk: s['spk'] = np.zeros_like(s['spk']); s['spk_valid'] = np.float32(0.)
         if a.text_swap:
             dc = idx[donor[stem]]; Ld = view.clips[dc]['frames']
@@ -251,7 +254,8 @@ def main():
                                        resample='scmg/g1.py to30 (cubic / heading spline / RotationSpline)', env=genv,
                                        **({} if proto is None else dict(stream=proto)),
                                        **({} if not a.ctl_tokens else dict(ctl_mode=a.ctl_mode, cfg_ctl=a.cfg_ctl, ctl=used)),
-                                       **({} if not a.ret else dict(ret=a.ret, ret_used=rq_)))), o.with_suffix('.pt.tmp'))
+                                       **({} if not a.ret else dict(ret=a.ret, ret_used=rq_)),
+                                       **({'prosody_only': True} if a.prosody_only else {}))), o.with_suffix('.pt.tmp'))
         os.replace(o.with_suffix('.pt.tmp'), o)      # atomic: an interrupted run never leaves a truncated <stem>.pt that a resume skips
         if a.save50: np.save(out / f'{stem}.q50.npy', q50.astype(np.float32))
         log.append(dict(stem=stem, frames50=L, frames30=n30, tick_ms_p50=float(np.median(tk[1:]) * 1e3) if len(tk) > 1 else None))
