@@ -1,8 +1,9 @@
 """Judge round 2 (11-08, coordinator after the Chinese half of round 1). Same blinding as round 1 (make_pairs.py): A / B sides from
 random.Random(20262108 + pair index), KEY.json separate. Pair sets (24):
   ctl  (8) : the round-1 control pairs (same segments / systems) in a new layout: 2 columns x 6 rows of cells, each cell = front view +
-             second view (45 deg for pointing commands, both-hands close-up camera for finger commands); frames inside the command window
-             also get a both-hands close-up inset (~3x) in the front view's corner; command overlay as round 1.
+             second view (45 deg for pointing commands, the renderer's hands camera for finger commands); frames inside the command window
+             also get two hand close-up insets (90 px crops of the full-res front view around each hand, shown at 200 px: ~3x the cell scale)
+             in the front view's corner; command overlay as round 1.
   dense(6) : content-question format test, GT vs mismatched GT (3 en + 3 zh): per pair 2 keywords; per keyword 8 front-view frames over
              +-1 s around its onset, the keyword highlighted in the subtitle row.
   czm  (6) : czm vs sibag-s2 no-token offline seed 0 (3 en + 3 zh), round-1 layout (3 x 4 front frames + subtitles); extra question
@@ -114,6 +115,27 @@ def grab(video, frames_idx, nviews):
     return out
 
 
+_FK = {}
+
+
+def hand_px(src, s, t, vid):
+    """pixel position (full-res front view, 640 x 720) of the left / right hand (mid wrist..index tip) at time t, projected with the
+    renderer's logged front camera (kinematics frame == Isaac frame, offset 0 measured)."""
+    from scmg import ex002_ctl as E
+    key = (src['id'], s)
+    if key not in _FK:
+        f0 = int(round(src['start'] * FPS)); f1 = f0 + int(SEG * FPS)
+        y = np.load(f"{M.GT}/gt_{src['ci']}.npy")[f0:f1] if s == 'gt' else np.load(f"{M.SYS[s]}/{src['ci']}.npy")[f0:f1]
+        cam = json.loads((Path(vid).parent / 'logs' / (Path(vid).stem + '.json')).read_text())['cameras']['front']
+        _FK[key] = (E.points(y), np.asarray(cam['eye'][0]), np.asarray(cam['target'][0]))
+    g, eye, tg = _FK[key]; k = min(int(round(t * FPS)), len(g['wrist']) - 1); TAN_H = 20.955 / 2 / 24.0; VW, H = 640, 720
+    dv = (tg - eye) / np.linalg.norm(tg - eye); rt = np.cross(dv, [0, 0, 1.0]); rt /= np.linalg.norm(rt); up = np.cross(rt, dv); out = []
+    for hh in (0, 1):
+        pnt = (g['wrist'][k, hh] + g['index_tip'][k, hh]) / 2; rel = pnt - eye; zc = rel @ dv
+        out.append((VW / 2 + (rel @ rt) / zc / TAN_H * VW / 2, H / 2 - (rel @ up) / zc / TAN_H * VW / 2))
+    return out
+
+
 def compose(a, v, pairs, fw):
     from PIL import Image, ImageDraw, ImageFont
     O = Path(a.out); (O / 'pairs').mkdir(exist_ok=True)
@@ -139,8 +161,11 @@ def compose(a, v, pairs, fw):
                 for j, (t, ims) in enumerate(zip(ts, fr)):
                     x0, y0 = (j % 2) * CW, 50 + (j // 2) * (CH + SUB)
                     sh.paste(ims[0].resize((480, 540)), (x0, y0)); sh.paste(ims[1].resize((480, 540)), (x0 + 480, y0))
-                    if win[0] <= t <= win[1]:
-                        ins = ims[-1].resize((200, 225)); sh.paste(ins, (x0 + 4, y0 + 4)); d.rectangle([x0 + 4, y0 + 4, x0 + 204, y0 + 229], outline=(255, 0, 0), width=3)
+                    if win[0] <= t <= win[1]:            # both-hands close-ups: 90 px crops of the full-res front view around each hand, x200/90
+                        for hh, (cu, cv) in enumerate(hand_px(src, s, t, vid)):
+                            box = (int(cu - 45), int(cv - 45), int(cu + 45), int(cv + 45)); ins = ims[0].crop(box).resize((200, 200))
+                            yy = y0 + 4 + hh * 206; sh.paste(ins, (x0 + 4, yy)); d.rectangle([x0 + 4, yy, x0 + 204, yy + 200], outline=(255, 0, 0), width=3)
+                            d.text((x0 + 10, yy + 4), 'LR'[hh] + ' hand', font=font, fill=(255, 0, 0))
                     act = subtitle(ws, src['start'] + t, src['lang']); d.rectangle([x0, y0 + CH, x0 + CW - 1, y0 + CH + SUB - 1], fill=(240, 240, 240))
                     d.text((x0 + 8, y0 + CH + 4), f't={t:.2f}s' + ('   [command window]' if win[0] <= t <= win[1] else ''), font=font, fill=(200, 0, 0) if win[0] <= t <= win[1] else (90, 90, 90))
                     d.text((x0 + 8, y0 + CH + 32), (sep.join(act) if act else '—')[:60], font=font, fill=(0, 0, 0))
