@@ -37,3 +37,30 @@ G5 spot render: >= 18 / 20 clips pass the visual check;
 G6 (only after G1-G5, needs approval for its DLC run) FGD v2 (dev, 3 inference seeds) of a 2000-step model trained with the added
    items vs the same-recipe control without them: <= control + δ, δ = max(0.03 x control, 2 x SD of the control's 3 seeds); more
    speakers preferred (5 -> 20 speaker result).
+
+## Result of (c)1 (2026-11-07 23:20-23:50; speech_server CPU, 4 processes; outputs CKPT/zehan/gesture-scmg/video-regate-1107)
+Code: scripts/video/regate_seamless.py (per item), regate_agg.py, regate_render_prep.py, regate_human_panel.py. The Seamless
+RESULTs were made by release07-headroom (frozen release06 engine + release07 postprocess), not release06 itself.
+- 5,245 items / 27.93 h, 0 errors. R0 passes 459 / 2.39 h; R0 rejects 4,786 / 25.54 h.
+- Among the R0 rejects: R1 (CBF executable) 4,786, R2 (exact WBC GJK self-collision free + physical_pass) 4,786, R3 (no position
+  violation) 4,786 — the retargeter already certifies every stored float32 frame, so the robot-side rules R1-R3 reject nothing;
+  R4 (> 5 cm repair only on near-body frames, far-frame repair <= 20 %) keeps 4,409 / 23.59 h.
+- Accept rule: 4,868 / 25.98 h (+4,409 / +23.59 h over R0, x10.9); no R0-passing item fails it.
+- G1: not applicable to (c)1 (no re-retargeting; the outputs are release07's own).
+- G2: wrist near-limit frame rate new 0.0000 vs R0-pass 0.0000 -> pass.
+- G3: self-collision frame rate (exact check) new 0 vs R0-pass 0 -> pass.
+- G4: executable after CBF 100 % (4,409 / 4,409) -> pass.
+- G5: 18 / 20 pass (threshold 18) -> pass at the threshold. Fails: a hands-clasped-at-chest clip (robot keeps the hands apart at
+  the waist) and one raised-hand clip (uncertain from thumbnails, counted as fail). Per clip: G5_VERDICTS.json, videos pair/.
+- Fidelity / content of the newly accepted items (reported, not gated): near-body fraction 0.85 (R0-pass 0.46); robot-wrist error
+  vs target 4.64 cm on far frames (R0-pass 1.40) and 12.2 cm on near frames (4.18); 11 / 20 rendered clips are static or mostly static
+  (seated, hands on the thighs; the robot holds its hands at the hips with the elbows out, because the pedestal has no lap); arm
+  posture vs the data-v36_1 train view: elbow flare median 0.29 vs 0.21 shoulder widths, elbow angle 93 vs 72 deg, wrist height
+  -1.04 vs -0.75 shoulder widths. 214 new items have a whole-trajectory safety back-off (amplitude scaled toward rest).
+- Seamless's own split: of the 4,409 new items 3,380 / 18.19 h are Seamless-train (165 speakers), the rest Seamless dev / test;
+  Seamless-train without back-off: 3,221 / 17.32 h.
+## (c)2 not run (evidence already on disk)
+The near-body remap diagnostic seamless-eval-20261102 (40 Seamless items, release07 with near=False for ALL regions, a superset of
+the leg-region fix): strict pass 2 / 40 -> 4 / 40, wrist error stays 10-20 cm on the rejects. The leg-region fix therefore cannot
+recover more than about that, and the robot-side rule of (c)1 already keeps 92 % of the R0 rejects; the 300-item rerun (~30 core-h)
+would not change the decision.
