@@ -146,3 +146,17 @@ causal-input models; this model was not trained for it, so the engine protocol i
 Scoring: scmg-wt-floor safety_project.py --smooth 300 then eval_interrupt.py (ev.sh), uninterrupted reference = this model's own
 full-clip run. Gates (each T_r): yield ≥ 90 %, abruptness v3 ≤ 10 %, unsafe ≤ 1 %, RKD < 0.459 (funnel h22m10s1_p: yield 97.5 %,
 v3 8.4 %, RKD 0.459).
+
+## Deployable semantic pipeline (BJ50-style action library coupled to the generator; written 2026-11-07 17:50 before the pipeline numbers)
+text -> intent (lexicon LEX2SEM or LLM PRED, no GT at inference) -> action: pointing -> library pointing snippet (or the ctlcf
+control token), count -> library stroke x N (commands only: GT-time rows), iconic / metaphoric / deictic -> class exemplar of the
+speaker-disjoint (K-half) library -> soft-mask insertion in the Local Flow (RePaint on sf0; mask_cond model if better) -> CBF-QP.
+Rows: base sf0 / pipeline-lexicon / pipeline-LLM / pipeline at GT times (oracle); dev 400, per_clip seeds 0/1/2.
+Columns: pair_win (R-half recognisers, all + per class); insertion fidelity (lib_fidelity.py: at each inserted event, acc3 =
+argmax over the 3 semantic classes == intended, vs the same windows of the base run, and win = P(p_intended rises vs base));
+count hit / STG; FGD, ΔBA, boundary-jerk ratio, executability after CBF.
+Gates (coordinator): fidelity acc3 ≥ 0.6 for deictic; count hit ≥ 0.9; STG ≥ 0.308; FGD ≤ 1.497; boundary jerk ≤ 1.5 on ≥ 90 %.
+Metric sanity (run before the numbers): the recogniser on GROUND-TRUTH motion at the dev annotation events gives acc3 0.429 (deictic
+0.541, iconic 0.339, metaphoric 0.492); with the classes permuted 0.361 (chance with the class prior). The deictic gate 0.6 is
+therefore above the recogniser's own ceiling on real motion (0.541) and is reported as such; win vs base is the more sensitive
+fidelity number (0.5 = no effect).
