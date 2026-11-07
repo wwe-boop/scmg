@@ -28,7 +28,7 @@ class Streamer:
                  standby=None, device='cuda', hist_measured=False, ctx_t=1.0, cfg_w=1.0, cfg_text=True, cfg_t=None,
                  text_mode='final', x2_rate=15.0, x2_lag=0.15, seg_lead=0.3, deploy_timing=False,
                  elastic=None, window_lm_text=False, g_override=None, trim_start=True, cfg_null_fix=True, still_refresh=None,
-                 audio_off=False, causal_inputs=None, asr_lag=0.5, trace=None):
+                 audio_off=False, causal_inputs=None, asr_lag=0.5, trace=None, cfg_ctl=None, inpaint=None, ctl_lookahead=0.0):
         """feat [T, 89] normalised (whole utterance; access is restricted to what has arrived);
         cond: dict(text [K,768], ttime [K] absolute s, tmask [K], spk [192], spk_valid, source, ref [R,J], ref_valid)
         (+ tts_h [T/4, 2048], tts_hm [T/4] for models with cfg.tts_h: TTS hidden rows aligned to feat frame 0, row r = frames
@@ -100,6 +100,24 @@ class Streamer:
         # tokens with the normal window mask); the audio still sets the clip length and the clock. Text-only = audio_off
         # with the text kept (drop_text / drop_audio are sampled independently in training, so it is a trained case).
         self.audio_off = audio_off
+        self.ctl_lookahead = float(ctl_lookahead)   # 11-07: annotation control tokens visible (and timed) >= this many s ahead
+        # 11-07 fixed-action library insertion (off = None, bit-identical): RePaint-style latent inpainting inside the Local Flow
+        # sampler. inpaint = dict(lat [N, z] NORMALISED target latents on the global latent grid, w [N] soft weights in [0, 1],
+        # seed). For every generated position with w > 0: x starts at w eps + (1 - w) x and after every Euler step becomes
+        # w (t' lat + (1 - t') eps) + (1 - w) x (t' = the time just reached; eps = a fixed draw of its own generator, so the main
+        # noise stream is unchanged); the sampler generates the rest (and the soft edges) around it.
+        self.inpaint = None
+        if inpaint is not None:
+            self.inpaint = dict(lat=torch.as_tensor(inpaint['lat'], device=device).float(),
+                                w=torch.as_tensor(inpaint['w'], device=device).float(),
+                                g=torch.Generator(device=device).manual_seed(int(inpaint.get('seed', 0)) + 7919))
+        # 11-05 explicit control tokens (cond ctl_t [Kc] absolute s, ctl_type, ctl_v, ctl_vm; models with cfg.ctl). Without them
+        # nothing below changes. cfg_ctl None: the tokens are part of the conditional branch of the existing CFG; a number: a
+        # separate guidance term cfg_ctl * (v(with tokens) - v(without tokens)) on top of it (one more Local Flow pass).
+        self.has_ctl = bool(getattr(model.cfg, 'ctl', False)) and 'ctl_type' in self.cond
+        self.has_ret = bool(getattr(model.cfg, 'ret', False)) and 'ret_t' in self.cond      # 11-06 retrieved exemplars (same CFG group)
+        self.cfg_ctl = cfg_ctl if (self.has_ctl or self.has_ret) else None
+        if self.cfg_ctl is not None and model.cfg.mtc: raise ValueError('cfg_ctl is not implemented for mtc models')
         self.cfg_text = cfg_text             # False: guide on audio only (models never trained with text dropped, e.g. r4 VoxCPM)
         self.ctx_t = ctx_t                   # <1: noise the committed context like in training (exposure-bias fix)
         # 11-04 static-history refresh (off = None, bit-identical): (thr, t_low). When the current chunk contains speech and the
@@ -230,7 +248,7 @@ class Streamer:
         raw = c['text_c'] if self.text_mode in ('x2', 'voiced', 'asr') else c['text']   # token streaming: causal features
         text, tmask = m.text_tokens(raw[None].float(), tt[None].float(), c['tmask'][None].bool())
         tsec = m.token_seconds(tt[None].float())                    # flow_text_xattn: token times (window origin)
-        tvis = lvis = sstate = None
+        tvis = lvis = sstate = None; dual = False
         adsc_m = hasattr(m, 'stream_emb')
         if self.text_mode != 'final' or self.deploy_timing or adsc_m:
             now = torch.arange(W, device=self.dev).float() * CHUNK_FRAMES / 50.         # window-relative chunk starts
@@ -262,7 +280,45 @@ class Streamer:
                 tu, _ = m.text_tokens(raw[None].float(), ttw[None], tm0, drop=torch.ones(1, dtype=torch.bool, device=self.dev))
                 text = torch.cat([text, tu], 1); tmask = torch.cat([tmask, tmask], 1)
                 tvis = torch.cat([tvis & voiced, tvis & ~voiced], -1)
-                tsec = torch.cat([tsec, torch.full_like(tsec, float('nan'))], 1)
+                tsec = torch.cat([tsec, torch.full_like(tsec, float('nan'))], 1); dual = True
+        ctl_u = None; tm_noctl = tmask
+        if self.has_ctl:                                             # control tokens: same arrival / voicing rules as their word
+            from .ctl import anchor_arrival, visibility
+            ctl_tt = (c['ctl_t'].float() - f0 / 50.)[None]; cm = (c['ctl_type'] > 0)[None] & torch.isfinite(ctl_tt)
+            ctl_u = m.ctl_embed(c['ctl_type'].long()[None] * cm.long(), c['ctl_v'][None].float(), c['ctl_vm'][None].float())
+            nowc = torch.arange(W, device=self.dev).float() * CHUNK_FRAMES / 50.
+            arr_c = (anchor_arrival((self.arr_text - f0 / 50.)[None], tt[None].float(), c['tmask'][None].bool(), ctl_tt)
+                     if (self.arr_text is not None and self.text_mode != 'final') else ctl_tt)
+            heard_c = (nowc + (self.H * STRIDE / 50. if self.H < INF else 1e9))[None]
+            stream_c = torch.tensor([bool((self.deploy_timing or adsc_m) and self.H < INF)], device=self.dev)
+            if self.ctl_lookahead > 0:
+                from .ctl import TYPE_NAMES
+                g0 = (c['ctl_type'] > 0)[None] & (c['ctl_type'] <= len([n for n in TYPE_NAMES[1:] if not n.startswith('lex_')]))[None]
+                arr_c = torch.where(g0, torch.minimum(arr_c.float(), torch.nan_to_num(ctl_tt, 0.) - self.ctl_lookahead), arr_c.float())
+            ckeep, ctimed = visibility(cm, ctl_tt, arr_c, torch.tensor([self.text_mode == 'final'], device=self.dev), nowc, heard_c, stream_c)
+            if self.ctl_lookahead > 0:        # its time is known ctl_lookahead s before it is spoken (voiced-rule shifted)
+                early = (torch.nan_to_num(ctl_tt, 1e9)[:, None, :] - self.ctl_lookahead <= heard_c[:, :, None])
+                ctimed = torch.where(g0[:, None, :], ctimed | (ckeep & early), ctimed)
+            tt_c, tu_c = m.ctl_text_tokens(ctl_u, ctl_tt)
+            ctn = torch.where(cm, ctl_tt, torch.full_like(ctl_tt, float('nan'))); n0 = text.shape[1]
+            if dual:
+                text = torch.cat([text, tt_c.to(text.dtype), tu_c.to(text.dtype)], 1); tmask = torch.cat([tmask, cm, cm], 1)
+                tvis = torch.cat([tvis, ctimed, ckeep & ~ctimed], -1); tsec = torch.cat([tsec, ctn, torch.full_like(ctn, float('nan'))], 1)
+            else:
+                text = torch.cat([text, tt_c.to(text.dtype)], 1); tmask = torch.cat([tmask, cm], 1); tsec = torch.cat([tsec, ctn], 1)
+                if tvis is not None: tvis = torch.cat([tvis, ckeep], -1)
+            tm_noctl = tmask.clone(); tm_noctl[:, n0:] = False
+        if self.has_ret:                                             # retrieved exemplars: same arrival / voicing rules as their word
+            from .ctl import anchor_arrival, visibility
+            ret_tt = (c['ret_t'].float() - f0 / 50.)[None]; rmk = torch.isfinite(ret_tt)
+            nowr = torch.arange(W, device=self.dev).float() * CHUNK_FRAMES / 50.
+            arr_r = (anchor_arrival((self.arr_text - f0 / 50.)[None], tt[None].float(), c['tmask'][None].bool(), ret_tt)
+                     if (self.arr_text is not None and self.text_mode != 'final') else ret_tt)
+            _, rtimed = visibility(rmk, ret_tt, arr_r, torch.tensor([self.text_mode == 'final'], device=self.dev), nowr,
+                                   (nowr + (self.H * STRIDE / 50. if self.H < INF else 1e9))[None],
+                                   torch.tensor([bool((self.deploy_timing or adsc_m) and self.H < INF)], device=self.dev))
+        st_flow = st_plan = None                                     # 11-07 sem_time: conditional branch only (0 without visible words)
+        if getattr(cfg, 'sem_time', False): st_flow, st_plan = m.sem_time_cond(text, tmask, tvis, tsec, W)
         spk, spk_valid = spk_k if spk_k is not None else (c['spk'], c['spk_valid'])
         g = m.global_cond(spk[None].float(), spk_valid[None].float(), c['source'][None].long())
         if self.trace is not None:
@@ -321,8 +377,12 @@ class Streamer:
                 mflat, pm = m.planner_memory(mt, mtm)
                 h = m.plan((plan_lat if j == 0 else lat)[None], a, amask, text, tmask, g, mflat, pm, *self._ids(), sref, tvis=tvis, lvis=lvis, sstate=sstate)
             else:
-                h = m.plan((plan_lat if j == 0 else lat)[None], a, amask, text, tmask, g, tids=self._ids()[0], tidm=self._ids()[1], sref=sref, tvis=tvis, lvis=lvis, sstate=sstate)
+                h = m.plan((plan_lat if j == 0 else lat)[None], a, amask, text, tmask, g, tids=self._ids()[0], tidm=self._ids()[1], sref=sref, tvis=tvis, lvis=lvis, sstate=sstate,
+                           **({} if st_plan is None else dict(padd=st_plan)))
             hk = h[:, kw]
+            if self.cfg_ctl is not None:                            # conditional branch without the control tokens
+                hk_c0 = m.plan((plan_lat if j == 0 else lat)[None], a, amask, text, tm_noctl, g, tids=self._ids()[0], tidm=self._ids()[1],
+                               sref=sref, tvis=tvis, lvis=lvis, sstate=sstate)[:, kw]
             if self.cfg_w != 1:                                     # unconditional branch: audio + text dropped
                 a_u = m.audio_null.expand_as(a); am_u = torch.zeros_like(amask); tm_u = torch.zeros_like(tmask) if self.cfg_text else tmask
                 if cfg.mtc:
@@ -362,6 +422,22 @@ class Streamer:
                     ct = min(ct, self.still_refresh[1]); self.n_refresh += 1
             if ct < 1: c_ = ct * c_ + (1 - ct) * torch.randn(c_.shape, device=self.dev, generator=self.g)
             x[:, :cfg.ctx] = torch.where(known[:, :cfg.ctx, None], c_, x[:, :cfg.ctx])
+            ip = None; ikw = {}
+            if self.inpaint is not None:                         # target / weights of this window's positions (global latent grid)
+                gl = (c0 + kw) * CHUNK - cfg.ctx + torch.arange(L, device=self.dev)
+                okg = (gl >= 0) & (gl < len(self.inpaint['w']))
+                wf = torch.where(okg, self.inpaint['w'][gl.clamp(0, len(self.inpaint['w']) - 1)], torch.zeros_like(gl, dtype=torch.float))
+                tg = self.inpaint['lat'][gl.clamp(0, len(self.inpaint['w']) - 1)][None]
+                if hasattr(m, 'f_mask') and bool((wf >= 0.999).any()):
+                    # 11-07 item 5b, mask-conditioned model: the weight-1 core is CLEAN KNOWN latents flagged by f_mask (as in
+                    # training); only the soft ramps are inpainted RePaint-style
+                    core = (wf >= 0.999)[None]
+                    x = torch.where((core & ~known)[..., None], tg, x); known = known | core
+                    ikw = dict(ins=core); wf = wf * (~core[0]).float()
+                wv = (wf * (~known[0]).float())[None, :, None]
+                if bool((wv > 0).any()):
+                    eps = torch.randn(x.shape, device=self.dev, generator=self.inpaint['g'])
+                    x = wv * eps + (1 - wv) * x; ip = (wv, tg, eps)
             aw, awm = m.local_audio(a, Hrel, W)
             aw, awm = aw[:, kw], awm[:, kw]
             if self.cfg_w != 1:
@@ -378,25 +454,45 @@ class Streamer:
                 qsec = m.flow_seconds(torch.tensor([kw], device=self.dev), L, cfg.ctx)
                 ft = (text, m.chunk_text_mask(tmask, tvis, W)[:, kw], tsec, qsec)
                 if self.cfg_w != 1: ft_u = (text, m.chunk_text_mask(tm_u, tvis, W)[:, kw], tsec, qsec)
+                if self.cfg_ctl is not None: ft_c0 = (text, m.chunk_text_mask(tm_noctl, tvis, W)[:, kw], tsec, qsec)
+            elif self.cfg_ctl is not None: ft_c0 = None
+            ctlkw = {}
+            if ctl_u is not None:
+                cc = m.ctl_flow_cond(ctl_u, ctl_tt, ckeep[:, kw:kw + 1], ctimed[:, kw:kw + 1],
+                                     m.flow_seconds(torch.tensor([kw], device=self.dev), L, cfg.ctx))
+                if cc is not None: ctlkw = dict(ctl_c=cc[:, 0])
+            if st_flow is not None:
+                ctlkw = dict(ctl_c=st_flow[:, kw] if 'ctl_c' not in ctlkw else ctlkw['ctl_c'] + st_flow[:, kw].to(ctlkw['ctl_c'].dtype))
+            if self.has_ret:
+                rc = m.ret_flow_cond(c['ret_lat'][None].float(), ret_tt, rtimed[:, kw:kw + 1],
+                                     m.flow_seconds(torch.tensor([kw], device=self.dev), L, cfg.ctx))
+                if rc is not None: ctlkw = dict(ctl_c=rc[:, 0] if 'ctl_c' not in ctlkw else ctlkw['ctl_c'] + rc[:, 0].to(ctlkw['ctl_c'].dtype))
             ada = st_ada if j == 0 else None                         # the measured state only describes "now"
             if cfg.sem_head and cfg.sem_cond:                        # Local Flow sees the predicted g_k (each CFG branch its own)
                 hk = m.sem_h(hk, self.g_override)
                 if self.cfg_w != 1:
                     hk_u = m.sem_h(hk_u, self.g_override)
                     if self.cfg_t is not None: hk_a = m.sem_h(hk_a, self.g_override)
+                if self.cfg_ctl is not None: hk_c0 = m.sem_h(hk_c0, self.g_override)
             for s in range(self.steps):
                 tval = s / self.steps
                 t = torch.full((1, L), tval, device=self.dev); t[known] = 1.
                 if ct < 1: t[:, :cfg.ctx] = torch.where(known[:, :cfg.ctx], torch.full_like(t[:, :cfg.ctx], ct), t[:, :cfg.ctx])
-                v = m.flow_velocity(x, t, known, hk, g, aw, awm, style_tok, ada, mtk, mtmk, ftext=ft)
+                v = m.flow_velocity(x, t, known, hk, g, aw, awm, style_tok, ada, mtk, mtmk, ftext=ft, **ctlkw, **ikw)
+                if self.cfg_ctl is not None:
+                    v_full = v; v_c0 = m.flow_velocity(x, t, known, hk_c0, g, aw, awm, style_tok, ada, mtk, mtmk, ftext=ft_c0, **ikw); v = v_c0
                 if self.cfg_w != 1:
-                    v_u = m.flow_velocity(x, t, known, hk_u, g, aw_u, awm_u, style_tok, ada, mtk_u, mtmk_u, ftext=ft_u)
+                    v_u = m.flow_velocity(x, t, known, hk_u, g, aw_u, awm_u, style_tok, ada, mtk_u, mtmk_u, ftext=ft_u, **ikw)
                     if self.cfg_t is not None:
-                        v_a = m.flow_velocity(x, t, known, hk_a, g, aw, awm, style_tok, ada, mtk_a, mtmk_a, ftext=ft_u)
+                        v_a = m.flow_velocity(x, t, known, hk_a, g, aw, awm, style_tok, ada, mtk_a, mtmk_a, ftext=ft_u, **ikw)
                         v = v_u + self.cfg_w * (v_a - v_u) + self.cfg_t * (v - v_a)
                     else:
                         v = v_u + self.cfg_w * (v - v_u)
+                if self.cfg_ctl is not None: v = v + self.cfg_ctl * (v_full - v_c0)
                 x = torch.where(known[..., None], x, x + v / self.steps)
+                if ip is not None:
+                    tn = (s + 1) / self.steps; wv, tg, eps = ip
+                    x = wv * (tn * tg + (1 - tn) * eps) + (1 - wv) * x
             new = x[0, cfg.ctx:]
             lat[kw] = new
             out.append(new)

@@ -59,7 +59,7 @@ def overfit_clips(view, n):
 
 
 ADDABLE = {'vox_prefsq_norm', 'vox_text_xattn', 'vox_slots', 'vox_word_aux', 'sem_head', 'sem_cond', 'intent_aux', 'tts_h', 'adsc',
-           'flow_text_xattn', 'floor'}  # floor: zero-init floor-state token (11-06); adsc: zero-init stream_emb (11-04); flow_text_xattn: zero-gated flow text cross-attn (11-04)
+           'flow_text_xattn', 'ctl', 'ctl_flow', 'ret', 'sem_time', 'mask_cond', 'floor'}  # ctl / ctl_flow: zero-init control-token routes (11-05); adsc: zero-init stream_emb (11-04); flow_text_xattn: zero-gated flow text cross-attn (11-04)
 RESIZE_TEXT = {'text_dim'}  # allowed on a fine-tune: ONLY the text input LayerNorm+Linear is re-initialised (see build_model)
 
 
@@ -123,6 +123,27 @@ def build_model(base_cfg, prev_extra, new_extra, prev_state=None, resize_z=False
     return m, base_ids
 
 
+OGM_AUDIO = ('audio.', 'p_audio.', 'tts_in.', 'audio_null')          # audio encoder side (gradient-modulated by ogm_alpha)
+OGM_TEXT = ('text_in.', 'text_time', 'ctl_')                          # text encoder side (incl. control-token encoders)
+
+
+def ogm_modulate(model, sc, l, state):
+    """OGM-GE (11-06, default off): EMA of the audio / text contributions (losses.py ogm_da / ogm_dt); the dominant side's
+    encoder gradients are scaled by 1 - tanh(alpha (ratio - 1)) and, with ogm_ge, get N(0, std(grad)) noise. Returns a log dict."""
+    da, dt = float(l['ogm_da']), float(l['ogm_dt'])
+    e = sc.ogm_ema
+    state['da'] = da if 'da' not in state else e * state['da'] + (1 - e) * da
+    state['dt'] = dt if 'dt' not in state else e * state['dt'] + (1 - e) * dt
+    sa, st = max(state['da'], 1e-6), max(state['dt'], 1e-6)
+    ratio = sa / st
+    side, k = (OGM_AUDIO, 1 - math.tanh(sc.ogm_alpha * (ratio - 1))) if ratio > 1 else (OGM_TEXT, 1 - math.tanh(sc.ogm_alpha * (1 / ratio - 1)))
+    for n, p in model.named_parameters():
+        if p.grad is None or not n.startswith(side): continue
+        g = p.grad.mul_(k)
+        if sc.ogm_ge and g.numel() > 1: g.add_(torch.randn_like(g) * g.std())
+    return dict(ogm_ratio=ratio, ogm_k=k, ogm_audio_dominant=float(ratio > 1))
+
+
 SELF_FORCE_ARGS = {'p': float, 'steps': int, 'rounds': int, 'cfg': float, 'mix': float, 'noise': float}
 
 
@@ -183,6 +204,9 @@ def main():
     ap.add_argument('--gest-frames', default=None, help='direct coarse g_k frame track (scripts/semantic/g1_gest_frames.py); train split only')
     ap.add_argument('--floor-frames', default=None, help='floor track of a post-speech tail view (scripts/interrupt/build_tail_view.py); train split only')
     ap.add_argument('--tail-share', type=float, default=0., help='share of windows drawn around a tail clip speech offset')
+    ap.add_argument('--ctl-tokens', default=None, help='control tokens (scripts/semantic/g1_ctl_tokens.py) of the train split; needs cfg ctl')
+    ap.add_argument('--ctl-focus', type=float, default=0., help='P(train window placed around an annotation control token)')
+    ap.add_argument('--ret', default=None, help='retrieval dir[:query file] (scripts/semantic/g1_ret_bank.py; default query RET_train.json); needs cfg ret')
     add_self_force_args(ap)
     ap.add_argument('--bagger-dir', default=None, help='colon-separated cumulative BAgger collection directories')
     ap.add_argument('--bagger-share', type=float, default=0.)
@@ -204,7 +228,7 @@ def main():
     stats = json.loads(Path(a.stats).read_text())
     view = View(a.view, 'train', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache, tts_hidden=a.tts_hidden,
                 intent_frames=a.intent_frames, holdout=a.holdout, tok_intent=a.tok_intent, bagger_dir=a.bagger_dir,
-                gest_frames=a.gest_frames, floor_frames=a.floor_frames)
+                gest_frames=a.gest_frames, floor_frames=a.floor_frames, **({} if not a.ctl_tokens else dict(ctl_tokens=a.ctl_tokens)), **({} if not a.ret else dict(ret=a.ret)))
     dview = View(a.view, 'val', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache, tts_hidden=a.tts_hidden)
     if a.overfit:
         overfit_clips(view, a.overfit); dview = view
@@ -220,7 +244,8 @@ def main():
             cov = view.load_causal(a.causal_dir, _sc0.horizons)
             if cov < 0.99: raise SystemExit(f'--causal-dir covers only {cov:.1%} of the train clips')
     ds = WindowDataset(view, a.frames, seed=a.seed * 1000 + rank, semsynth_share=a.semsynth_share, bagger_share=a.bagger_share,
-                       tail_share=a.tail_share, **({'p_start0': a.p_start0} if a.p_start0 > 0 else {}))
+                       tail_share=a.tail_share, **({'p_start0': a.p_start0} if a.p_start0 > 0 else {}),
+                       **({} if not a.ctl_focus else dict(ctl_focus=a.ctl_focus)))
     dl = iter(torch.utils.data.DataLoader(ds, a.batch, num_workers=a.workers, collate_fn=collate, pin_memory=True,
                                           persistent_workers=a.workers > 0, prefetch_factor=4 if a.workers else None))
     dev_ds = WindowDataset(dview, a.frames, seed=12345, fixed=fixed_windows(dview, a.frames))
@@ -288,8 +313,11 @@ def main():
     net = torch.nn.parallel.DistributedDataParallel(model, find_unused_parameters=True) if world > 1 else model
     lm_ids = {id(p) for n, p in model.named_parameters() if n.startswith('vox.lm.')}
     lm_scale = getattr(getattr(model, 'cfg', None), 'lm_lr_scale', 1.0)
-    groups = [dict(params=[p for p in params if id(p) not in lm_ids], scale=1.0)]
+    ctl_scale = float(getattr(sc, 'ctl_lr_scale', 1.0)) if sc is not None else 1.0
+    ctl_ids = {id(p) for n, p in model.named_parameters() if n.startswith('ctl_')} if ctl_scale != 1.0 else set()
+    groups = [dict(params=[p for p in params if id(p) not in lm_ids and id(p) not in ctl_ids], scale=1.0)]
     if any(id(p) in lm_ids for p in params): groups.append(dict(params=[p for p in params if id(p) in lm_ids], scale=lm_scale))
+    if ctl_ids: groups.append(dict(params=[p for p in params if id(p) in ctl_ids], scale=ctl_scale))   # 11-06 control-token modules
     opt = torch.optim.AdamW([dict(params=g_['params'], scale=g_['scale']) for g_ in groups], lr=a.lr, betas=(0.9, 0.98), weight_decay=0.01)
     sched = lambda s: min(1., (s + 1) / a.warmup) * (0.1 + 0.9 * 0.5 * (1 + math.cos(math.pi * min(1., s / a.steps))))
     step = 0; gn_hist = []
@@ -348,7 +376,8 @@ def main():
         torch.random.set_rng_state(g); torch.cuda.set_rng_state(gc)
         return {f'dev_{k}': v / max(n, 1) for k, v in acc.items()}
 
-    t0 = time.time(); tl = time.time(); agg = {}; skipped = 0
+    t0 = time.time(); tl = time.time(); agg = {}; skipped = 0; ogm_state = {}
+    if sc is not None and sc.ogm_alpha > 0 and a.accum != 1: raise SystemExit('ogm_alpha needs --accum 1')
     best_key = 'dev_rec' if a.stage == 'vae' else 'dev_flow'
     best = json.loads((out / 'BEST.json').read_text()) if (out / 'BEST.json').exists() else dict(value=1e9, step=0)
     model.train()
@@ -365,6 +394,9 @@ def main():
             if fin.item() < 1:
                 skipped += 1; step += 1; continue
             loss.backward()
+            if sc is not None and sc.ogm_alpha > 0:
+                if world > 1: raise SystemExit('ogm_alpha: single-process training only')
+                l = dict(l, **ogm_modulate(model, sc, l, ogm_state))
         else:
             # 11-04: gradient accumulation (e.g. 2 x 5090: batch 256 x accum 2 x 2 GPUs = the 1024 of the A800 recipe). Losses
             # are averaged over the micro-batches; DDP syncs gradients only on the last one; a non-finite micro-batch on any

@@ -98,6 +98,24 @@ class Config:
     # latent time - token time, per head), output added through a zero-initialised AdaLN gate. Chunk k sees exactly the
     # planner's text of chunk k (tmask & ADSC tvis); tokens without a known time get global attention only.
     flow_text_xattn: bool = False
+    # 11-05 explicit control tokens (scmg/ctl.py; default off = the exact old model): a token (type + Fourier features of the
+    # masked values: pointing target / hand / amplitude bin) enters the planner's TEXT stream like a word (ctl); ctl_flow adds a
+    # direct time-local route into the Local Flow AdaLN condition (zero-init). Both modules use their own RNG stream.
+    ctl: bool = False
+    ctl_flow: bool = False
+    ctl_freqs: int = 6
+    # 11-06 causal retrieval route (scripts/semantic/g1_ret_bank.py; default off): a retrieved exemplar = frozen-VAE latents of a
+    # bank gesture, aligned at the token time (snippet starts ret_pre s earlier); every Local Flow position inside the snippet adds
+    # MLP([latent at its time, Fourier(position - token time)]) (zero-init output) to its AdaLN condition
+    # 11-07 §7.55 item 2 "semantic first": causal time-lattice Transformer over the TIMED words visible to each chunk (cross-attention
+    # with a per-head Gaussian prior on query time - word time), giving a semantic state per Local Flow position; added zero-init to
+    # the Local Flow AdaLN condition and (chunk mean of its target positions) to the planner input. Default off.
+    sem_time: bool = False
+    mask_cond: bool = False        # 11-07 item 5b: learned zero-init embedding flagging clean INSERTED latents in the Local Flow
+    sem_time_layers: int = 2
+    ret: bool = False
+    ret_len: int = 30
+    ret_pre: float = 0.8
 
     def dict(self):
         return asdict(self)
@@ -200,6 +218,42 @@ class WordTimeXAttn(nn.Module):
 
 def gate(n):
     return nn.Parameter(torch.zeros(n))
+
+
+class SemTime(nn.Module):
+    """Semantic-first temporal stream (11-07). Queries = flow positions (time lattice, 12.5 Hz) of each chunk; keys = timed word
+    tokens visible to that chunk; per head logits = q.k / sqrt(dh) - 0.5 ((tau - t_w - lag) / sigma)^2, sigma in [0.25, 2] s,
+    lag in +-0.5 s. No self-attention across positions (causal by construction). Rows without a visible timed word give 0."""
+
+    def __init__(self, d, heads, layers):
+        super().__init__()
+        self.h = heads; self.q0 = nn.Linear(d, d)
+        self.layers = nn.ModuleList([nn.ModuleDict(dict(nq=nn.LayerNorm(d), nk=nn.LayerNorm(d), q=nn.Linear(d, d), k=nn.Linear(d, d),
+                                                         v=nn.Linear(d, d), o=nn.Linear(d, d), n2=nn.LayerNorm(d), mlp=MLP(d, 4, d)))
+                                     for _ in range(layers)])
+        self.sig_raw = nn.Parameter(torch.zeros(layers, heads)); self.lag_raw = nn.Parameter(torch.zeros(layers, heads))
+        self.out_n = nn.LayerNorm(d)
+
+    def forward(self, text, keep, tsec, qsec):
+        """text [B, Kt, d], keep [B, K, Kt] visible to chunk k, tsec [B, Kt] (NaN untimed), qsec [K, L] -> [B, K, L, d]."""
+        B, Kt, D = text.shape; K, L = qsec.shape; H = self.h; dh = D // H
+        timed = torch.isfinite(tsec)
+        kp = (keep & timed[:, None, :])                                                     # [B, K, Kt]
+        h = self.q0(sincos(qsec.reshape(-1) * FPS / STRIDE, D)).view(1, K, L, D).expand(B, K, L, D)
+        dt = qsec[None, :, :, None].float() - torch.nan_to_num(tsec, 0.)[:, None, None, :].float()   # [B, K, L, Kt]
+        has = kp.any(-1)                                                                     # [B, K]
+        for li, ly in enumerate(self.layers):
+            q = ly['q'](ly['nq'](h)).view(B, K, L, H, dh)
+            kv = ly['nk'](text); k = ly['k'](kv).view(B, Kt, H, dh); v = ly['v'](kv).view(B, Kt, H, dh)
+            lg = torch.einsum('bklhe,bthe->bklht', q.float(), k.float()) / math.sqrt(dh)
+            sig = 0.25 + 1.75 * self.sig_raw[li].float().sigmoid(); lag = 0.5 * self.lag_raw[li].float().tanh()
+            lg = lg - 0.5 * ((dt[:, :, :, None, :] - lag[None, None, None, :, None]) / sig[None, None, None, :, None]).square()
+            lg = lg.masked_fill(~kp[:, :, None, None, :], -1e9)
+            w = torch.softmax(lg, -1) * has[:, :, None, None, None]
+            o = torch.einsum('bklht,bthe->bklhe', w, v.float()).reshape(B, K, L, D).to(h.dtype)
+            h = h + ly['o'](o)
+            h = h + ly['mlp'](ly['n2'](h))
+        return self.out_n(h) * has[:, :, None, None].to(h.dtype)
 
 
 class GatedXBlock(nn.Module):
@@ -408,6 +462,40 @@ class SCMG(nn.Module):
                 torch.manual_seed(20261104)
                 self.f_text = nn.ModuleList([WordTimeXAttn(d, cfg.heads) for _ in range(cfg.flow_layers)])
             self.f_text.to(self.f_in.weight.device)
+        if getattr(cfg, 'ctl', False) and not hasattr(self, 'ctl_type'):
+            from .ctl import NV, NVM, NTYPES
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(20261106)
+                self.ctl_type = nn.Embedding(NTYPES, d)                         # scmg/ctl.py TYPE_NAMES (0 = padding)
+                self.ctl_val = nn.Linear(NV * 2 * cfg.ctl_freqs + NVM, d)
+                self.ctl_enc = nn.Sequential(nn.SiLU(), nn.Linear(d, d))
+                self.ctl_text = nn.Linear(d, d); nn.init.zeros_(self.ctl_text.weight); nn.init.zeros_(self.ctl_text.bias)
+            for mod in (self.ctl_type, self.ctl_val, self.ctl_enc, self.ctl_text): mod.to(self.f_in.weight.device)
+        if getattr(cfg, 'ctl_flow', False) and not hasattr(self, 'ctl_fmlp'):
+            if not getattr(cfg, 'ctl', False): raise ValueError('ctl_flow needs ctl')
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(20261107)
+                self.ctl_dt = nn.Linear(2 * cfg.ctl_freqs, d); self.ctl_dt_unk = nn.Parameter(torch.zeros(d))
+                self.ctl_fmlp = nn.Sequential(nn.LayerNorm(d), nn.Linear(d, d), nn.SiLU(), nn.Linear(d, d))
+                nn.init.zeros_(self.ctl_fmlp[-1].weight); nn.init.zeros_(self.ctl_fmlp[-1].bias)
+            self.ctl_dt.to(self.f_in.weight.device); self.ctl_fmlp.to(self.f_in.weight.device)
+            self.ctl_dt_unk.data = self.ctl_dt_unk.data.to(self.f_in.weight.device)
+        if getattr(cfg, 'mask_cond', False) and not hasattr(self, 'f_mask'):
+            self.f_mask = nn.Parameter(torch.zeros(d, device=self.f_in.weight.device))
+        if getattr(cfg, 'sem_time', False) and not hasattr(self, 'semt'):
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(20261109)
+                self.semt = SemTime(d, cfg.heads, cfg.sem_time_layers)
+                self.semt_flow = nn.Linear(d, d); nn.init.zeros_(self.semt_flow.weight); nn.init.zeros_(self.semt_flow.bias)
+                self.semt_plan = nn.Linear(d, d); nn.init.zeros_(self.semt_plan.weight); nn.init.zeros_(self.semt_plan.bias)
+            for mod in (self.semt, self.semt_flow, self.semt_plan): mod.to(self.f_in.weight.device)
+        if getattr(cfg, 'ret', False) and not hasattr(self, 'ret_in'):
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(20261108)
+                self.ret_in = nn.Linear(cfg.z + 2 * cfg.ctl_freqs, d)
+                self.ret_out = nn.Sequential(nn.SiLU(), nn.Linear(d, d), nn.SiLU(), nn.Linear(d, d))
+                nn.init.zeros_(self.ret_out[-1].weight); nn.init.zeros_(self.ret_out[-1].bias)
+            self.ret_in.to(self.f_in.weight.device); self.ret_out.to(self.f_in.weight.device)
         if cfg.lora_r > 0 and not getattr(self, '_lora', False):
             for m in (self.planner, self.flow, self.audio) + ((self.vox.ralm,) if hasattr(self, 'vox') else ()):
                 apply_lora(m, r=cfg.lora_r)
@@ -428,6 +516,66 @@ class SCMG(nn.Module):
         s = SEM_SCALE
         return h + e if s == 1.0 else h + s * e          # 11-05: inference-time semantic guidance (env SCMG_SEM_SCALE; g=0 is
                                                          # the trained null, so s > 1 extrapolates away from it like CFG)
+
+    # ------------------------------------------------------------------ explicit control tokens (scmg/ctl.py)
+    def ctl_embed(self, ctype, cval, cvm):
+        """ctype [B, Kc] long (0 = padding), cval [B, Kc, NV], cvm [B, Kc, NVM] -> token content u [B, Kc, d]."""
+        from .ctl import value_features
+        f = value_features(cval, cvm, self.cfg.ctl_freqs).to(self.ctl_val.weight.dtype)
+        return self.ctl_enc(self.ctl_type(ctype) + self.ctl_val(f))
+
+    def ctl_text_tokens(self, u, ct):
+        """Planner text-stream copies of the control tokens: (timed, untimed) [B, Kc, d]; time embedding exactly as a word's."""
+        base = self.ctl_text(u)
+        te = self.text_time(sincos(torch.nan_to_num(ct, 0.) * FPS / STRIDE, self.cfg.d))
+        return base + te.to(base.dtype), base + self.text_time_unk.to(base.dtype)
+
+    def ctl_flow_cond(self, u, ct, keep, timed, qsec):
+        """Direct Local Flow route: u [B, Kc, d], ct [B, Kc] s, keep / timed [B, K, Kc] (arrived / time known by chunk k),
+        qsec [K, L] position times (s, same origin) -> [B, K, L, d] added to the AdaLN condition; None without ctl_flow.
+        A timed token reaches positions with dt = position - token time in [-WIN_PAST, WIN_FUTURE] with Fourier(dt / 4);
+        an arrived-but-untimed token reaches every position with the learned 'time unknown' vector."""
+        if not hasattr(self, 'ctl_fmlp'): return None
+        from .ctl import fourier, WIN_PAST, WIN_FUTURE
+        dt = qsec[None, :, :, None].float() - torch.nan_to_num(ct, 0.)[:, None, None, :].float()            # [B, K, L, Kc]
+        tm = timed[:, :, None, :] & (dt >= -WIN_PAST) & (dt <= WIN_FUTURE)
+        use = tm | (keep & ~timed)[:, :, None, :]
+        cols = use.flatten(0, 2).any(0).nonzero().squeeze(1)
+        out = torch.zeros(*dt.shape[:3], self.cfg.d, device=u.device, dtype=u.dtype)
+        if cols.numel() == 0: return out
+        dt, tm, use, u = dt.index_select(3, cols), tm.index_select(3, cols), use.index_select(3, cols), u.index_select(1, cols)
+        e_dt = self.ctl_dt(fourier(dt / 4., self.cfg.ctl_freqs).to(self.ctl_dt.weight.dtype))
+        e = torch.where(tm[..., None], e_dt, self.ctl_dt_unk.to(e_dt.dtype)) + u[:, None, None].to(e_dt.dtype)
+        return (self.ctl_fmlp(e) * use[..., None].to(e.dtype)).sum(-2).to(u.dtype)
+
+    def sem_time_cond(self, text, tmask, tvis, tsec, K):
+        """-> (flow add [B, K, L, d], planner add [B, K, d]) or (None, None) without cfg.sem_time."""
+        if not hasattr(self, 'semt'): return None, None
+        L = self.cfg.ctx + CHUNK
+        qsec = self.flow_seconds(torch.arange(K, device=text.device), L, self.cfg.ctx)
+        keep = self.chunk_text_mask(tmask, tvis, K)
+        has = (keep & torch.isfinite(tsec)[:, None, :]).any(-1)                             # [B, K]: a timed word is visible
+        s = self.semt(text, keep, tsec, qsec)
+        hf = has[:, :, None, None].to(s.dtype); hp = has[:, :, None].to(s.dtype)
+        return self.semt_flow(s) * hf, self.semt_plan(s[:, :, self.cfg.ctx:].mean(2)) * hp     # exactly 0 without visible words
+
+    def ret_flow_cond(self, rlat, rt, timed, qsec):
+        """Retrieval route: rlat [B, R, ret_len, z] exemplar latents, rt [B, R] token time (s), timed [B, K, R] (token arrived AND its
+        time known by chunk k), qsec [K, L] position times -> [B, K, L, d]; None without cfg.ret. Position tau reads latent
+        floor((tau - rt + ret_pre) * 12.5) when it falls inside the snippet."""
+        if not hasattr(self, 'ret_in'): return None
+        from .ctl import fourier
+        B, R, LEN, Z = rlat.shape; K, L = qsec.shape
+        dt = qsec[None, :, :, None].float() - torch.nan_to_num(rt, 0.)[:, None, None, :].float()            # [B, K, L, R]
+        j = torch.floor((dt + self.cfg.ret_pre) * FPS / STRIDE).long()
+        use = timed[:, :, None, :] & (j >= 0) & (j < LEN)
+        out = torch.zeros(B, K, L, self.cfg.d, device=rlat.device, dtype=self.ret_in.weight.dtype)
+        if not use.any(): return out
+        bi = torch.arange(B, device=rlat.device)[:, None, None, None].expand_as(j); ri = torch.arange(R, device=rlat.device)[None, None, None, :].expand_as(j)
+        lat = rlat[bi, ri, j.clamp(0, LEN - 1)]                                                               # [B, K, L, R, Z]
+        f = torch.cat([lat.to(self.ret_in.weight.dtype), fourier(dt / 4., self.cfg.ctl_freqs).to(self.ret_in.weight.dtype)], -1)
+        e = self.ret_out(self.ret_in(f))
+        return (e * use[..., None].to(e.dtype)).sum(-2)
 
     # ------------------------------------------------------------------ conditions
     def audio_tokens(self, feat, causal, tts_h=None, tts_hm=None):
@@ -493,7 +641,7 @@ class SCMG(nn.Module):
 
     # ------------------------------------------------------------------ planner
     def plan(self, lat, a, amask, text, tmask, g, mt=None, mt_mask=None, tids=None, tidm=None, sref=None,
-             tvis=None, lvis=None, sstate=None):
+             tvis=None, lvis=None, sstate=None, padd=None):
         """lat [B, K, CHUNK, z] latents of chunks 0..K-1 (teacher forcing: chunk k's input is chunk k-1);
         a [B, N, d]; amask [B, K, N]; g [B, d]; returns h [B, K, d].
         11-05 training-matched causal inputs (default shapes = the unchanged path): a [B, K, N, d] and / or g [B, K, d] =
@@ -515,6 +663,7 @@ class SCMG(nn.Module):
         prev = torch.cat([self.p_start.expand(B, 1, -1), self.p_in(lat[:, :-1].flatten(-2))], 1)
         x = prev + self.p_audio(pooled) + sincos(torch.arange(K, device=lat.device), self.cfg.d)[None]
         if semb is not None: x = x + semb
+        if padd is not None: x = x + padd.to(x.dtype)          # 11-07 sem_time planner input (zero-init)
         causal = torch.ones(K, K, dtype=torch.bool, device=lat.device).tril()[None]
         tm = self.chunk_text_mask(tmask, tvis, K)                                     # ADSC: text arrived by chunk k
         for blk in self.planner:
@@ -561,14 +710,17 @@ class SCMG(nn.Module):
 
     # ------------------------------------------------------------------ local flow
     def flow_velocity(self, xt, t, known, h, g, aw, aw_mask, style_tok=None, state_ada=None, mt=None, mt_mask=None,
-                      ftext=None):
-        """xt [M, L, z] (known positions hold clean latents); t [M, L] (1 on known); h [M, d]; g [M, d];
+                      ftext=None, ctl_c=None, ins=None):
+        """ctl_c [M, L, d]: control-token flow route (None = the unchanged model).
+        xt [M, L, z] (known positions hold clean latents); t [M, L] (1 on known); h [M, d]; g [M, d];
         aw [M, W, d] local audio window, aw_mask [M, W]; ftext (flow_text_xattn): (text [Bt, Kt, d], keep [M, Kt],
         token s [Bt, Kt], position s [M, L]) or None (= no text visible)."""
         x = self.f_in(xt) + self.f_role(known.long()) + self.f_pos[None]
+        if ins is not None and hasattr(self, 'f_mask'): x = x + ins[..., None].to(x.dtype) * self.f_mask   # 11-07 inserted clean latents
         c = self.f_t(sincos(t * 1000., self.cfg.d)) + (self.f_plan(h) + g)[:, None]
         if style_tok is not None: c = c + style_tok[:, None]
         if state_ada is not None: c = c + state_ada[:, None]
+        if ctl_c is not None: c = c + ctl_c.to(c.dtype)
         am = aw_mask[:, None, :].expand(-1, x.shape[1], -1)
         ftx = self.f_text if (ftext is not None and hasattr(self, 'f_text')) else None
         if ftx is not None:

@@ -168,7 +168,7 @@ def seed_latent(args, ctx, device):
 
 
 @torch.no_grad()
-def generate(args, base, sparse, vq, ctx, feats, seed_lat, trans0, device):
+def generate(args, base, sparse, vq, ctx, feats, seed_lat, trans0, device, mark=None):
     """semtalk_sparse_trainer._g_test decoding with the seed above (GT never enters)."""
     from utils import rotation_conversions as rc, other_tools
     j = ctx['joints']; mu, ml, mh = ctx['masks']['upper'], ctx['masks']['lower'], ctx['masks']['hands']
@@ -216,6 +216,7 @@ def generate(args, base, sparse, vq, ctx, feats, seed_lat, trans0, device):
         rt = torch.cat([other_tools.velocity2position(tv[:, :, 0:1], 1 / args.pose_fps, trans0[None, 0:1]), tv[:, :, 1:2],
                         other_tools.velocity2position(tv[:, :, 2:3], 1 / args.pose_fps, trans0[None, 2:3])], -1)
         latent_last = torch.cat([rp, rt, rlo[:, :, 57:61]], -1)
+    if mark: mark('generate')                                 # window loop (incl. its per-window feedback decode)
     iface, iu, il, ih = (torch.cat(x, 1) for x in (all_f, all_u, all_l, all_h))
     ru, rlo, rh, rf = vq['upper'].decode(iu), vq['lower'].decode(il), vq['hands'].decode(ih), vq['face'].decode(iface)
     n = rf.shape[1]
@@ -259,7 +260,9 @@ class Feat:
         return max(zip(r[0]['labels'], r[0]['scores']), key=lambda x: x[1])[0]
 
     @torch.no_grad()
-    def __call__(self, wav, words, n, pre=4, rl=60):
+    def __call__(self, wav, words, n, pre=4, rl=60, mark=None):
+        """mark: optional callable(stage) adding the time since the previous mark to that stage (latency harness)."""
+        mark = mark or (lambda _s: None)
         k = max(1, int(np.ceil((n - pre) / rl))); N = pre + k * rl
         a_def, sr_def = librosa.load(str(wav))                    # librosa default 22.05 kHz (official)
         a_raw, sr_raw = librosa.load(str(wav), sr=None)
@@ -273,18 +276,24 @@ class Feat:
         hub = F.interpolate(hub.swapaxes(-1, -2).unsqueeze(0), size=mel.shape[-1], mode='linear',
                             align_corners=True).swapaxes(-1, -2)[0]
         assert len(beat) >= N and len(hub) >= N, (len(beat), len(hub), N)
+        mark('audio_feat')
         wid, wsent = word_tracks(words, N, N / 30.0, self.lang)
+        sents = [process_annotated_sentence(wsent[i * rl:(i + 1) * rl + pre]) for i in range(k)]
+        mark('text_enc')
         a16_lab, _ = librosa.load(str(wav), sr=16000)             # get_max_score_label reads the file at 16 kHz
         a16_lab = np.pad(a16_lab, (0, max(0, int(np.ceil(need * 16000)) - len(a16_lab))))
-        sents = [process_annotated_sentence(wsent[i * rl:(i + 1) * rl + pre]) for i in range(k)]
         emos = [self.emo_label(a16_lab, i * rl, (i + 1) * rl + pre) for i in range(k)]
+        mark('audio_feat')                                        # emotion2vec is an audio encoder
         dv = self.device
-        return dict(k=k, N=N, sents=sents, emos=emos,
-                    word=torch.from_numpy(wid[:N])[None].to(dv),
-                    beat=torch.from_numpy(beat[:N]).float()[None].to(dv),
-                    hubert=hub[:N].float()[None].to(dv),
-                    feat_clip=torch.stack([self.text([s]) for s in sents], 1),
-                    emo_clip=torch.stack([self.text([e]) for e in emos], 1))
+        out = dict(k=k, N=N, sents=sents, emos=emos,
+                   word=torch.from_numpy(wid[:N])[None].to(dv),
+                   beat=torch.from_numpy(beat[:N]).float()[None].to(dv),
+                   hubert=hub[:N].float()[None].to(dv))
+        mark('audio_feat')
+        out.update(feat_clip=torch.stack([self.text([s]) for s in sents], 1),
+                   emo_clip=torch.stack([self.text([e]) for e in emos], 1))
+        mark('text_enc')                                          # CLIP text encoder (sentence + emotion label)
+        return out
 
 
 def main():

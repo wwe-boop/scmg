@@ -30,7 +30,7 @@ for s in $(seq 0 19); do
   P=$O/scmg/run_$(printf %03d $s); [ -f $P/.done ] && continue; mkdir -p $P
   for i in $(seq 0 $((n - 1))); do
     CUDA_VISIBLE_DEVICES=${GL[$i]} SCMG_J=39 SCMG_NO_GLITCH=1 $PY scripts/echog_g1/infer_test.py --ckpt $ck --vae $vae --stats $C/scmg/STATS_echog_g1_v1.json \
-      --view $C/echog-g1-v1/test --text-cache $C/scmg/text-e5-echog-g1-v1-test --out $P --stems $ST --seed $s --steps ${STEPS:-10} \
+      --view $C/echog-g1-v1/test --text-cache $C/scmg/text-e5-echog-g1-v1-test --out $P --stems $ST --seed $s --steps ${BENCH_STEPS:-10} \
       --cfg-w ${CFGW:-2.5} --protocol offline --shard $i/$n ${SCMG_EXTRA:-} >> $O/scmg.log 2>&1 &
   done; wait
   [ $(ls $P/*.pt | wc -l) -eq $(grep -c . $ST) ] && touch $P/.done || log "SCMG_RUN_INCOMPLETE $s"

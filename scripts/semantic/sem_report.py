@@ -8,6 +8,7 @@ from collections import defaultdict
 from pathlib import Path
 import numpy as np
 
+CLUSTER = lambda stem: stem       # bootstrap cluster of an event: its clip (default) or, with --cluster recording, its recording
 KEYS = ('det_auc', 'pair_win', 'bal_top1', 'srr', 'time_bal_top1', 'shuf_spk_bal_top1', 'top1')
 
 
@@ -34,7 +35,7 @@ def paired(za, zb, rng, n=2000):
     ka, kb = [str(k) for k in za['key']], [str(k) for k in zb['key']]
     ib = {k: i for i, k in enumerate(kb)}; common = [(i, ib[k]) for i, k in enumerate(ka) if k in ib]
     ia = np.array([c[0] for c in common]); jb = np.array([c[1] for c in common])
-    stems = np.array([ka[i].split('@')[0] for i in ia]); us, inv = np.unique(stems, return_inverse=True)
+    stems = np.array([CLUSTER(ka[i].split('@')[0]) for i in ia]); us, inv = np.unique(stems, return_inverse=True)
     rows = defaultdict(list)
     for k, g in enumerate(inv): rows[g].append(k)
     rows = [np.array(rows[g]) for g in range(len(us))]
@@ -56,7 +57,12 @@ def paired(za, zb, rng, n=2000):
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('--scores', required=True); ap.add_argument('--rec-prefix', required=True)
     ap.add_argument('--split', default='test'); ap.add_argument('--pairs', default=''); ap.add_argument('--out', required=True)
-    a = ap.parse_args(); d = Path(a.scores).expanduser(); rng = np.random.default_rng(0)
+    ap.add_argument('--cluster', default='clip', choices=['clip', 'recording'],
+                    help='paired bootstrap unit (11-06): clip (default, as before) or recording (utterances of one take resampled together)')
+    a = ap.parse_args()
+    global CLUSTER
+    if a.cluster == 'recording': CLUSTER = lambda stem: re.sub(r'_utt_\d+$', '', stem)
+    d = Path(a.scores).expanduser(); rng = np.random.default_rng(0)
     files = sorted(d.glob(f'{a.rec_prefix}*--*--{a.split}.json'))
     by = defaultdict(dict)
     for f in files:
@@ -67,7 +73,7 @@ def main():
                             n_rec=len(rs)) for k in KEYS if all(k in r for r in rs.values())}
         tab[src]['per_class'] = {c: float(np.mean([r['per_class'][c] for r in rs.values()])) for c in next(iter(rs.values()))['per_class']}
         tab[src]['n_events'] = next(iter(rs.values()))['n']
-    res = dict(scores=str(d), rec_prefix=a.rec_prefix, table=tab, pairs={})
+    res = dict(scores=str(d), rec_prefix=a.rec_prefix, cluster=a.cluster, table=tab, pairs={})
     for pr in [p for p in a.pairs.split(',') if p]:
         x, y = pr.split(':'); per = {}
         for rec in sorted(set(by.get(x, {})) & set(by.get(y, {}))):
