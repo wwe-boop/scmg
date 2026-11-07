@@ -442,3 +442,8 @@ Module 9 run setup (before the job): plans PLAN_dev_m9_dense.json (1112 events, 
 from exp/duplex unchanged), release 20261108-071120-ex002-m9. Smoke on 3 old-plan clips (post-processing only, before the job; disclosed): 18 %
 of point / 39 % of present keyframes rejected for self-penetration; release-acceleration median 56 (IK post-processing) vs 26 token-only vs
 human p95 31.9; arm ramp jerk over-limit 0.53 vs 0.27.
+Module 9 clarification (coordinator, 2026-11-08 ~07:20, before any module-9 job result; not a change): a REJECTED keyframe counts as a failure in
+every primary gate -- the angle error, STG, chest height and palm angle are computed over ALL command events of the plan; a rejected event is
+scored from its actual output (no insertion there, i.e. the token-only / re-generated motion). No event is ever dropped from a denominator
+(this is how ex002_aim_error / evaluate / ex002_present already work: they iterate over the plan's events). The reject share is reported
+per protocol as its own row.
