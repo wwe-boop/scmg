@@ -213,3 +213,27 @@ Verdict: ctl4 (true freeze) + module 5b (asymmetric command-local blend) + modul
 lane-4 gate on dev. Caveats: STG margin 0.003; the 5b window was set from a dev diagnostic (|y_given - y_none| profile, disclosed above);
 offline only (needs commands >= 0.6 s ahead and both a none and a given generation, 2x compute); override ramp jerk to fix (longer
 ramps) before any robot use; dev only, test untouched.
+## Module 5b confirmation on fresh plans (coordinator 2026-11-08 ~01:15; frozen before the job starts)
+Reason: the 5b window was chosen from a dev diagnostic on the same lane-4 generations and plans its gates are scored on, after a failed
+module 5 on the same data; it passed by +0.003. 5b counts only if it passes on FRESH plans and NEW generations.
+- Fresh plans: `ex002_ctl_run.py plan --plan-seed 1108 --shuffle-seed 20261108` (defaults 7 / 20261107 reproduce PLAN_dev.json /
+  PLAN_dev_sparse.json bitwise, checked): PLAN_dev_fresh_dense.json (--gap 1.5; 1096 events, 559 aim; sha256 43d1bb20…7bb0) and
+  PLAN_dev_fresh_sparse.json (--gap 6.0; 301 events, 161 aim; sha256 5b638eb4…46d7).
+- New generations on DLC A800: the lane-4 checkpoint (ctl4/train/final.pt), inference seeds 3 / 4 / 5, modes none / given / shuffle on
+  both fresh plans (15 runs).
+- 5b exactly as frozen: w = 1 on [t - 0.3, t + 0.9] s, 0.3 s cosine ramps (ex002_local_blend.py --pre 0.3 --post 0.9, inner 0.6 / outer
+  0.9 give the 0.3 s ramp width), finger override (HAND_SHAPES.json, hold 0.4 s, 0.15 s ramps) after the blend for the "fo" rows.
+- Gates on the fresh plans (seeds 3-5): STG(given) - STG(none) >= +0.10 with the shuffle follow check; finger hit >= 0.9 (override
+  allowed); executability after CBF 100 %; quality: (i) sparse FGD v2 outside +-1 s and (ii) sparse whole clip <= C + δ, where C and
+  δ = max(0.03 C, 2 SD) come from the no-token runs (ctl4 none = sibag-s2 bitwise) of seeds 3-5 on the same fresh-plan masks (the
+  same formula as before; the old absolute thresholds 100.44 / 99.37 are reported too).
+- Reported alongside: the old-plan A800 re-score of 5b (selection evidence), the unblended lane-4 rows on the fresh plans, and the
+  recording-clustered bootstrap CI of the STG gain (scripts/ex002/ex002_stg_boot.py, 43 recordings resampled, all seeds together,
+  10,000 draws) on both the old and the fresh dense plans.
+## Module 6 (pre-registered 2026-11-08 ~01:15; runs only if 5b fails on the fresh plans): temporally gated control routes
+Lane 4 shows the control routes act globally (+21.8 FGD v2 more than 1 s from every command with a bitwise-frozen base). Module 6
+makes them local by construction, in training and inference alike: each control token's contribution (its attention value in ctl_text
+and its FiLM / additive term in ctl_flow) is multiplied by a per-frame window w_k(t) = 1 on [t_k - 0.3, t_k + 0.9] s with 0.3 s cosine
+ramps and 0 elsewhere, so frames outside every window receive exactly zero from the control routes (the no-token motion there up to
+the planner's chunk context, which is checked and reported). Default off, bitwise unchanged when off (unit test); trained like lane 4
+(true freeze, 2000 steps); same gates on fresh plans.

@@ -28,7 +28,7 @@ def plan(a):
     st = json.loads(Path(a.stats).read_text()); view = View(a.view, 'val', a.text_cache, st, mmap=True)
     ev = []
     for ci, c in enumerate(view.clips):
-        dur = c['frames'] / FPS; rng = np.random.default_rng(zlib.crc32(f"{c['clip']}".encode()) + 7)
+        dur = c['frames'] / FPS; rng = np.random.default_rng(zlib.crc32(f"{c['clip']}".encode()) + a.plan_seed)
         ts = np.arange(1.0 + rng.uniform(0, a.gap), dur - 1.0, a.gap + rng.uniform(0, 0.5))
         for j, t in enumerate(ts):
             if j % 2 == 0:
@@ -36,7 +36,7 @@ def plan(a):
                 ev.append(dict(ci=ci, clip=c['clip'], kind='aim', t=float(t), hand=h, target=[float(x) for x in tgt]))
             else:
                 ev.append(dict(ci=ci, clip=c['clip'], kind='finger', t=float(t), fingers=[int(rng.integers(4)), int(rng.integers(4))]))
-    rng = np.random.default_rng(20261107)
+    rng = np.random.default_rng(a.shuffle_seed)
     for kind, keys in (('aim', ('hand', 'target')), ('finger', ('fingers',))):
         idx = [i for i, e in enumerate(ev) if e['kind'] == kind]; perm = list(rng.permutation(idx))
         for _ in range(10):                                           # derangement across clips
@@ -170,6 +170,8 @@ def main():
         p.add_argument('--stats', default=C + '/scmg/STATS_v36_1.json'); p.add_argument('--text-cache', default=C + '/scmg/text-e5-v36_1')
     sub.choices['plan'].add_argument('--ctl', required=True)
     sub.choices['plan'].add_argument('--gap', type=float, default=1.5, help='event spacing base (s); 1.5 = lane 1-3 dense plan')
+    sub.choices['plan'].add_argument('--plan-seed', type=int, default=7, help='per-clip rng = crc32(clip) + this (7 = PLAN_dev.json)')
+    sub.choices['plan'].add_argument('--shuffle-seed', type=int, default=20261107, help='derangement seed (20261107 = PLAN_dev.json)')
     p = sub.choices['infer']
     for k in ('ckpt', 'vae', 'plan'): p.add_argument('--' + k, required=True)
     p.add_argument('--tok-cache', default=C + '/scmg/tok-qwen25-v36_1'); p.add_argument('--mode', choices=['none', 'given', 'shuffle'], required=True)
