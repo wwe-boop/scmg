@@ -12,8 +12,11 @@ import numpy as np
 CLS = {1: 'deictic', 2: 'iconic', 3: 'metaphoric'}
 
 
+SPLIT = 'dev'
+
+
 def load(d, rec, src, seed):
-    z = np.load(Path(d) / f'{rec}--{src}-s{seed}--dev.probs.npz')
+    z = np.load(Path(d) / f'{rec}--{src}-s{seed}--{SPLIT}.probs.npz')
     P, Pt, y, lex, key = z['P'], z['Pt'], z['y'], z['lex'], z['key']
     li = np.where(lex)[0]; a = P[li, y[li]]; b = Pt[np.arange(len(li)), y[li]]
     win = np.where(np.isfinite(b), (a > b) + 0.5 * (a == b), np.nan)
@@ -28,8 +31,8 @@ def pw(D, sel=None):
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('--scores', required=True); ap.add_argument('--rec-prefix', required=True)
     ap.add_argument('--seeds', nargs='+', type=int, default=[0, 1, 2]); ap.add_argument('--sources', nargs='+', required=True)
-    ap.add_argument('--pairs', default=''); ap.add_argument('--out', required=True); ap.add_argument('--n-boot', type=int, default=2000)
-    a = ap.parse_args(); recs = sorted({p.name.split('--')[0] for p in Path(a.scores).glob(f'{a.rec_prefix}*--*.probs.npz')})
+    ap.add_argument('--pairs', default=''); ap.add_argument('--split', default='dev'); ap.add_argument('--out', required=True); ap.add_argument('--n-boot', type=int, default=2000)
+    a = ap.parse_args(); global SPLIT; SPLIT = a.split; recs = sorted({p.name.split('--')[0] for p in Path(a.scores).glob(f'{a.rec_prefix}*--*.probs.npz')})
     data = {r: {s: [load(a.scores, r, s, k) for k in a.seeds] for s in a.sources} for r in recs}
     res = dict(seeds=a.seeds, recognisers=recs, table={}, pairs={})
     for s in a.sources:
