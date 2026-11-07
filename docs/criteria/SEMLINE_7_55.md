@@ -97,3 +97,19 @@ Passes when ALL hold (3-seed means):
    −0.1078); closer to 0 also counts as inside;
 5. echog_semt.py test ALL_OK (zero-init identity with tokens, null exact, active once trained, ray loss reaches the module).
 STG of egctrl (no token path) is reported as the architecture's reference.
+
+## Item 5: fixed-action library + streaming insertion (written 2026-11-07 before the run; g1_gesture_lib.py, g1_lib_insert.py,
+## Streamer inpaint, infer_test.py --lib)
+Library: train speakers of the K half of SPLIT_RK.json only (no dev / test speaker): 995 pointing snippets (hand, apex ray), 20 tap /
+raise strokes (count_np 1 between held poses, 2 when doubled, N for N = 1..4 after the decft VAE round trip), 3995 class exemplars.
+Insertion = RePaint latent inpainting inside the Local Flow sampler (Streamer inpaint, default off): positions with weight w get
+x0 = w eps + (1 − w) x and after each Euler step w (t' lat + (1 − t') eps) + (1 − w) x; soft weights with 0.3 s cosine ramps;
+count composites hold the pose over the rest of the span and 0.6 s outside it, and the stroke is the first (seeded order) whose
+composite counts N after the VAE round trip. Model sf0, offline, CFG 2.5, 10 steps, per_clip seeds 0/1/2, dev 400.
+Runs: base (no insertion), point-gt, count-gt, class-gt (oracle times), class-lex and class-llm (deployable times).
+Gates (3-seed means): count accuracy (count-gt, g1_ctl_eval count_hit against the given counts) ≥ 0.90 (chance 0.284);
+pointing STG (point-gt, given targets) ≥ 0.308 (ctlcf); boundary jerk (peak upper-body jerk in ±0.3 s around each insertion edge /
+the same window of the base run, same seed) ≤ 1.5 on ≥ 90 % of edges; FGD ≤ 1.497 for every insertion run; executability after
+CBF-QP 100 % of clips. pair_win (R-half recognisers, the library is K-half) and ΔBA are reported, not gated.
+If a gate fails or passes only marginally, the training-time variant follows (Local Flow with mask conditioning, below) under the
+same gates.

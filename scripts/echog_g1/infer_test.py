@@ -157,6 +157,11 @@ def main():
     ap.add_argument('--cfg-ctl', type=float, default=None, help='separate control-token guidance (Streamer cfg_ctl); None = joint CFG')
     ap.add_argument('--ctl-pred', default=None, help='PRED.json of scripts/semantic/g1_sem_predictor.py (text-only predicted semantic tokens; modes pred / predlex)')
     ap.add_argument('--ret', default=None, help='retrieval dir:query file (scripts/semantic/g1_ret_bank.py, e.g. <dir>:RET_dev-auto.json); model with cfg ret')
+    ap.add_argument('--lib', default=None, help='11-07 fixed-action library (g1_gesture_lib.py dir): RePaint latent inpainting of '
+                    'library actions inside the Local Flow sampler (scripts/semantic/g1_lib_insert.py); needs --lib-ctl')
+    ap.add_argument('--lib-what', default='class', choices=['point', 'count', 'class'])
+    ap.add_argument('--lib-mode', default='gt', choices=['gt', 'lex', 'llm'], help='token times: gt (oracle) / lexicon / LLM (--ctl-pred)')
+    ap.add_argument('--lib-ctl', default=None, help='control-token dir whose dev tokens define the insertions (e.g. ctl-tokens-hos-count)')
     ap.add_argument('--prosody-only', action='store_true', help='zero the 80 mel columns of feat89 (models trained with sc '
                     'audio_prosody_only; 11-07 §7.55 item 2): the audio gives only prosody / timing')
     ap.add_argument('--seed-mode', default='run', choices=['run', 'per_clip'],
@@ -199,6 +204,13 @@ def main():
         rlat = np.load(Path(rd) / 'BANK.npz')['lat'].astype(np.float32); retq = json.loads((Path(rd) / rq).read_text())
         if any(not x.startswith(('english_2_scott', 'english_6_carla')) for x in retq): print('note: retrieval queries outside the dev speakers')
     ctl_toks = ctl_plan(a.ctl_tokens, a.ctl_mode, stems, {x: view.clips[idx[x]]['frames'] / 50. for x in stems}, a.ctl_pred) if a.ctl_tokens else {}
+    lib_plan = None
+    if a.lib:
+        if a.ctl_tokens or not a.lib_ctl: raise SystemExit('--lib needs --lib-ctl and no --ctl-tokens')
+        sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'semantic'))
+        import g1_lib_insert as LI
+        qm_t, qs_t = torch.tensor(qm, device=dev), torch.tensor(qs, device=dev)
+        lib_plan = LI.plan(a.lib, a.lib_what, a.lib_mode, stems, a.lib_ctl, a.ctl_pred, vae=vae, qm=qm_t, qs=qs_t); a.save50 = True
     si, sn = (int(x) for x in a.shard.split('/'))
     stems = stems[si::sn]
     t0 = time.time(); log = []
@@ -241,6 +253,11 @@ def main():
             cond.update(ctl_t=np.array([t['t'] for t in used], np.float32), ctl_type=np.array([x[0] for x in tv], np.int64),
                         ctl_v=np.stack([x[1] for x in tv]), ctl_vm=np.stack([x[2] for x in tv]))
             if a.cfg_ctl is not None: mkw['cfg_ctl'] = a.cfg_ctl
+        lib_used = None
+        if lib_plan is not None:
+            lib_used = lib_plan.get(stem, dict(given=[], inserts=[]))
+            ip = LI.inpaint(lib_used['inserts'], m, vae, qm_t, qs_t, nch * CHUNK_FRAMES // 4 + 4 * CHUNK_FRAMES, clip_seed(a.seed, a.seed_mode, stem))
+            if ip is not None: mkw['inpaint'] = ip
         cmd, _, tk = generate(m, vae, s['feat'], cond, stats, nch, H=H, steps=a.steps, seed=clip_seed(a.seed, a.seed_mode, stem), standby=qm, ctx_t=m.ctx_t,
                               cfg_w=a.cfg_w, cfg_t=a.cfg_t, noise_scale=a.noise_scale, **kw, **mkw)
         if cmd.shape[0] < L or cmd.shape[1] != J or not np.isfinite(cmd).all(): raise ValueError(f'{stem}: generated {cmd.shape}')
@@ -261,7 +278,10 @@ def main():
                                        **({} if proto is None else dict(stream=proto)),
                                        **({} if not a.ctl_tokens else dict(ctl_mode=a.ctl_mode, cfg_ctl=a.cfg_ctl, ctl=used)),
                                        **({} if not a.ret else dict(ret=a.ret, ret_used=rq_)),
-                                       **({'prosody_only': True} if a.prosody_only else {}))), o.with_suffix('.pt.tmp'))
+                                       **({'prosody_only': True} if a.prosody_only else {}),
+                                       **({} if lib_used is None else dict(ctl_mode=f'lib-{a.lib_what}-{a.lib_mode}', ctl=lib_used['given'], lib=a.lib,
+                                              lib_inserts=[dict(t0=x['t0'], t1=x['t1'], kind=x['kind']) for x in lib_used['inserts']])))),
+                   o.with_suffix('.pt.tmp'))
         os.replace(o.with_suffix('.pt.tmp'), o)      # atomic: an interrupted run never leaves a truncated <stem>.pt that a resume skips
         if a.save50: np.save(out / f'{stem}.q50.npy', q50.astype(np.float32))
         log.append(dict(stem=stem, frames50=L, frames30=n30, tick_ms_p50=float(np.median(tk[1:]) * 1e3) if len(tk) > 1 else None))

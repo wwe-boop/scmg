@@ -28,7 +28,7 @@ class Streamer:
                  standby=None, device='cuda', hist_measured=False, ctx_t=1.0, cfg_w=1.0, cfg_text=True, cfg_t=None,
                  text_mode='final', x2_rate=15.0, x2_lag=0.15, seg_lead=0.3, deploy_timing=False,
                  elastic=None, window_lm_text=False, g_override=None, trim_start=True, cfg_null_fix=True, still_refresh=None,
-                 audio_off=False, cfg_ctl=None):
+                 audio_off=False, cfg_ctl=None, inpaint=None):
         """feat [T, 89] normalised (whole utterance; access is restricted to what has arrived);
         cond: dict(text [K,768], ttime [K] absolute s, tmask [K], spk [192], spk_valid, source, ref [R,J], ref_valid)
         (+ tts_h [T/4, 2048], tts_hm [T/4] for models with cfg.tts_h: TTS hidden rows aligned to feat frame 0, row r = frames
@@ -77,6 +77,16 @@ class Streamer:
         # tokens with the normal window mask); the audio still sets the clip length and the clock. Text-only = audio_off
         # with the text kept (drop_text / drop_audio are sampled independently in training, so it is a trained case).
         self.audio_off = audio_off
+        # 11-07 fixed-action library insertion (off = None, bit-identical): RePaint-style latent inpainting inside the Local Flow
+        # sampler. inpaint = dict(lat [N, z] NORMALISED target latents on the global latent grid, w [N] soft weights in [0, 1],
+        # seed). For every generated position with w > 0: x starts at w eps + (1 - w) x and after every Euler step becomes
+        # w (t' lat + (1 - t') eps) + (1 - w) x (t' = the time just reached; eps = a fixed draw of its own generator, so the main
+        # noise stream is unchanged); the sampler generates the rest (and the soft edges) around it.
+        self.inpaint = None
+        if inpaint is not None:
+            self.inpaint = dict(lat=torch.as_tensor(inpaint['lat'], device=device).float(),
+                                w=torch.as_tensor(inpaint['w'], device=device).float(),
+                                g=torch.Generator(device=device).manual_seed(int(inpaint.get('seed', 0)) + 7919))
         # 11-05 explicit control tokens (cond ctl_t [Kc] absolute s, ctl_type, ctl_v, ctl_vm; models with cfg.ctl). Without them
         # nothing below changes. cfg_ctl None: the tokens are part of the conditional branch of the existing CFG; a number: a
         # separate guidance term cfg_ctl * (v(with tokens) - v(without tokens)) on top of it (one more Local Flow pass).
@@ -350,6 +360,16 @@ class Streamer:
                     ct = min(ct, self.still_refresh[1]); self.n_refresh += 1
             if ct < 1: c_ = ct * c_ + (1 - ct) * torch.randn(c_.shape, device=self.dev, generator=self.g)
             x[:, :cfg.ctx] = torch.where(known[:, :cfg.ctx, None], c_, x[:, :cfg.ctx])
+            ip = None
+            if self.inpaint is not None:                         # target / weights of this window's positions (global latent grid)
+                gl = (c0 + kw) * CHUNK - cfg.ctx + torch.arange(L, device=self.dev)
+                okg = (gl >= 0) & (gl < len(self.inpaint['w']))
+                wv = torch.where(okg, self.inpaint['w'][gl.clamp(0, len(self.inpaint['w']) - 1)], torch.zeros_like(gl, dtype=torch.float))
+                wv = (wv * (~known[0]).float())[None, :, None]
+                if bool((wv > 0).any()):
+                    tg = self.inpaint['lat'][gl.clamp(0, len(self.inpaint['w']) - 1)][None]
+                    eps = torch.randn(x.shape, device=self.dev, generator=self.inpaint['g'])
+                    x = wv * eps + (1 - wv) * x; ip = (wv, tg, eps)
             aw, awm = m.local_audio(a, Hrel, W)
             aw, awm = aw[:, kw], awm[:, kw]
             if self.cfg_w != 1:
@@ -402,6 +422,9 @@ class Streamer:
                         v = v_u + self.cfg_w * (v - v_u)
                 if self.cfg_ctl is not None: v = v + self.cfg_ctl * (v_full - v_c0)
                 x = torch.where(known[..., None], x, x + v / self.steps)
+                if ip is not None:
+                    tn = (s + 1) / self.steps; wv, tg, eps = ip
+                    x = wv * (tn * tg + (1 - tn) * eps) + (1 - wv) * x
             new = x[0, cfg.ctx:]
             lat[kw] = new
             out.append(new)
