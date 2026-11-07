@@ -25,6 +25,14 @@ ONLY after the interruption (before it, and without --interrupts, the code path 
         from 0 at t_i to --w at t_i + T_r: a latent-space cross-fade from the model's own continuation to the target).
 Output as infer_interrupt.py: <out>/<stem>@<frac>.pt (30 fps, frames 0 .. f_i + 66) + .q50.npy; --no-interrupt writes the
 full-clip infer_test.py output (bitwise check).
+11-07 --protocol psync (the main-table causal protocol, infer_test.py --protocol psync, same flags --wav-dir / --words-dir /
+--pstats / --campplus / --spk-refresh / --causal-feat): per-tick feat89 / CAM++ of the arrived PCM prefix (scmg.causal_feat.
+CausalInputs), voiced text (a token once its words ended within the arrived audio). Before the interruption the run IS the
+infer_test psync run (no code path differs; scripts/tests/test_retract_psync.py checks it bitwise). From the interruption on
+(PostInterrupt below): the PCM ends at t_i, so feat89 / speaker vector are those of the audio before t_i (a fresh instance of
+the same feat class evaluated at min(Tk, t_i); the speaker grade rule unchanged at min(Tk, t_i)), the kept tokens are the
+tokens whose words all ended by t_i (the voiced rule at t_i, no look-ahead), and the word times move with the clock re-basing.
+--prefix-feats (the engine-protocol approximation of the same thing) is not used with psync.
 """
 import argparse, json, os, sys, time
 from pathlib import Path
@@ -43,6 +51,24 @@ from infer_interrupt import SIL_RAW, spoken_tokens
 UPPER = list(range(10 + 12, 10 + 29))          # waist + arms channels of the 39-d frame
 
 
+class PostInterrupt:
+    """causal inputs after the interruption (psync): the audio stream ended at frame n50 (absolute), the streamer clock is
+    shifted by sh frames (latent restart). feat(Tk) / spk(Tk) take the RE-BASED Tk; feat rows = the streamer's feat rows
+    (audio end: n50 - sh, off: unchanged) so the audio-final state is the one of the engine protocol (feat length)."""
+
+    def __init__(self, ci, fresh, n50, sh, rows):
+        self.ci, self.fresh, self.n50, self.sh, self.rows = ci, fresh, int(n50), int(sh), int(rows)
+        self.Tpad = ci.Tpad; self.calls = []
+
+    def feat(self, Tk):
+        Ta = min(int(Tk) + self.sh, self.n50); self.calls.append(Ta)
+        F = self.fresh.feat(Ta)                      # [Tpad, 89], rows >= Ta zero
+        return F[self.sh:self.sh + self.rows]
+
+    def spk(self, Tk):
+        return self.ci.spk(min(int(Tk) + self.sh, self.n50))
+
+
 def clip_seed(seed, mode, stem):
     """11-06 protocol: same definition as scripts/echog_g1/infer_test.py --seed-mode (DivBA worktree): 'run' = the run seed for
     every clip (old behaviour), 'per_clip' = (seed + crc32(stem)) mod 2^63. The interrupted run and its uninterrupted
@@ -56,8 +82,9 @@ def clip_seed(seed, mode, stem):
 class RetractStreamer(Streamer):
     def __init__(self, *args, t_int=None, keep_tok=None, audio='end', fm=None, fs=None, n_total=None, restart='chunk',
                  react_delay=0.04, retract=None, rest=None, tr=1.0, w=1.0, splice=0, w0=0., prefix=None, floor=0, guide=0.,
-                 comp=None, diff=0., **kw):
+                 comp=None, diff=0., fresh_feat=None, **kw):
         super().__init__(*args, **kw)
+        self.fresh_feat = fresh_feat      # psync: () -> a new CausalInputs of the clip (feat after the interruption)
         self.t_int, self.keep_tok, self.audio, self.n_total = t_int, keep_tok, audio, n_total
         self.sil = None if fm is None else torch.as_tensor((SIL_RAW - fm) / fs, device=self.dev).float()
         self.restart, self.delay, self.retract, self.rest, self.tr, self.w = restart, react_delay, retract, rest, tr, w
@@ -83,6 +110,8 @@ class RetractStreamer(Streamer):
     def _apply(self):
         l_r = self.l_r; o = l_r % CHUNK if self.restart == 'latent' else 0
         n50 = int(round(self.t_int * 50))
+        if self.causal is not None and self.prefix_npz is not None: raise ValueError('--prefix-feats is the engine-protocol path, not psync')
+        if self.causal is not None and self.audio == 'silence': raise ValueError('psync: --audio silence not implemented (no silent PCM)')
         if self.prefix_npz is not None:   # 11-06: feat89 / CAM++ recomputed from the audio before t_i only (prefix_feats.py)
             pf = np.load(self.prefix_npz)
             fz = torch.as_tensor((pf['feat'].astype(np.float32) - self.fm_) / self.fs_, device=self.dev).float()
@@ -116,6 +145,10 @@ class RetractStreamer(Streamer):
             if self.arr_text is not None: self.arr_text = self.arr_text - ds
             if self.arr_lm is not None: self.arr_lm = self.arr_lm - ds
             self.lat = self.lat[o:]
+        if self.causal is not None:       # psync: inputs of the audio before t_i only, on the re-based clock
+            sh = o * STRIDE
+            if self.text_mode in ('voiced', 'asr'): self._wt = self._wt - sh / 50.
+            self.causal = PostInterrupt(self.causal, self.fresh_feat(), n50, sh, self.feat.shape[0])
         self.o = o
         self.frames = frames; self.n_emitted = len(frames)
         if self.floor: self.floor_k0 = self.k                   # chunk index in the (possibly re-based) clock
@@ -294,17 +327,24 @@ def main():
     ap.add_argument('--splice', type=int, default=0, help='latent restart: blend the jump at the splice out over n 50 Hz frames (0 = off)')
     ap.add_argument('--seed-mode', default='run', choices=['run', 'per_clip'], help="clip noise seed: run (all clips share the run seed) | per_clip (seed + crc32(stem))")
     ap.add_argument('--seed', type=int, default=0); ap.add_argument('--steps', type=int, default=10); ap.add_argument('--cfg-w', type=float, default=2.5)
-    ap.add_argument('--shard', default='0/1'); ap.add_argument('--protocol', default='engine', choices=['offline', 'engine'])
+    ap.add_argument('--shard', default='0/1'); ap.add_argument('--protocol', default='engine', choices=['offline', 'engine', 'psync'])
     ap.add_argument('--text-causal', default=None); ap.add_argument('--x2-rate', type=float, default=15.0); ap.add_argument('--x2-lag', type=float, default=0.15)
+    ap.add_argument('--wav-dir', default=None); ap.add_argument('--words-dir', default=None); ap.add_argument('--pstats', default=None)
+    ap.add_argument('--campplus', default='/home/xr-25b7/bulk/models-ro/campplus'); ap.add_argument('--asr-lag', type=float, default=0.5)
+    ap.add_argument('--spk-refresh', default='tick', choices=['tick', 'grades']); ap.add_argument('--causal-feat', default='prefix', choices=['prefix', 'inc'])
     a = ap.parse_args()
     if EMBODIMENT != 'g1': raise SystemExit('run with SCMG_J=39')
-    eng = a.protocol == 'engine'; tm = 'x2' if eng else 'final'; hz = '2' if eng else 'inf'
+    eng = a.protocol in ('engine', 'psync'); cin = a.protocol == 'psync'
+    tm = {'engine': 'x2', 'psync': 'voiced'}.get(a.protocol, 'final'); hz = '2' if eng else 'inf'
+    if cin and not (a.wav_dir and a.words_dir and a.pstats): raise SystemExit('psync needs --wav-dir, --words-dir and --pstats')
+    if cin and (a.prefix_feats or a.diff_guide or a.floor): raise SystemExit('psync: --prefix-feats / --diff-guide / --floor not supported')
     H = INF if hz == 'inf' else int(hz) * U80; dt = eng
     os.environ.pop('SCMG_TEXT_CAUSAL', None)
     if a.text_causal: os.environ['SCMG_TEXT_CAUSAL'] = a.text_causal
-    if tm == 'x2' and not a.text_causal: raise SystemExit('engine protocol needs --text-causal')
+    if tm in ('x2', 'voiced') and not a.text_causal: raise SystemExit(f'{a.protocol} protocol needs --text-causal')
     proto = None if not eng else dict(protocol=a.protocol, text_mode=tm, horizon_80ms=hz, x2_rate=a.x2_rate, x2_lag=a.x2_lag,
-                                      deploy_timing=dt, text_causal=a.text_causal)
+                                      deploy_timing=dt, text_causal=a.text_causal,
+                                      **({} if not cin else dict(causal_inputs=True, asr_lag=a.asr_lag, pstats=a.pstats, words_dir=a.words_dir)))
     dev = 'cuda'; out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     stats = json.loads(Path(a.stats).read_text())
     m, vae = load(a.ckpt, a.vae, dev)
@@ -313,6 +353,9 @@ def main():
         mref, _ = load(a.ref_ckpt, a.vae, dev)
         if not (torch.equal(mref.lat_mean, m.lat_mean) and torch.equal(mref.lat_std, m.lat_std)): raise ValueError('latent normalisation differs')
     view = View(a.view, a.split, a.text_cache, stats)
+    if cin:
+        from scmg import causal_feat as CF
+        tokz = CF.e5_tokenizer(); enc = CF.speaker_encoder(a.campplus); pst = CF.load_pstats(a.pstats)
     qm = np.asarray(stats['q_mean'], np.float32)
     fm, fs = np.asarray(stats['f_mean'], np.float32), np.asarray(stats['f_std'], np.float32)
     idx = {c['items'][0]['id']: i for i, c in enumerate(view.clips)}
@@ -322,7 +365,7 @@ def main():
         rows = json.loads(Path(a.interrupts).read_text())['interrupts']
         keep = sorted({r['stem'] for r in rows})[::a.every]; ks = set(keep)
         jobs = [(r['stem'], r) for r in rows if r['stem'] in ks]
-        words = {r['stem']: r['words'] for r in json.loads(Path(a.words).read_text())}
+        words = {r['stem']: r['words'] for r in json.loads(Path(a.words).read_text())} if a.words else {}   # psync: word times from --words-dir
     rest39 = None
     if a.retract:
         Hh = json.loads(Path(a.human).read_text()); rest39 = np.zeros(39, np.float32); rest39[10:] = Hh['rest'][a.rest]['joints']
@@ -340,11 +383,27 @@ def main():
         cond = {kk: s[kk] for kk in ('text', 'ttime', 'tmask', 'spk', 'spk_valid', 'source', 'ref', 'ref_valid', 'tids', 'tidm',
                                      'titime', 'tseg', 'tiseg', 'tiend', 'text_c') if kk in s}
         kw = {} if proto is None else dict(text_mode=tm, x2_rate=a.x2_rate, x2_lag=a.x2_lag, deploy_timing=dt)
+        mkw = {}; cw = None
+        if cin:                                                  # = infer_test.py --protocol psync (same calls, same order)
+            cw = CF.clip_words(Path(a.words_dir) / f'{stem}.json', L)
+            kn = view.text['index'].get(stem, [0, 0])[1] if not it.get('text_null') else 0
+            if int(np.asarray(s['tmask']).sum()) != kn: raise ValueError(f'{stem}: tmask rows != cache rows')
+            cond.update(CF.text_extras(it, cw, tokz, kn, len(s['tmask'])))
+            mkw['asr_lag'] = a.asr_lag
+            pcm16, wave = CF.clip_audio(Path(a.wav_dir) / f'{stem}.wav')
+            mk = lambda: CF.CausalInputs(pcm16, wave, cw, it['lang'], L, pst, view.fm, view.fs, enc, Tpad=len(s['feat']), spk=True,
+                                         spk_refresh=a.spk_refresh, feat_mode=a.causal_feat)
+            mkw['causal_inputs'] = mk()
+            if r is not None: mkw['fresh_feat'] = mk
         ikw = {}
         if r is not None:
             t_i = r['t_i']; n30o = r['f_i'] + 64 + 2
             n_run = -(-int(np.ceil((n30o - 1) / 30. * 50 + 2)) // CHUNK_FRAMES)
-            keep = spoken_tokens(s['ttime'], s['tmask'], words[stem], t_i)
+            if cin:                                              # psync: tokens whose words all ended by t_i (voiced rule, no look-ahead)
+                keep = CF.token_visible(CF.visible_words(np.asarray(cond['wtime'], np.float64).reshape(-1, 2), t_i, 0., 'voiced',
+                                                         a.x2_rate, a.x2_lag, a.asr_lag), np.asarray(cond['tword'], np.int64)) & np.asarray(s['tmask'], bool)
+            else:
+                keep = spoken_tokens(s['ttime'], s['tmask'], words[stem], t_i)
             ikw = dict(t_int=t_i, keep_tok=keep, audio=a.audio, fm=fm, fs=fs, n_total=n_run * CHUNK_FRAMES, restart=a.restart,
                        react_delay=a.react_delay, retract=a.retract, rest=rest39, tr=a.tr, w=a.w, w0=a.w0, splice=a.splice, floor=a.floor, guide=a.yield_guide,
                        prefix=(f"{a.prefix_feats}/{stem}@{r['frac']:.1f}.npz" if a.prefix_feats else None))
@@ -356,7 +415,7 @@ def main():
                                    H=H, steps=a.steps, seed=clip_seed(a.seed, a.seed_mode, stem), standby=qm, ctx_t=mref.ctx_t, cfg_w=a.cfg_w, cfg_t=None, noise_scale=1.0,
                                    **kw, **dict(ikw, retract=None, guide=0., floor=0))
         st = RetractStreamer(m, vae, s['feat'], cond, stats, H=H, steps=a.steps, seed=clip_seed(a.seed, a.seed_mode, stem), standby=qm, ctx_t=m.ctx_t,
-                             cfg_w=a.cfg_w, cfg_t=None, noise_scale=1.0, comp=comp, diff=a.diff_guide if r is not None else 0., **kw, **ikw)
+                             cfg_w=a.cfg_w, cfg_t=None, noise_scale=1.0, comp=comp, diff=a.diff_guide if r is not None else 0., **kw, **ikw, **mkw)
         if r is None:
             for i in range(n_run):                               # == scmg.infer.generate (robot=None)
                 st.tick(None, None, None)
@@ -370,6 +429,7 @@ def main():
             q50 = cmd[:L].astype(np.float64); r30 = g1.to30(q50, n30).astype(np.float32)
             gen = dict(ckpt=str(a.ckpt), seed=a.seed, **({'seed_mode': a.seed_mode, 'clip_seed': clip_seed(a.seed, a.seed_mode, stem)} if a.seed_mode != 'run' else {}), steps=a.steps, cfg_w=a.cfg_w, cfg_t=None, frames50=L, noise_scale=1.0, no_spk=False,
                        smooth=None, smooth_legs=None, resample='scmg/g1.py to30 (cubic / heading spline / RotationSpline)',
+                       **({} if not cin else dict(spk_refresh=a.spk_refresh, causal_feat=a.causal_feat)),
                        **({} if proto is None else dict(stream=proto)))
             meta = dict(real_num_frames=n30)
         else:
@@ -377,7 +437,8 @@ def main():
             gen = dict(ckpt=str(a.ckpt), seed=a.seed, seed_mode=a.seed_mode, clip_seed=clip_seed(a.seed, a.seed_mode, stem), steps=a.steps, cfg_w=a.cfg_w, stream=proto, interrupt=dict(
                 t_i=t_i, f_i=r['f_i'], frac=r['frac'], audio=a.audio, restart=a.restart, react_delay=a.react_delay, l_r=st.l_r,
                 o=st.o, k_int=st.k_int, retract=a.retract, rest=a.rest, tr=a.tr, w=a.w, w0=a.w0, splice=a.splice, floor=a.floor, prefix_feats=a.prefix_feats, yield_guide=a.yield_guide, diff_guide=a.diff_guide, ref_ckpt=a.ref_ckpt, n_targets=len(st.tgt or {}),
-                tokens_kept=int(keep.sum()), tokens_total=int(np.asarray(s['tmask']).sum())))
+                tokens_kept=int(keep.sum()), tokens_total=int(np.asarray(s['tmask']).sum())),
+                       **({} if not cin else dict(spk_refresh=a.spk_refresh, causal_feat=a.causal_feat, post_feat_calls=sorted(set(st.causal.calls)) if st.applied else None)))
             meta = dict(real_num_frames=n30o, clip_frames30=n30)
             np.save(o.with_suffix('.q50.npy'), cmd.astype(np.float32))
         torch.save(dict(robot_repr=torch.from_numpy(r30), fps=30.0, representation_units='physical',
