@@ -87,3 +87,7 @@ Report: usable hours per 100 tracks, speakers, near-body fraction, still-frame s
 utterances with still share >= 0.5, 10 spot renders.
 Scale-up rule (coordinator): proceed to a larger run only if usable >= 1 h per 100 tracks AND the still-frame share <= 0.60;
 G6 runs only once >= 5 h are built; no larger run before that. Training data only; every evaluation set untouched.
+Note (coordinator 2026-11-08): the utterance-level still-frame share (built Seamless 0.166 vs data-v36_1 human train 0.169; elbow
+flare 0.293 vs 0.296) removes the main risk raised in (c)1 (static / elbows-out data); the pilot reports the same two numbers.
+Pilot smoke (speech_server, 2 tracks / 22 windows, release 20261107-234556-video-pilot): whole chain ran; 21 / 22 windows pass the
+(c)1 gate; 16 utterances / 44.5 s kept (projection ~0.6-0.7 h per 100 tracks).
