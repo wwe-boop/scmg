@@ -13,7 +13,7 @@ Renderer: EX002 = scripts/ex002/render_qual_isaac.py (Isaac, fixed front camera,
 import argparse, hashlib, json, random, subprocess, sys
 from pathlib import Path
 import numpy as np
-sys.path.insert(0, str(Path(__file__).resolve().parents[2])); sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'ex002'))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2])); sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'ex002')); sys.path.insert(0, '/home/xr-25b7/projects/gesture/codex/render-isaac')
 FPS = 50; SEG = 6.0; NF = 12
 B = '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg'; C = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture'
 V = C + '/train-v1-20261101/views/data-v36_1'; X = B + '/control-token-1105/ex002'
