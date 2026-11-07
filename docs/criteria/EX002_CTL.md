@@ -437,3 +437,8 @@ Gates for module 9 (per protocol; primary as 7b / 8b; the angle is easy with IK,
 - release continuity: median over insertions of the peak arm-joint acceleration norm in +-0.1 s around the release <= the p95 of the same
   quantity over all dev GT frames (ex002_keyframe.py release).
 Plus 2-3 qualitative renders (point and present) through the Isaac renderer.
+Module 9 run setup (before the job): plans PLAN_dev_m9_dense.json (1112 events, 567 aim; sha256 9a883716…53e2), PLAN_dev_m9_sparse.json
+(304 events, 164 aim; sha256 58bf0bc8…9e31); code exp/ctl-port b7941af (bench_ex002 --inpaint-dir 74a6f99, default off; lively_floor_ex002.py
+from exp/duplex unchanged), release 20261108-071120-ex002-m9. Smoke on 3 old-plan clips (post-processing only, before the job; disclosed): 18 %
+of point / 39 % of present keyframes rejected for self-penetration; release-acceleration median 56 (IK post-processing) vs 26 token-only vs
+human p95 31.9; arm ramp jerk over-limit 0.53 vs 0.27.
