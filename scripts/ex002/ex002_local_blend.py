@@ -26,7 +26,7 @@ def main():
     ap.add_argument('--plan', required=True); ap.add_argument('--out', required=True); ap.add_argument('--inner', type=float, default=.6)
     ap.add_argument('--outer', type=float, default=.9); ap.add_argument('--finger-override'); ap.add_argument('--mode', default='given')
     ap.add_argument('--pre', type=float); ap.add_argument('--post', type=float)
-    ap.add_argument('--fo-ramp', type=float, default=0.15); ap.add_argument('--fo-profile', default='cos', choices=['cos', 'minjerk'])
+    ap.add_argument('--wrist-pose', default=None, help='11-08 module 8b: PRESENT_WRIST.json -> presenting-hand wrist joints blended to the library pose at finger commands (minjerk, hold 0.4 s, ramp 0.3 s)'); ap.add_argument('--fo-ramp', type=float, default=0.15); ap.add_argument('--fo-profile', default='cos', choices=['cos', 'minjerk'])
     a = ap.parse_args()
     from ex002_ctl_run import finger_override, tokens_for
     P = json.loads(Path(a.plan).read_text()); by = {}
@@ -37,6 +37,14 @@ def main():
         ci = int(f.stem); y1 = np.load(f); y0 = np.load(n0 / f.name); T = min(len(y0), len(y1)); y0, y1 = y0[:T], y1[:T]
         w = weight(T, [e['t'] for e in by.get(ci, [])], a.inner, a.outer, a.pre, a.post)[:, None]
         y = ((1 - w) * y0 + w * y1).astype(np.float32)
+        if a.wrist_pose:
+            wp = json.loads(Path(a.wrist_pose).read_text())['hands']; fr = np.arange(T) / FPS
+            for e in by.get(ci, []):
+                if e['kind'] != 'finger': continue
+                v = e if a.mode == 'given' else dict(e, **e['shuffle']); hh = 0 if v['fingers'][0] > v['fingers'][1] else 1
+                x = np.clip((0.7 - np.abs(fr - e['t'])) / 0.3, 0, 1); wv = (x ** 3 * (10 - 15 * x + 6 * x * x))[:, None]
+                jj = wp[str(hh)]['joints']; y[:, jj] = (1 - wv) * y[:, jj] + wv * np.asarray(wp[str(hh)]['angles'], np.float32)[None]
+            y = y.astype(np.float32)
         if shapes is not None: y = finger_override(y, tokens_for(by.get(ci, []), a.mode), shapes, ramp=a.fo_ramp, profile=a.fo_profile)
         np.save(out / f.name, y)
         g = n1.parent / f'gt_{ci}.npy'
