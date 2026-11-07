@@ -463,10 +463,17 @@ class SCMG(nn.Module):
                 self.f_text = nn.ModuleList([WordTimeXAttn(d, cfg.heads) for _ in range(cfg.flow_layers)])
             self.f_text.to(self.f_in.weight.device)
         if getattr(cfg, 'ctl', False) and not hasattr(self, 'ctl_type'):
-            from .ctl import NV, NVM, NTYPES
+            from .ctl import NV, NVM, NTYPES, NTYPES_V1
             with torch.random.fork_rng(devices=[]):
                 torch.manual_seed(20261106)
-                self.ctl_type = nn.Embedding(NTYPES, d)                         # scmg/ctl.py TYPE_NAMES (0 = padding)
+                e1 = nn.Embedding(NTYPES_V1, d)                                 # scmg/ctl.py TYPE_NAMES (0 = padding): the same draws
+                # 11-07 duplex: rows of the appended types (YIELD) start at zero (no RNG draw: every other init is unchanged);
+                # checkpoints with NTYPES_V1 rows load with those rows padded by zeros (hook below)
+                self.ctl_type = nn.Embedding(NTYPES, d, _weight=torch.cat([e1.weight.data, torch.zeros(NTYPES - NTYPES_V1, d)]))
+                def _pad_rows(state, prefix, *args, _n=NTYPES):
+                    w = state.get(prefix + 'weight')
+                    if w is not None and w.shape[0] < _n: state[prefix + 'weight'] = torch.cat([w, torch.zeros(_n - w.shape[0], w.shape[1], dtype=w.dtype, device=w.device)])
+                self.ctl_type._register_load_state_dict_pre_hook(_pad_rows)
                 self.ctl_val = nn.Linear(NV * 2 * cfg.ctl_freqs + NVM, d)
                 self.ctl_enc = nn.Sequential(nn.SiLU(), nn.Linear(d, d))
                 self.ctl_text = nn.Linear(d, d); nn.init.zeros_(self.ctl_text.weight); nn.init.zeros_(self.ctl_text.bias)
