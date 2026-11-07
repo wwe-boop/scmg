@@ -167,6 +167,8 @@ def token_value(tok):
     if tok.get('amp_bin') is not None: v[4] = float(tok['amp_bin']) - 1.; m[2] = 1
     if ty != POINT and tok.get('count') is not None:          # 11-07 count control (non-POINT annotation tokens): slot 0
         v[0] = count_value(tok['count']); m[0] = 1
+    elif ty != POINT and tok.get('fingers') is not None:      # 11-07 EX002 finger command: extended fingers (left, right) 0..3
+        v[0], v[1] = ((float(n) - 1.5) / 1.5 for n in tok['fingers']); m[0] = 1
     return ty, v, m
 
 
