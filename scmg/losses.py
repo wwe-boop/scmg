@@ -325,14 +325,20 @@ def yield_cf_prepare(model, vae, batch, sc, stats, stream, H, K, x1, q):
     # motion: critically damped retraction from the frame before t_y (infer_retract._targets rule)
     qm, qs = stats['qm'].to(dev), stats['qs'].to(dev)
     qp = q.float() * qs + qm; qn = q.clone()
-    up = list(range(22, 39)); wn = 4.744 / max(sc.yield_rest_s, 1e-3)
+    wn = 4.744 / max(sc.yield_rest_s, 1e-3)
+    if Jn == 39:                    # G1 robot_repr: root 0:10 + 29 joints; waist + arms = channels 22..38; root velocities zeroed
+        up = list(range(22, 39)); full = lambda q0_: torch.cat([q0_[:10], rest]); zero_root = True
+    else:                           # 11-08 EX002 34 joints (rad): waist (0, 1) + arms (4..17) to the 34-joint rest pose; head / fingers held
+        if rest.numel() != Jn: raise ValueError(f'yield_human rest has {rest.numel()} joints, motion has {Jn}')
+        up = [0, 1] + list(range(4, 18)); full = lambda q0_: rest; zero_root = False
     for b in on.nonzero()[:, 0].tolist():
         f0 = int(fy[b]); q0 = qp[b, f0 - 1]; v0 = (qp[b, f0 - 1] - qp[b, f0 - 2]) * 50.
         tt = torch.arange(1, T - f0 + 1, device=dev).float()[:, None] / 50.
-        e = q0 - torch.cat([q0[:10], rest])
+        e = q0 - full(q0)
         tr = q0[None].repeat(T - f0, 1)
-        upv = torch.cat([q0[:10], rest])[None] + (e + (v0 + wn * e) * tt) * torch.exp(-wn * tt)
-        tr[:, up] = upv[:, up]; tr[:, 6:10] = 0.
+        upv = full(q0)[None] + (e + (v0 + wn * e) * tt) * torch.exp(-wn * tt)
+        tr[:, up] = upv[:, up]
+        if zero_root: tr[:, 6:10] = 0.
         qn[b, f0:] = ((tr - qm) / qs).to(q.dtype)
     with torch.no_grad():
         mu, _ = vae.encode(qn[on])
