@@ -187,3 +187,10 @@ tokens (ctl4 lane-4 outputs, so no new generation); finger override (module 2) a
 evidence; the test is gate (ii) (sparse whole clip <= 99.37) with the obedience gates unchanged (STG +0.10 with shuffle follow, finger
 >= 0.9 override allowed, executability after CBF 100 %). Evaluation: the unchanged ex002_ctl_run evaluate + ex002_fgd_outside.py +
 ex002_exec.py on the blended arrays (post-processing of the DLC generations; scored locally, flagged; pai_train login expired).
+## Module 5 result (2026-11-08 ~00:35; blended lane-4 DLC generations, scored locally on the RTX 5090)
+- Gate (ii) sparse whole clip PASSES: 94.81 plain (94.61 / 89.89 / 99.95) and 96.68 with the override (gate 99.37); gate (i) equals the
+  control exactly (by construction, not evidence). Sparse FKD 1.44 vs none 1.38. Executability after CBF 100 %.
+- Obedience FAILS on pointing: dense STG 0.301 vs none 0.254 (+0.047 < +0.10; lane 4 unblended +0.147); sparse 0.314 vs 0.261.
+  Finger hit with the override 1.000 (shuffle follows 1.000 vs 0.058); plain 0.288 / 0.350.
+Diagnosis: the obeyed pointing gesture (approach + apex + return) is not contained in +-0.6 s of the command time; cutting it to the
+blend window removes most of the STG gain. Dense whole clip 183 (report-only).
