@@ -26,3 +26,19 @@ start of the last latent before the restart chunk boundary, re-decoding after th
 (median 9e-4 rad at the first differing frame, up to 0.139 rad). Rule: B3 rows are scored on the EXECUTED prefix -- the method's
 own uninterrupted output before f_i, its continuation from f_i on (eval_interrupt_ex002.py --prefix executed, default; the file
 as written = --prefix generated, diagnostic only). The G1 interruption runs share this decoder property (not re-scored here).
+Addendum 11-08 01:1x (protocol fixes before any reported EX002 interruption number; found by a pipeline smoke run on the 458 tails
+retargeted so far (of 1044), PARTIAL human refs, scratch only, not reported):
+1. unsafe / collision: the raw scene.xml contact test is not a self-collision model for this robot (no contact exclusions: arm
+   link5-link7, wheel-chassis, finger-hand-base touch in every frame; after excluding pairs present in >= 50 % of GT frames the dev
+   GT itself was 76 % unsafe). Rule: collision = the retargeter's exact WBC-pair check (release06 smplx2ex002_3f.robot.EX002
+   .clearance: runtime-rm003 349 rows (309 x 10 mm, 32 same-hand finger x 2 mm, 8 arm/hand-vs-head x 50 mm), sound GJK predicate,
+   the check that certified the training data; names34 == its CONTROLLED order, asserted), every frame (stride 1). Smoke: dev GT
+   1.3 % unsafe (velocity), mismatched GT 98.5 %. eval_interrupt_ex002.py --collision wbc (default); scene = diagnostic.
+2. RKD reference: only 5 of 176 complete post-speech windows (partial set) satisfy the retraction rule (wrists above rest + 5 cm
+   at the offset and back at rest in the window; G1: 79 / 460), so the retraction-only reference is degenerate (half-split floor
+   2.56). Rule: RKD vs ALL human post-speech windows (--rkd-ref all, default; partial-set floor 0.124); the retraction subset is
+   reported with its n only.
+3. B2 settle time T_r: the EX002 median over the few retraction windows is not usable (0.88 s from 5 windows). Rule: T_r = 1.8 s,
+   the G1 median yield time of the SAME BEAT2 post-speech tails (79 retraction windows, interrupt-baseline-1105 dev_final _meta)
+   (--tr 1.8); the EX002 median is reported next to it.
+Coordinator to confirm 1-3 before the final run (all tails retargeted).
