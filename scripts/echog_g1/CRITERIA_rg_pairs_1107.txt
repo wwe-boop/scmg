@@ -6,14 +6,16 @@ Module (default off, scripts/tests/test_safety_rg.py ALL_OK: default cbf_qp bitw
 safety_run.py --rg-pairs = cbf_qp with UnionCollision(G1Collision, RGCollision): RoboGesture's 55 geom pairs and its distance
 function (robogesture.collision.CollisionFilter._distance / _jacobian, unmodified), constraint = penetration (pair distance >= the
 layer's d_safe 2 mm), not its 2-3 cm filter margins; legs fixed in the RG rows; BrainCo hands at RoboGesture's median command.
-Runs: the 18 SCMG main-table runs (czmws s0/1/2 x offline / psync / psyncsess x inference seeds 0/1) on the 406-clip every-8th
-val_common subset, input = their raw outputs (runs/cbf-perclip/<run>/none), same chunking (K 10) and layer parameters as cbf_qp.
-Gates, per SCMG row (mean over its 6 runs), all three:
+Runs (DEV ONLY -- the 406-clip val_common subset is the main-table test split, so the module is validated on dev and applied to
+the test outputs once, on "run the main table"): czm2kws (isodev-1107, the per_clip reference) offline + psync, inference seeds
+0 / 1 / 2 (6 runs) on the 400 D-spk dev clips; input = their raw outputs; cbf_qp and cbf_qp + rg pairs with the same chunking
+(K 10) and layer parameters.
+Gates, per protocol (offline / psync, mean over its 3 seeds), all three:
   1. RoboGesture checker (rg_collision_check.py, unmodified CollisionFilter) penetration on the arm/torso pairs <= 0.14 % (ECHO-G
      official offline raw, mean of its 5 seeds)
   2. our independent checker (executability.py, collision stride 1, train exclusion): clips fully executable 100 %
-  3. official FGD on the 406 subset (safety_report.py FGD_official): mean paired difference (cbf_qp + rg pairs) - cbf_qp over the 6
-     runs within +-1 SD of the cbf_qp FGD across those 6 runs (seed noise)
+  3. official FGD on the dev clips (safety_report.py FGD_official): mean paired difference (cbf_qp + rg pairs) - cbf_qp over the 3
+     seeds within +-1 SD of the cbf_qp FGD across those 3 seeds (seed noise)
 Reported (not gates): RG penetration all pairs, RG unsafe (margin) arm/torso and all pairs, leg-neutral FGD, |dJerk|, acc spikes,
 correction RMSE, fallback frames, per-chunk solve time (p50 / p99). GT shown in every RG column (penetration 2.69 % arm/torso,
 6.79 % all pairs). Pass -> the deployed G1 safety layer becomes cbf_qp + rg pairs (test-side tables only on "run the main
