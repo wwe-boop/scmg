@@ -17,9 +17,12 @@ from scmg import safety_proj as S
 _W = {}
 
 
-def _init(layers, K, device, kw):
+def _init(layers, K, device, kw, rg_pairs=False):
     torch.set_num_threads(1)
     lim = S.Limits(); coll = S.G1Collision()
+    if rg_pairs:                     # 11-07: + RoboGesture's collision pairs (penetration) as constraints (scmg/safety_rg.py)
+        from scmg.safety_rg import RGCollision, UnionCollision
+        coll = UnionCollision(coll, RGCollision(S.G1_JOINTS))
     enc = S.FGDEncoder(device=device) if any(n.startswith('proj_perc') for n in layers) else None
     lkw = lambda n: {} if not n.startswith('proj') else (kw if n == 'proj_perc_s' else {k: v for k, v in kw.items() if k != 'smooth'})
     _W.update(lim=lim, coll=coll, K=K, layers={n: S.make_layer(n, lim, coll, enc, K=K, **lkw(n)) for n in layers})
@@ -57,6 +60,8 @@ def main():
     ap.add_argument('--device', default='cpu')
     ap.add_argument('--lam', type=float, default=None); ap.add_argument('--steps', type=int, default=None)
     ap.add_argument('--B', type=int, default=None); ap.add_argument('--smooth', type=float, default=None)
+    ap.add_argument('--rg-pairs', action='store_true', help="11-07: constrain RoboGesture's collision pairs too (penetration, "
+                    "scmg/safety_rg.py; default off)")
     a = ap.parse_args()
     layers = a.layers.split(',')
     kw = {k: v for k, v in dict(lam=a.lam, steps=a.steps, B=a.B, smooth=a.smooth).items() if v is not None}
@@ -68,10 +73,10 @@ def main():
     if a.workers > 1:
         import multiprocessing as mp
         ctx = mp.get_context('spawn' if a.device != 'cpu' else 'fork')
-        pool = ctx.Pool(a.workers, initializer=_init, initargs=(layers, a.K, a.device, kw))
+        pool = ctx.Pool(a.workers, initializer=_init, initargs=(layers, a.K, a.device, kw, a.rg_pairs))
         it = pool.imap_unordered(_one, jobs, chunksize=1)
     else:
-        _init(layers, a.K, a.device, kw); it = map(_one, jobs)
+        _init(layers, a.K, a.device, kw, a.rg_pairs); it = map(_one, jobs)
     for stem, res in it:
         for n, (d, rec) in res.items():
             torch.save(d, f'{a.out_root}/{n}/{stem}.pt')
@@ -80,7 +85,8 @@ def main():
         if done % 50 == 0 or done == len(stems):
             print(f'{done}/{len(stems)} {time.time() - t0:.0f}s', flush=True)
     meta = dict(pred_dir=os.path.abspath(a.pred_dir), stems=os.path.abspath(a.stems), layers=layers, K=a.K, kw=kw,
-                device=a.device, workers=a.workers, limits=S.Limits().source, mjcf=S.MJCF, wall=time.time() - t0)
+                device=a.device, workers=a.workers, limits=S.Limits().source, mjcf=S.MJCF, wall=time.time() - t0,
+                **({'rg_pairs': True} if a.rg_pairs else {}))
     json.dump(meta, open(f'{a.out_root}/RUN.json', 'w'), indent=1)
 
 
