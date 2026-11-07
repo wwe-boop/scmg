@@ -80,3 +80,20 @@ CFG 2.5, 10 steps; none / gt on the 400 dev clips, shuffle on the annotation cli
 4. ΔBA (BA_signed_gap) of the gt run inside the sf0 range ± 0.003, i.e. |ΔBA| ≤ 0.0120 (sf0 seeds −0.0075 / −0.0062 / −0.0090;
    a value closer to 0 than −0.0032 counts as inside: it is nearer the ground truth).
 If it passes, ctlpt is the controllability row.
+
+## Pointing on ECHO-G (written 2026-11-07 before the run; echog_semt.py --ctl, echog_point_lane.sh)
+Token path: the POINT tokens of ctl-tokens-hos (pelvis-frame target + hand; amplitude not given; scmg/ctl.py value_features, 6
+frequencies) are the keys of a SemTimeEG module (time prior on frame time − token time) whose output is zero-initialised and added to
+the official SGDiT input; a clip without tokens gives exactly 0 (null exact). Training = egctrl's fine-tune (official checkpoint,
+train_drop minus the hos dev speakers, 2000 steps, same optimiser / EMA / loss) + the ctlcf recipe ported: per-sample token dropout
+0.5, counterfactual targets 0.5, pointing-ray loss on x_t + (1 − t) v at the token apex (weight t, w 3), module lr × 10.
+Evaluation: hos dev 400 clips, official sampler (8 steps, guidance 1, stable_seed per clip), seeds 0/1/2, text own; egpt with tokens
+none / gt / shuffle (the infer_test.py derangement), egctrl with none; g1_ctl_eval.py on 50 Hz linear-interpolated copies.
+Passes when ALL hold (3-seed means):
+1. STG(egpt gt, given targets) − STG(egpt none, same dev targets) ≥ +0.10;
+2. under shuffle, STG against the GIVEN targets > STG against the dev GT targets;
+3. FGD(egpt gt) ≤ FGD(egctrl own) + 0.05 = 0.981 + 0.05 = 1.031;
+4. ΔBA (BA_signed_gap) of egpt gt inside the egctrl seed range ± 0.003, i.e. in [−0.1108, −0.1023] (egctrl −0.1053 / −0.1070 /
+   −0.1078); closer to 0 also counts as inside;
+5. echog_semt.py test ALL_OK (zero-init identity with tokens, null exact, active once trained, ray loss reaches the module).
+STG of egctrl (no token path) is reported as the architecture's reference.
