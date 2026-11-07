@@ -156,6 +156,9 @@ def cmd_run(a):
                 rule=__doc__.split('Outputs')[0].strip())
     (out / 'META.json').write_text(json.dumps(meta, indent=1))
     print('PRECOMPUTE_DONE', len(res), f'{sec:.1f}s', f'{meta["s_per_clip"]} s/clip', out)
+    if a.workers > 1:                                # 11-07: the spawn pool (+ onnxruntime threads) hung at interpreter exit after the
+        sys.stdout.flush(); sys.stderr.flush()       # outputs were written (dlc307caz5jmsiec): leave without the atexit teardown
+        os._exit(0)
 
 
 def cmd_merge(a):
