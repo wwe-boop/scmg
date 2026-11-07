@@ -403,3 +403,37 @@ Module 8b (one presentation token + library wrist pose + minimum-jerk override o
 - Liveliness (sparse given): (P) offline 0.019 / 0.346 / 0.096 / 0 / 1.054, psync 0.019 / 0.361 / 0.097 / 0 / 1.053 -> pass; (S) pass. Dense
   (report): amplitude 0.061 / 0.059.
 - Verdict: FAIL (hand height, palm angle, psync gate (ii)).
+## Module 9 (pre-registered 2026-11-08 ~07:40, before any module-9 number): keyframe insertion with causal re-conditioning
+Coordinator diagnosis after 7b / 8b: tokens alone cannot hit precise geometry on this arm; pointing and presenting have explicit geometric
+targets, so solve for them. Post-processing + re-conditioning, no retraining (ports to a new base unchanged). Base sibag-s2; tokens = the
+lane-4 control model ctl4 (true freeze). New fresh plans seed 1111 / shuffle 20261111 (dense + sparse); seeds 0-2; offline AND psync, each
+against its own no-token C / δ (the no-token runs are sibag-s2 bitwise).
+Method (scripts/ex002/ex002_keyframe.py, default off; bench_ex002.py --inpaint-dir, default off):
+1. keyframe per command, damped least squares (Gauss-Newton + Levenberg damping, 20 iterations) on the commanded arm's 7 joints only, exact
+   FK (scmg/kinematics), joint limits = META bounds -/+ 0.03 rad, sphere-proxy self-penetration as a residual (weight 10), regularisation
+   sqrt(0.05) (q - q_seed), seeded from the token-only pose at the command time. point: forearm ray (elbow -> wrist) toward the target;
+   present (finger commands; hand with the larger count, ties -> right): wrist at shoulder + (0.30, 0.06 toward the midline, -0.12) m and
+   palm normal (cross(index base - wrist, third base - wrist)) along +-x (sign of the seed). A keyframe with penetration > 0 after the solve
+   is REJECTED (no insertion for that event; rejection share reported).
+2. insertion in joint space: minimum-jerk ramps of 0.3 s, hold [t - 0.1, t + 0.6] (point) / [t - 0.4, t + 0.4] (present); finger override
+   (minimum-jerk 0.3 s) after.
+3. causal re-conditioning: the inserted frames are encoded by the VAE and inpainted (RePaint-style latent inpainting already in
+   scmg/infer.py) on the insertion spans with cosine-ramped weights while the SAME model / tokens / seed regenerate the clip (bench_ex002
+   --inpaint-dir, offline and psync) -> the generator's history after release is the inserted motion; the keyframes are then re-applied in
+   joint space on the re-generated output (re-solved from its pose) for exact geometry. Final = re-conditioned output (no 5b blend; the
+   continuation after release is the point of the re-conditioning).
+Rows reported: token-only (5b + minimum-jerk override, no IK), IK post-processing without re-conditioning (5b + IK), module 9 (re-conditioned).
+Gates for module 9 (per protocol; primary as 7b / 8b; the angle is easy with IK, so the side gates are the real test):
+- pointing: median forearm angular error <= 25 deg; |median elevation error, above-shoulder targets| <= 5 deg; STG(given) - STG(none) >= +0.10
+  with the shuffle follow (shuffle runs get keyframes toward the SHUFFLED targets).
+- present: count hit >= 0.9; presenting hand raised (wrist >= shoulder - 0.20 m) mean share of command frames >= 0.80; palm-normal angle to
+  forward (presenting hand) median <= 45 deg.
+- quality (i) sparse FGD v2 outside +-1 s <= C + δ; (ii) sparse whole clip <= C + δ.
+- ramp jerk: share of ramp frames over the limits34 jerk limits <= token-only + 2 percentage points, for the finger ramps (ex002_exec.py
+  --ramp 0.3) and for the arm insertion ramps (ex002_keyframe.py release, same frames in both rows).
+- executability after CBF 100 % of clips.
+- liveliness: protocol guard (A's lively_floor_ex002.py: still <= 0.033, wrist speed >= 0.308, amplitude >= 0.090, held <= 10 %, stutter <= 1.129)
+  decides; my static_share guard reported; on the sparse given runs; dense plan report-only (the 7b / 8b dense amplitude drop to 0.061 noted).
+- release continuity: median over insertions of the peak arm-joint acceleration norm in +-0.1 s around the release <= the p95 of the same
+  quantity over all dev GT frames (ex002_keyframe.py release).
+Plus 2-3 qualitative renders (point and present) through the Isaac renderer.
