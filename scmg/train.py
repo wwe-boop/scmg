@@ -186,6 +186,12 @@ def main():
     add_self_force_args(ap)
     ap.add_argument('--bagger-dir', default=None, help='colon-separated cumulative BAgger collection directories')
     ap.add_argument('--bagger-share', type=float, default=0.)
+    ap.add_argument('--subset-frac', type=float, default=None, help='11-07 data ablation: share of the train recordings')
+    ap.add_argument('--subset-speakers', type=int, default=None, help='11-07 data ablation: number of train speakers')
+    ap.add_argument('--subset-seed', type=int, default=0)
+    ap.add_argument('--p-start0', type=float, default=0., help='11-06 B1: P(training window starts at the clip start)')
+    ap.add_argument('--causal-dir', default=None, help='11-05 训练匹配: scripts/echog_g1/precompute_causal.py output (merged) '
+                    'for the train view; needed by --sc causal_front / causal_spk / causal_text')
     a = ap.parse_args()
     resolve_self_force_args(a)
     if a.bagger_share > 0 and a.stage != 'base':
@@ -203,8 +209,18 @@ def main():
     if a.overfit:
         overfit_clips(view, a.overfit); dview = view
     if a.anchor_share: view.anchor = json.loads(a.anchor_share)
+    if a.subset_frac is not None or a.subset_speakers:
+        info = view.restrict(a.subset_frac, a.subset_speakers, a.subset_seed)
+        if rank == 0: print('data subset', json.dumps(info), flush=True); (out / 'SUBSET.json').write_text(json.dumps(info, indent=1))
+    if a.stage != 'vae':
+        _sc0 = StageCfg(**{**STAGES[a.stage]['sc'], **json.loads(a.sc)})
+        _cz = _sc0.causal_front or _sc0.causal_spk or _sc0.causal_text
+        if _cz and not a.causal_dir: raise SystemExit('--sc causal_front / causal_spk / causal_text need --causal-dir')
+        if a.causal_dir:
+            cov = view.load_causal(a.causal_dir, _sc0.horizons)
+            if cov < 0.99: raise SystemExit(f'--causal-dir covers only {cov:.1%} of the train clips')
     ds = WindowDataset(view, a.frames, seed=a.seed * 1000 + rank, semsynth_share=a.semsynth_share, bagger_share=a.bagger_share,
-                       tail_share=a.tail_share)
+                       tail_share=a.tail_share, **({'p_start0': a.p_start0} if a.p_start0 > 0 else {}))
     dl = iter(torch.utils.data.DataLoader(ds, a.batch, num_workers=a.workers, collate_fn=collate, pin_memory=True,
                                           persistent_workers=a.workers > 0, prefetch_factor=4 if a.workers else None))
     dev_ds = WindowDataset(dview, a.frames, seed=12345, fixed=fixed_windows(dview, a.frames))

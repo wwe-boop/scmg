@@ -1,6 +1,6 @@
 #!/bin/bash
 # ECHO-G official benchmark on val_common (or a stem subset), 11-04.
-#   bench.sh scmg <ckpt> <vae> <pred dir> <offline|engine> <seed> [stem list]
+#   bench.sh scmg <ckpt> <vae> <pred dir> <offline|engine|psync|psyncsess|psyncwhole> <seed> [stem list]
 #       SCMG inference (infer_test.py, sharded over GPUS) with the given protocol, then the official evaluator
 #       -> <pred dir>/../benchmark_<basename pred dir>.json
 #   bench.sh eval <pred dir> <stem list> <tag> <out.json>
@@ -21,14 +21,21 @@ TEXT_TEST=${TEXT_TEST:-$C/scmg/text-e5-echog-g1-v1-test}; TEXT_CAUSAL_TEST=${TEX
 export SCMG_J=39 SCMG_NO_GLITCH=1 PYTHONDONTWRITEBYTECODE=1 OMP_NUM_THREADS=${OMP_NUM_THREADS:-4} SCMG_LOCAL_MIRROR=${SCMG_LOCAL_MIRROR:-$HOME/bulk/cpfs-mirror}
 unset SCMG_TEXT_CAUSAL                                    # infer_test.py takes the causal cache only from --text-causal
 ev() {  # <pred dir> <stem list> <tag> <out>
-  PYTHONPATH=$OFF/src $PY $OFF/scripts/eval_g1_motion_cls.py --pred-dir $1 --ref-dir $REF_DIR --val-split $2 --wav-dir $WAV_DIR \
+  PYTHONPATH=$OFF/src ${EVAL_PY:-$PY} $OFF/scripts/eval_g1_motion_cls.py --pred-dir $1 --ref-dir $REF_DIR --val-split $2 --wav-dir $WAV_DIR \
     --mmae-file $MMAE --g1-ae-ckpt $FGD_CKPT --fps 30 --ba-direction audio_to_motion --enable-foot-metrics --require-all-stems \
     --tag $3 --out $4
 }
 case $1 in
   scmg)
     ck=$2; vae=$3; P=$4; proto=$5; seed=$6; stems=${7:-$SPLIT}
-    case $proto in offline) PA=(--protocol offline);; engine) PA=(--protocol engine --text-causal $TEXT_CAUSAL_TEST);; *) echo "protocol $proto"; exit 2;; esac
+    # psync (11-05, design v5 section 3): causal inputs (prefix feat89 / CAM++ of the arrived audio, words once ended);
+    # psyncwhole = the same text rule with the whole-clip feat89 / speaker vector (the non-causal reference)
+    WD=${WORDS_DIR:-$EG/ds/annotations/words}; PS=${PSTATS:-$CODE/scripts/echog_g1/PROSODY_STATS_echog_g1_hos_train.json}
+    case $proto in offline) PA=(--protocol offline);; engine) PA=(--protocol engine --text-causal $TEXT_CAUSAL_TEST);;
+      psync) PA=(--protocol psync --text-causal $TEXT_CAUSAL_TEST --wav-dir ${CAUSAL_WAV:-$WAV_DIR} --words-dir $WD --pstats $PS ${CAMPPLUS:+--campplus $CAMPPLUS} ${SPK_REFRESH:+--spk-refresh $SPK_REFRESH} ${CAUSAL_FEAT:+--causal-feat $CAUSAL_FEAT});;
+      psyncsess) PA=(--protocol psync --spk-session --text-causal $TEXT_CAUSAL_TEST --wav-dir ${CAUSAL_WAV:-$WAV_DIR} --words-dir $WD --pstats $PS ${CAMPPLUS:+--campplus $CAMPPLUS} ${SPK_REFRESH:+--spk-refresh $SPK_REFRESH} ${CAUSAL_FEAT:+--causal-feat $CAUSAL_FEAT});;   # psync + session speaker enrollment
+      psyncwhole) PA=(--protocol psync --no-causal-inputs --text-causal $TEXT_CAUSAL_TEST --words-dir $WD --pstats $PS);;
+      *) echo "protocol $proto"; exit 2;; esac
     GL=(${GPUS:-0}); n=${#GL[@]}; mkdir -p $P
     for i in $(seq 0 $((n - 1))); do
       CUDA_VISIBLE_DEVICES=${GL[$i]} $PY scripts/echog_g1/infer_test.py --ckpt $ck --vae $vae --stats $STATS --view $VIEW_TEST \
