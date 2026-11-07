@@ -14,12 +14,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2])); sys.path.insert(0,
 FPS = 50
 B = '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg'; X = B + '/control-token-1105/ex002'; R = X + '/m5b-confirm/fresh'
 FD, FS = X + '/PLAN_dev_fresh_dense.json', X + '/PLAN_dev_fresh_sparse.json'
-SEED = 3; WIN = 10.0
+SEED = 3; WIN = 10.0; QWIN = 6.0
 SELECTION_RULE = ('seed 3 (first fresh-plan inference seed); events whose 10 s window [t - 5, t + 5] lies inside the clip; ranked by '
                   'sha1("<clip>:<t:.3f>") ascending; first k with distinct clips: 6 aim events (given / none / shuffle), 6 finger events '
                   '(override vs plain); plus the 2 aim events with the lowest forearm STG of the 5b given run (any clip); 4 sparse-plan '
                   'windows of 10 s (start on a 1 s grid) with no command within the window +-1 s, ranked by sha1("<clip>:<start>"), '
-                  'distinct clips (none vs 5b + override); 2 GT windows: clips ranked by sha1("<clip>"), the centred 10 s')
+                  'distinct clips (none vs 5b + override). AMENDED before any rendering (11-08 ~02:00): the sparse plan has a command every ~6.5 s, so '
+                  'no 10 s window is command-free (0 windows; 66 of 6 s with no margin) -> quiet clips = 6 s command-free windows (no '
+                  'margin), first 4 by sha1, distinct clips; panels none / 5b + override / unblended lane-4 given (under 5b these frames '
+                  'equal the no-token generation by construction except the blend ramps, so the unblended model is shown too); 2 GT windows: clips ranked by sha1("<clip>"), the centred 10 s')
 h = lambda s: hashlib.sha1(s.encode()).hexdigest()
 
 
@@ -67,8 +70,8 @@ def select(a):
     quiet = []
     for ci in sorted(bys):
         ts = [e['t'] for e in bys[ci]]
-        for s0 in range(0, int(L[ci] - WIN) + 1):
-            if all(t < s0 - 1 or t > s0 + WIN + 1 for t in ts): quiet.append(dict(ci=ci, clip=bys[ci][0]['clip'], start=float(s0)))
+        for s0 in range(0, int(L[ci] - QWIN) + 1):
+            if all(t < s0 or t > s0 + QWIN for t in ts): quiet.append(dict(ci=ci, clip=bys[ci][0]['clip'], start=float(s0)))
     qs, seen = [], set()
     for q in sorted(quiet, key=lambda q: h(f"{q['clip']}:{int(q['start'])}")):
         if q['ci'] in seen: continue
@@ -132,8 +135,8 @@ def prep(a):
     O = Path(a.out); S = json.loads((O / 'SELECT.json').read_text()); jobs = []; man = []
     upper = np.asarray(json.loads(Path('/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/train-v1-20261101/views/data-v36_1/META.json').read_text())['ex002']['upper'], np.float32)
     G = f'{R}/gen'; aud = {}
-    def window(ci, t0):
-        T = len(np.load(f'{G}/none_s{SEED}/{ci}.npy')); f0 = max(0, int(round(t0 * FPS))); return f0, min(T, f0 + int(WIN * FPS))
+    def window(ci, t0, w=WIN):
+        T = len(np.load(f'{G}/none_s{SEED}/{ci}.npy')); f0 = max(0, int(round(t0 * FPS))); return f0, min(T, f0 + int(w * FPS))
     def audio(ci, f0, f1, name):
         if ci not in aud: aud[ci] = rec_audio(ci)
         p = O / 'audio' / f'{name}.wav'; p.parent.mkdir(parents=True, exist_ok=True); sf.write(p, aud[ci][f0 * 320:f1 * 320], 16000, subtype='PCM_16'); return str(p)
@@ -159,9 +162,10 @@ def prep(a):
             [panel(name, 'override (5b + module 2)', f'{R}/dense/fo_given_s{SEED}/{ci}.npy', f0, f1, counts=e['fingers'], win=win),
              panel(name, 'plain (5b)', f'{R}/dense/given_s{SEED}/{ci}.npy', f0, f1, counts=e['fingers'], win=win)], 'finger', e)
     for i, q in enumerate(S['quiet']):
-        ci = q['ci']; f0, f1 = window(ci, q['start']); name = f'quiet{i}_{q["clip"]}_s{int(q["start"])}'
-        add(name, f'no command nearby {q["clip"]} {q["start"]:.0f}-{q["start"] + WIN:.0f}s (sparse plan, seed 3)', f0, f1, ci,
-            [panel(name, 'none', f'{G}/none_s{SEED}/{ci}.npy', f0, f1), panel(name, '5b + override (sparse plan)', f'{R}/sparse/fo_given_s{SEED}/{ci}.npy', f0, f1)], 'quiet', q)
+        ci = q['ci']; f0, f1 = window(ci, q['start'], QWIN); name = f'quiet{i}_{q["clip"]}_s{int(q["start"])}'
+        add(name, f'no command in window {q["clip"]} {q["start"]:.0f}-{q["start"] + QWIN:.0f}s (sparse plan, seed 3)', f0, f1, ci,
+            [panel(name, 'none', f'{G}/none_s{SEED}/{ci}.npy', f0, f1), panel(name, '5b + override', f'{R}/sparse/fo_given_s{SEED}/{ci}.npy', f0, f1),
+             panel(name, 'unblended lane 4 given', f'{G}/s_given_s{SEED}/{ci}.npy', f0, f1)], 'quiet', q)
     for i, g in enumerate(S['gt']):
         ci = g['ci']; f0, f1 = window(ci, g['start']); name = f'gt{i}_{g["clip"]}'
         add(name, f'GT {g["clip"]} {f0 / FPS:.1f}-{f1 / FPS:.1f}s', f0, f1, ci, [panel(name, 'GT (human, retargeted)', f'{G}/gt_{ci}.npy', f0, f1)], 'gt', g)
@@ -176,7 +180,7 @@ def sheets(a):
         if not v.exists(): continue
         if m['kind'] in ('aim', 'aim_worst', 'finger'):
             t = m['event']['t'] - m['window_s'][0]; ts = np.linspace(t - 1.0, t + 1.5, 12)
-        else: ts = np.linspace(0.5, WIN - 0.5, 12)
+        else: ts = np.linspace(0.3, m['window_s'][1] - m['window_s'][0] - 0.3, 12)
         fr = [int(round(x * FPS)) for x in ts]; sel = '+'.join(f'eq(n\\,{f})' for f in fr)
         subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', str(v), '-vf', f"select='{sel}',scale=iw/2:-1,tile=3x4", '-frames:v', '1', '-vsync', '0',
                         str(O / 'sheets' / f"{m['name']}.png")], check=True)
