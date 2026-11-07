@@ -22,3 +22,21 @@ Items:
 2. prosody-only audio (sc / inference switch audio_prosody_only): the 80 mel columns of feat89 zeroed in training AND inference.
 3. controllability: pointing (STG, arXiv 2610.03105) and counts ("tap / raise N times"; count labels from wrist-speed peaks of the GT;
    metric = count hit rate). Extra criterion: STG with given targets − STG without ≥ +0.10; count hit rate ≥ 2 × chance.
+
+## Item 1 on ECHO-G (written 2026-11-07 before the run; scripts/echog_g1/echog_semt.py, echog_semt_lane.sh)
+Module: SemTimeEG = the same time-lattice cross-attention (Gaussian prior on frame time − token centre, sigma 0.25–2 s, lag ±0.5 s,
+2 layers, d 256) over the official Qwen text tokens, output zero-initialised and ADDED TO THE DiT INPUT (before all SGDiT blocks);
+0 for the official null text. Control = the identical fine-tune without the module.
+Protocol: official G1 checkpoint, 2000 optimizer steps (batch 12 x accumulation 4 = 48 clips / step, lr 1e-4, 100-step warm-up,
+cosine to 0, official loss / condition dropout 0.1 / temporal weight 0.5 / EMA 0.999 / clip 1.0 / wd 1e-4), training stems = official
+train_drop minus the hos dev speakers (english_2_scott, english_6_carla). Caveat: the official initial checkpoint was trained on all of
+train_drop and has seen the dev clips; this is the same for both lanes, so only the RELATIVE comparison is read.
+Evaluation: hos dev 400 clips, official sampler (8 Euler steps, guidance 1, noise stable_seed(stem, seed)), seeds 0/1/2, own / notext
+(official null text) / swap (dev swap map = SCMG infer_test.py derangement, centres rescaled), rec-sem-hos-seed0..2.
+Passes when ALL hold (control = egctrl):
+1. pair_win(egsemt own) − pair_win(egctrl own) > 0 with the recording-bootstrap intervals not crossing 0, OR
+   pair_win(egsemt own) − pair_win(egsemt notext) ≥ +0.10 with intervals above 0;
+2. swap text sensitivity of egsemt above egctrl's (mean of 3 seeds);
+3. FGD(egsemt own) ≤ FGD(egctrl own) + 0.05 (means of 3 seeds);
+4. ΔBA within the egctrl seed range ± its spread;
+5. echog_semt.py test ALL_OK (zero-init identity, null text exact, gradients reach the module).
