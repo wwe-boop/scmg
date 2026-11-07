@@ -68,3 +68,9 @@ human frames with exactly that count; each median shape reproduces its count) ov
 arms / torso untouched; CBF-QP / executability afterwards. Same plan, seeds, gates (count hit ≥ 0.9; FGD v2 ≤ control + δ;
 executability 100 % after CBF); boundary jerk of the finger joints at the ramps reported. Runs on the lane-1 model (or sibag-s2 for
 the finger-only row) with modes given / shuffle.
+
+## δ fixed from the control (2026-11-07, before any candidate number)
+Control = sibag-s2, mode none, seeds 0 / 1 / 2 on the 43 dev clips (control-token-1105/ex002/lane1/ctrl):
+FGD v2 91.13 / 87.15 / 95.32 (mean 91.20, SD 4.08), FKD 1.357 / 1.412 / 1.384; against the plan's commands (no tokens given):
+forearm STG 0.254 / 0.253 / 0.254, both-hands finger hit 0.056 / 0.051 / 0.060.
+δ = max(0.03 × 91.20, 2 × 4.08) = 8.17 → gate 3: FGD v2 ≤ 99.37 (mean of 3 seeds).
