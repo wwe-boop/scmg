@@ -275,3 +275,34 @@ Base: czm-s12000-lr1e-4-w0.1 (agent A's selection, ex002-sweep-1107/SELECTION.tx
   override of the final configuration.
 - Gates (per protocol): STG(given) - STG(none) >= +0.10 with the shuffle follow (bootstrap CI reported); finger hit >= 0.9 (override);
   (i) sparse FGD v2 outside +-1 s <= C + δ; (ii) sparse whole clip <= C + δ; executability after CBF 100 %.
+## Qualitative observations (qual-1108/ex002, coordinator review 2026-11-08 ~02:15; the 5b metric verdict stands)
+- Pointing elevation: the obeyed gesture gets the azimuth roughly right but the forearm stays near waist height; for targets above
+  the shoulder the ray undershoots (aim1, STG 0.78: ~20-30 deg low by eye); horizontal targets (shuffle case of aim1) look right. STG
+  credits approximate directions (mismatched GT already scores 0.427).
+- Counting is not communicative: the commanded count is achieved in the finger joints, but the hands hang at hip height (finger0,
+  L1 R2); no viewer reads it as "showing 2". The finger metric counts extension states, not a presented count.
+## Aiming error report (ours; scripts/ex002/ex002_aim_error.py; fresh dense plan, seeds 3-5, 1677 aim events, 71 % of targets above
+## the shoulder; angle between the ray at the apex frame and wrist -> target; elevation signed, negative = below the target)
+| run | forearm total median / p90 | azimuth median | elevation median (target above / below shoulder) | index total median | wrist - shoulder z |
+|---|---|---|---|---|---|
+| none | 50.3 / 100.5 | 36.7 | -14.0 / +32.7 | 45.8 | -0.23 m |
+| lane 4 unblended given | 28.3 / 66.4 | 21.6 | -2.4 / +21.8 | 28.6 | -0.22 m |
+| 5b given | 35.0 / 80.2 | 25.0 | -5.6 / +24.0 | 33.3 | -0.23 m |
+| 5b shuffle (vs shuffled command) | 35.6 / 76.9 | 25.8 | -6.4 / +23.0 | 33.0 | -0.23 m |
+Reading: the median wrist stays 0.23 m below the shoulder in every run (the arm is not raised); the directional error is dominated
+by azimuth (25 deg) plus a sign-dependent elevation bias (targets below the shoulder are pointed ~24 deg too high); median total error
+35 deg vs the 20 deg sigma of Score_b. These are dev numbers on sibag-s2 lane 4; the czm port gets the same report.
+## Module 7 (pre-registered 2026-11-08 ~02:25, runs on the czm port base after the port job): aim-direction module
+Training-side change (default off, bitwise when off): the ray loss (ctl_ray_loss) is split into azimuth and elevation components
+with separate weights (w_ray_az, w_ray_el; el weight 3x), plus a shoulder-raise term when the commanded target is above the shoulder
+(hinge on wrist z < shoulder z - 0.05 m inside the command window). Same true freeze / steps / recipe as the port.
+Gates (fresh plans, seeds 0-2, offline and psync, each against its own no-token C / δ): PRIMARY median forearm angular error <= 25 deg
+(port value reported for reference) AND |median elevation error| for above-shoulder targets <= 5 deg; STG +0.10 with shuffle follow;
+quality gates (i) / (ii) with 5b; executability after CBF 100 %.
+## Module 8 (pre-registered 2026-11-08 ~02:25, czm port base): present-count
+At a finger-count command the arm goes to a presentation pose: an AIM token for the commanded hand toward a frontal presentation target
+(the median wrist->forward direction of train-GT frames whose hand is raised (wrist z >= shoulder z - 0.20 m) with >= 1 extended
+finger, K-half speakers), issued at the count command's time, plus the finger override (minimum-jerk 0.3 s if the port rule selects it,
+else cosine 0.15 s); blended with 5b. Gates: count hit >= 0.9; hand height >= chest (wrist z >= shoulder z - 0.20 m) on >= 80 % of
+command frames (+-0.4 s); palm-normal angle to the forward direction (+x, toward the listener; normal from the cross product of
+index-base and third-finger-base vectors from the wrist) median <= 45 deg; quality gates (i) / (ii); ramp jerk reported.

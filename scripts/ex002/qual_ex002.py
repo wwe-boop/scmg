@@ -123,7 +123,9 @@ def prim(y, target=None, hand=None, counts=None, win=None, upper=None):
             d['seg'].append([w.tolist(), (w + 1.5 * u).tolist(), [255, 80, 40]])
             ib, it_ = g['index_base'][k, hh], g['index_tip'][k, hh]; u2 = (it_ - ib) / max(np.linalg.norm(it_ - ib), 1e-9)
             d['seg'].append([it_.tolist(), (it_ + 1.5 * u2).tolist(), [40, 160, 255]])
-            if on and target is not None: d['pts'].append([list(map(float, target)), [255, 220, 0], 14])
+            if on and target is not None:      # command direction: shoulder -> target, drawn 1.0 m long (the target itself is ~2.25 m away, off-frame)
+                sh = g['shoulder'][k, hh]; tv = np.asarray(target) - sh; tp = sh + tv / max(np.linalg.norm(tv), 1e-9) * min(1.0, np.linalg.norm(tv))
+                d['seg'].append([sh.tolist(), tp.tolist(), [255, 220, 0]]); d['pts'].append([tp.tolist(), [255, 220, 0], 12])
         if counts is not None:
             d['txt'].append(f"fingers L {int(cnt[k, 0])} R {int(cnt[k, 1])}" + (f"   command L {counts[0]} R {counts[1]}" if on else ''))
         fr.append(d)
@@ -181,9 +183,22 @@ def sheets(a):
         if m['kind'] in ('aim', 'aim_worst', 'finger'):
             t = m['event']['t'] - m['window_s'][0]; ts = np.linspace(t - 1.0, t + 1.5, 12)
         else: ts = np.linspace(0.3, m['window_s'][1] - m['window_s'][0] - 0.3, 12)
-        fr = [int(round(x * FPS)) for x in ts]; sel = '+'.join(f'eq(n\\,{f})' for f in fr)
-        subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', str(v), '-vf', f"select='{sel}',scale=iw/2:-1,tile=3x4", '-frames:v', '1', '-vsync', '0',
-                        str(O / 'sheets' / f"{m['name']}.png")], check=True)
+        fr = [int(round(x * FPS)) for x in ts]; NRb = len(m['panels']); VW = 640
+        from PIL import Image, ImageDraw
+        import tempfile
+        tiles = []
+        with tempfile.TemporaryDirectory() as td:
+            for j, f in enumerate(fr):
+                subprocess.run(['ffmpeg', '-y', '-loglevel', 'error', '-i', str(v), '-vf', f"select='eq(n\\,{f})'", '-frames:v', '1', '-vsync', '0', f'{td}/{j}.png'], check=True)
+                im = Image.open(f'{td}/{j}.png').convert('RGB'); H = im.height
+                row = Image.new('RGB', (VW * NRb, H))                      # front view of every panel (the 3/4 view stays in the video)
+                for r in range(NRb): row.paste(im.crop((2 * r * VW, 0, 2 * r * VW + VW, H)), (r * VW, 0))
+                d = ImageDraw.Draw(row); d.rectangle([0, 0, 260, 30], fill=(0, 0, 0)); d.text((8, 6), f't = {ts[j] - (t if m["kind"] in ("aim", "aim_worst", "finger") else 0):+.2f} s' + (' from command' if m['kind'] in ('aim', 'aim_worst', 'finger') else ''), fill=(255, 255, 0))
+                tiles.append(row.resize((row.width // 2, row.height // 2)))
+        tw, th = tiles[0].size; sheet = Image.new('RGB', (tw * 3, th * 4 + 40), (255, 255, 255)); d = ImageDraw.Draw(sheet)
+        d.text((8, 10), f"{m['name']}  panels (front view): {' | '.join(m['panels'])}", fill=(0, 0, 0))
+        for j, tl in enumerate(tiles): sheet.paste(tl, ((j % 3) * tw, 40 + (j // 3) * th))
+        sheet.save(O / 'sheets' / f"{m['name']}.png")
         m['sheet_frames_s'] = [round(float(x), 2) for x in ts]
     (O / 'MANIFEST.partial.json').write_text(json.dumps(man, indent=1)); print('SHEETS done')
 
