@@ -255,3 +255,23 @@ FRESH plans (seed 1108) and NEW generations (seeds 3-5), 5b as frozen:
   5b plain 0.03-0.10); dense whole clip 177.4 / 179.8 (none 89.3); FKD sparse/dense see JSON.
 VERDICT: module 5b (+ module 2 for fingers) PASSES on fresh plans and new generations. Margins: STG CI lower bound 0.094 (< 0.10:
 the gate is met by the mean, not by the CI); gate (ii) with the override 0.10 below its threshold. Module 6 is not triggered.
+## Port to the causal-match base (pre-registered 2026-11-08 ~01:40, before the port job)
+Base: czm-s12000-lr1e-4-w0.1 (agent A's selection, ex002-sweep-1107/SELECTION.txt; train/final.pt). Code: branch exp/ctl-port = exp/text-path
++ exp/duplex (clean merge, test_ex002_ctl ALL_OK), release 20261108-013330-ex002-ctl-port (8feb5ee). Python = the image's
+/usr/local/bin/python with PYTHONPATH = release (as the sweep job), so the no-token runs can be compared bitwise with A's bench outputs.
+- Training: the czm recipe (cfg adsc; sc causal_front / causal_spk / causal_text, w_phys 0.1, phys_dyn_w 0, sf0; --causal-dir
+  pre-train-slim2m, semsynth 0.4) + control modules (cfg ctl / ctl_flow; lane-4 control weights), TRUE freeze --train-only ctl_, lr
+  1e-4, 2000 steps, seed 0.
+- New fresh plans (never used before): plan seed 1109 / shuffle seed 20261109: PLAN_dev_port_dense.json (1080 events, 551 aim; sha256
+  8807a8db…3dd3) and PLAN_dev_port_sparse.json (297 events, 160 aim; sha256 d9d86fa9…bff9); inference seeds 0 / 1 / 2.
+- Protocols: offline (ex002_ctl_run infer = bench offline) AND psync (bench_ex002 infer --protocol psync with the plan's tokens,
+  commands visible 1.0 s before their time: --ctl-lookahead 1.0; smoke on speech_server GPU1: the tokens change the psync output).
+  The gates apply to BOTH protocols, each with its own C and δ = max(0.03 C, 2 SD) from that protocol's no-token runs (seeds 0-2) on
+  the same fresh masks. No-token identity check for both: ctl-port none vs A's czm offline / psync s0-s2 outputs (max |diff|).
+- Configuration: 5b as frozen (w = 1 on [t - 0.3, t + 0.9] s, 0.3 s cosine ramps) + finger override.
+- Finger-override comparison row (coordinator 01:35, rule fixed now): (a) frozen cosine 0.15 s ramps; (b) minimum-jerk quintic profile
+  with 0.3 s ramps (--fo-ramp 0.3 --fo-profile minjerk). Report finger hit, ramp over-limit share (frames hold < |t - t_cmd| <= hold +
+  ramp, 1500 rad/s^3) and gate (ii) for both. Rule: if (b) keeps finger hit >= 0.9 AND gate (ii) (per protocol), (b) becomes the default
+  override of the final configuration.
+- Gates (per protocol): STG(given) - STG(none) >= +0.10 with the shuffle follow (bootstrap CI reported); finger hit >= 0.9 (override);
+  (i) sparse FGD v2 outside +-1 s <= C + δ; (ii) sparse whole clip <= C + δ; executability after CBF 100 %.
