@@ -119,12 +119,12 @@ Result of dlc1mjl4p7zdospj: sibling training seeds of the same recipe give FGD v
 seed 0, vs sibag-s2 91.13 -> the control is NOT a favourable outlier; the +33 of the 2000-step continuation at lr 1e-4 is a real
 drift of a converged model under a restarted (warm-up + cosine from 1e-4) schedule. The frozen-base lane 3 is the remedy under test.
 
-## Lane 3 result (one line) and lane 4 (pre-registered 2026-11-07 23:30, before any lane-4 number)
+## Lane 3 result (one line) and lane 4 (pre-registered 2026-11-07 ~23:00, before any lane-4 number; committed 25734ab 23:04)
 Lane 3 (dlc1ygzggbtksmlc): ctl3 none FGD v2 131.0 (the "frozen" base at lr 1e-6 still moved: AdamW normalises the step, every base
 weight moves ~lr per step whatever its gradient), given 209.2; STG 0.417 vs none 0.286 (+0.131, passes; shuffle follows 0.415 vs
 0.332); finger hit 0.326, override 1.000 at FGD v2 214. Frozen-base evidence: the token routes alone add +78 FGD v2 (given 209 vs
 none 131) under the dense plan. Lanes 1-3 keep their verdicts (all fail gate 3).
-Rationale for the new quality gates (coordinator 2026-11-07 23:10): an obeyed command is by design not a speech-driven gesture, so
+Rationale for the new quality gates (coordinator 2026-11-07 ~22:55): an obeyed command is by design not a speech-driven gesture, so
 the harm to bound is the harm to the motion OUTSIDE commands and at a realistic command rate; the dense plan (one command per
 1.5-2.0 s) is a stress test of obedience, and the lane-3 +78 shows a dense whole-clip FGD gate is infeasible for any obedient model.
 Lane 4 (module 4: true freeze): ctl4 = sibag-s2 + control modules, `scmg.train --train-only ctl_` (every parameter whose name does not
@@ -137,7 +137,7 @@ PLAN_dev_sparse.json (`ex002_ctl_run.py plan --gap 6.0`, 301 events, one per ~6.
 given / shuffle and finger-override given / shuffle.
 Outside-command FGD v2 (ours): scripts/ex002/ex002_fgd_outside.py — frames within ±R s of every command of the plan are masked; a
 32-frame window is kept only if it holds no masked frame, for the generated clip and its GT alike; R = 0 reproduces evaluate's
-FGD_v2 (checked on the control: 91.13 / 87.15 / 95.32 exactly). Control values (sibag-s2 none, lane1/ctrl, scored 2026-11-07 23:20
+FGD_v2 (checked on the control: 91.13 / 87.15 / 95.32 exactly). Control values (sibag-s2 none, lane1/ctrl, scored 2026-11-07 ~22:58
 before any lane-4 run), δ = max(0.03 x mean, 2 x SD) as before:
 | plan / R | windows (of 6,031) | control seeds 0/1/2 | mean | δ | gate |
 |---|---|---|---|---|---|
@@ -146,7 +146,7 @@ before any lane-4 run), δ = max(0.03 x mean, 2 x SD) as before:
 | sparse / 1.0 s | 3,563 | 91.92 / 87.22 / 95.95 | 91.70 | 8.74 | 100.44 |
 | sparse / 0 (whole clip) | 6,031 | 91.13 / 87.15 / 95.32 | 91.20 | 8.17 | 99.37 |
 Quality gates (both must pass, 3-seed means; for the configuration claimed — with and without the finger override, both reported):
-(i) SPARSE plan, FGD v2 on windows more than 1 s from any command ≤ 100.44. Decision (coordinator 2026-11-07 23:35, made on the
+(i) SPARSE plan, FGD v2 on windows more than 1 s from any command ≤ 100.44. Decision (coordinator 2026-11-07 ~23:02, made on the
     control numbers above only, no candidate output existed): the coordinator's first text put (i) on the dense plan, but the dense
     ±1 s set keeps only clip heads / tails (83 of 6,031 windows, 8 of 43 clips have none) and the control itself scores 165.0 there
     vs 91.2 whole-clip (small-sample bias of a 32-d covariance from 83 windows), so it is not measurable; the sparse ±1 s set keeps
