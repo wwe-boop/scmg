@@ -49,6 +49,37 @@ def target(a):
     Path(a.out).write_text(json.dumps(dict(rule=__doc__.split('\n')[2].strip(), raise_m=RAISE, n_items=a.n_items, hands=out), indent=1)); print(json.dumps(out))
 
 
+def wrist(a):
+    """11-08 module 8b: median wrist joint angles (arm_joint5-7 = q34 [8, 9, 10] left / [15, 16, 17] right) of the same raised-hand,
+    >= 1 extended-finger train-GT frames (library presentation pose) -> PRESENT_WRIST.json"""
+    from scmg import ex002_ctl as E
+    meta = json.loads((Path(a.view) / 'META.json').read_text())['ex002']; up = np.asarray(meta['upper'], np.float32)
+    items = json.loads((Path(a.view) / 'train.json').read_text()); tr = set(json.loads((Path(a.view) / 'SPLIT.json').read_text())['train_ids'])
+    Q = np.load(Path(a.view) / 'train_q.npy', mmap_mode='r'); rng = np.random.default_rng(20261108)
+    hum = [it for it in items if it['id'] in tr and not str(it.get('data_source', '')).startswith('semsynth')]; J = {0: [8, 9, 10], 1: [15, 16, 17]}; got = [[], []]
+    for i in rng.choice(len(hum), min(a.n_items, len(hum)), replace=False):
+        it = hum[i]; q = np.asarray(Q[it['offset']:it['offset'] + it['frames']]); g = E.points(q); cf = E.curl_frac(q, up)
+        for h in (0, 1):
+            ok = (g['wrist'][:, h, 2] >= g['shoulder'][:, h, 2] - RAISE) & ((cf[:, h] < E.EXT_FRAC).sum(-1) >= 1); got[h].append(q[ok][:, J[h]])
+    out = {str(h): dict(joints=J[h], angles=np.median(np.concatenate(got[h]), 0).tolist(), frames=int(sum(len(x) for x in got[h]))) for h in (0, 1)}
+    Path(a.out).write_text(json.dumps(dict(rule='median arm_joint5-7 of raised-hand (wrist >= shoulder - 0.20 m), >= 1 extended finger train-GT frames', hands=out), indent=1)); print(json.dumps(out))
+
+
+def present_hand(f):
+    return 0 if f[0] > f[1] else 1                                   # the hand with the larger commanded count; ties -> right
+
+
+def plan_one(a):
+    """11-08 module 8b: ONE AIM per finger command (present_hand) toward its presentation target."""
+    P = json.loads(Path(a.plan).read_text()); pr = json.loads(Path(a.present).read_text())['hands']; ev = []
+    for e in P['events']:
+        ev.append(e)
+        if e['kind'] == 'finger':
+            h = present_hand(e['fingers']); tg = pr[str(h)]['target']
+            ev.append(dict(ci=e['ci'], clip=e['clip'], kind='aim', t=e['t'], hand=h, target=tg, present=True, shuffle=dict(hand=h, target=tg)))
+    P2 = dict(P, events=ev, n_events=len(ev), present_from=a.plan, present_rule='one aim, present_hand'); Path(a.out).write_text(json.dumps(P2)); print('PLAN1', len(P['events']), '->', len(ev))
+
+
 def plan(a):
     P = json.loads(Path(a.plan).read_text()); pr = json.loads(Path(a.present).read_text())['hands']; ev = []
     for e in P['events']:
@@ -65,7 +96,7 @@ def evaluate(a):
         if e['kind'] == 'finger' and not e.get('present'): by.setdefault(e['ci'], []).append(e)
     res = {}
     for spec in a.specs:
-        lab, d = spec.split('=', 1); hi, ang = [], []
+        lab, d = spec.split('=', 1); hi, ang, hip, angp = [], [], [], []
         for f in sorted(Path(d).glob('*.npy'), key=lambda p: int(p.stem)):
             ci = int(f.stem); y = np.load(f); n = len(y)
             if ci not in by: continue
@@ -77,10 +108,12 @@ def evaluate(a):
                     hi.append(float((g['wrist'][f0:f1, h, 2] >= g['shoulder'][f0:f1, h, 2] - RAISE).mean()))
                     nrm = np.cross(g['index_base'][f0:f1, h] - g['wrist'][f0:f1, h], g['third_base'][f0:f1, h] - g['wrist'][f0:f1, h])
                     c = np.abs(nrm[:, 0]) / np.maximum(np.linalg.norm(nrm, axis=-1), 1e-9); ang.append(float(np.median(np.degrees(np.arccos(np.clip(c, 0, 1))))))
-        grp = lab.rsplit('_s', 1)[0]; res.setdefault(grp, dict(hi=[], ang=[]))
-        res[grp]['hi'] += hi; res[grp]['ang'] += ang
+                    if h == present_hand(e['fingers']): hip.append(hi[-1]); angp.append(ang[-1])
+        grp = lab.rsplit('_s', 1)[0]; res.setdefault(grp, dict(hi=[], ang=[], hip=[], angp=[]))
+        res[grp]['hi'] += hi; res[grp]['ang'] += ang; res[grp]['hip'] += hip; res[grp]['angp'] += angp
     out = {k: dict(hand_raised_share_mean=float(np.mean(v['hi'])), events_hands=len(v['hi']), events_hands_raised_ge80=float(np.mean(np.array(v['hi']) >= .8)),
-                   palm_forward_angle_median=float(np.median(v['ang']))) for k, v in res.items()}
+                   palm_forward_angle_median=float(np.median(v['ang'])), present_hand_raised_share_mean=float(np.mean(v['hip'])),
+                   present_hand_raised_ge80=float(np.mean(np.array(v['hip']) >= .8)), present_hand_palm_angle_median=float(np.median(v['angp']))) for k, v in res.items()}
     for k, v in out.items(): print(k, json.dumps({kk: round(vv, 3) for kk, vv in v.items()}))
     Path(a.out).write_text(json.dumps(out, indent=1))
 
@@ -89,8 +122,10 @@ def main():
     ap = argparse.ArgumentParser(); sub = ap.add_subparsers(dest='cmd', required=True)
     t = sub.add_parser('target'); t.add_argument('--out', required=True); t.add_argument('--view', default=V); t.add_argument('--n-items', type=int, default=4000)
     p = sub.add_parser('plan'); p.add_argument('--plan', required=True); p.add_argument('--present', required=True); p.add_argument('--out', required=True)
+    w = sub.add_parser('wrist'); w.add_argument('--out', required=True); w.add_argument('--view', default=V); w.add_argument('--n-items', type=int, default=4000)
+    p1 = sub.add_parser('plan1'); p1.add_argument('--plan', required=True); p1.add_argument('--present', required=True); p1.add_argument('--out', required=True)
     e = sub.add_parser('eval'); e.add_argument('--plan', required=True); e.add_argument('--out', required=True); e.add_argument('specs', nargs='+')
-    a = ap.parse_args(); dict(target=target, plan=plan, eval=evaluate)[a.cmd](a)
+    a = ap.parse_args(); dict(target=target, plan=plan, eval=evaluate, wrist=wrist, plan1=plan_one)[a.cmd](a)
 
 
 if __name__ == '__main__':
