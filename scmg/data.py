@@ -99,6 +99,7 @@ class View:
         self.q = np.load(v / 'train_q.npy', mmap_mode=mode)
         # frames inside retargeting jumps (BEAT2 only, scripts/glitch_audit.py; jump frame +-1) are excluded from losses
         gm = Path(P('/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/glitch-audit/GLITCH_MASK.npy'))
+        if (v / 'GLITCH_MASK.npy').exists(): gm = v / 'GLITCH_MASK.npy'   # 11-08: a derived view (data-v36_1-tail) carries its own row-aligned mask
         self.glitch = np.load(gm, mmap_mode='r') if (gm.exists() and os.environ.get('SCMG_NO_GLITCH') != '1'
                                                      and EMBODIMENT == 'ex002') else None   # data ablation switch; EX002 rows only
         if self.glitch is not None and len(self.glitch) != len(self.q):
