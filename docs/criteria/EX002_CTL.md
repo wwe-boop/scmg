@@ -910,3 +910,16 @@ audit pass.
   - Registered, never run: module 6 (conditional on 5b failing).
   - Total: 24 designs / variants tried or started (18 with a verdict). Passing every gate on its base: module 5b (+ module 2) on
     sibag-s2 only.
+9c'' quick lane (disclosed; clips 0 and 1, seed 0; same subset as 9c'; offline / psync). The default 9c' path is bitwise unchanged
+(clip 0 vs the 9c' quick-lane output).
+
+| row | STG gain | angle (deg) | apex-in-hold | release dense med / p95 / max | release sparse med / p95 / max | arm ramp |
+|---|---|---|---|---|---|---|
+| m9cp | +0.314 / +0.234 | 11.4 / 13.0 | 0.17 / 0.17 | 30.0 / 85 / 92; 34.3 / 87 / 164 | 31.3 / 79 / 103; 29.4 / 50 / 58 | 0.033 / 0.053 |
+| m9cpT | +0.332 / +0.268 | 11.0 / 8.6 | 0.26 / 0.30 | 15.2 / 42 / 43; 13.0 / 46 / 57 | 18.8 / 38 / 47; 11.9 / 25 / 36 | 0.019 / 0.020 |
+| m9cpTT | +0.344 / +0.255 | 10.8 / 11.0 | 0.26 / 0.26 | 12.7 / 42 / 43; 12.9 / 46 / 57 | 17.5 / 38 / 47; 13.4 / 27 / 36 | 0.016 / 0.020 |
+
+- Release T, median Tout: m9cp 0.69 s; T-only 0.84 s (23 % at the 1.0 s cap); T + taper 0.84 s (15 % at the cap).
+- Unchanged across the three rows: presenting hand raised 1.00, palm 2 deg, finger hit 1.0, executability 1.0, finger ramp 0.013,
+  both liveliness guards PASS, (i) and (ii) unchanged within 1 (2-clip FGD is not meaningful in absolute terms).
+- Hold wrist speed: 0.13 / 0.11 m/s (T-only); 0.105 / 0.098 m/s (T + taper); pool 0.28.
