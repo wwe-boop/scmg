@@ -101,3 +101,7 @@ or the sealed sets.
   and the 6000 steps are unchanged.
 - The same gates apply, computed with the v2 target definition: S1 >= 0.60 and S2 >= 0.60. One pre-stated revision (2.4 s)
   is allowed. If that also fails: negatives row, and SemREPA stops at the teacher.
+
+## Result of teacher v2 (11-09 02:0x)
+S1 0.581 (1.6 s) / 0.576 (2.4 s) < 0.60, so the gate FAILED; S2 0.745 / 0.699. As registered, SemREPA stops at the teacher
+(negatives row 60). Sanity files: CKPT/zehan/gesture-scmg/semrepa-1109/SANITY{,2}_w{80,120}.json.
