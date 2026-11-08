@@ -73,3 +73,20 @@ eval splices the executed prefix (projected U) up to f_i: every post-safety velo
 476) sits exactly at f_i (offset 0), and the layer's own stream stays <= 0.995 x vmax. The layer commits whole 16-frame chunks, so the
 chunk holding f_i was projected from U before the interruption: rule = the continuation enters the safety layer at the first chunk
 boundary >= f_i (safety_int_ex002.py). The raw rows are unchanged; the safe rows are re-run.
+RESULT 2026-11-08 10:2x, base enc-s0 (eval-enc-s0; raw rows EVAL.json of the first run, safe rows EVAL_safe.json of the fixed
+chain; 476 dev interruptions; human ref = the 757-tail set; continuation enters the safety layer at the next chunk boundary: median
+added delay 7 frames = 140 ms, mean 7.3, max 15; yield / latency are computed on the executed stream, so they include it):
+  sanity: GT unsafe 1.3 %; B2 yield3d 100 %; FRONT 0 % (height 94 %); B1 0 %; RKD human half-split floor 0.142
+  raw    B3 yield3d 32.4 % v3 31.3 % RKD 0.525 unsafe 56.5 % | R0causal 98.1 % / 5.9 % / 0.542 / 43.3 % | Funnel 91.5 % / 40.8 % / 0.586 / 38.5 %
+  safe   B3 31.6 % / 8.8 % / 0.510 / 0.0 % | R0causal 98.2 % (latency 0.60 s) / 10.3 % / 0.566 / 0.0 % | Funnel 91.1 % (1.19 s) / 12.0 % / 0.555 / 0.0 %
+Rule (09:1x addendum): R0causal fails v3 (10.3 % > 10 %), Funnel fails v3 (12.0 %); neither qualifies -> no selection, both reported.
+The safety layer removes every unsafe frame (0.0 % WBC / position / velocity on all three rows) and lowers B3 / Funnel abruptness,
+but raises R0causal's v3 from 5.9 % to 10.3 % (its retraction is braked / re-timed by the projection).
+## Module ISC (pre-registered 11-08 10:2x, before any run): interrupt-aware safety commit
+At the interruption the safety layer re-plans the committed chunk from f_i instead of executing it to the boundary: state = the
+executed frames up to f_i - 1 (history) and the still-unexecuted committed frames f_i .. boundary - 1 followed by the committed braking
+tail (the recursive-feasibility candidate: already verified, consistent with the history, ending at rest); the frames f_i ..
+boundary - 1 are projected again with the post method's continuation as targets (a partial chunk, same QP, same exact checks,
+cut cap 8, qdldl, tail_smooth 1e-3, predictive rows / carry off = 3c-4b), then normal chunks resume on the 16-frame grid. The
+feasibility argument of 3c-4 holds (the candidate admits every relaxed row), so no fallback is introduced. Rows: B3 / R0causal /
+Funnel safe with ISC; the same rule (yield3d >= 90 %, v3 <= 10 %, unsafe <= 1 %, then RKD-post); disclosure: the numbers above.
