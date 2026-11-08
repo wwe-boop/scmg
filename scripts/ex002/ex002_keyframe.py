@@ -125,7 +125,7 @@ def insert9b(yi, qk, h, t, kind, a95):
     return dict(t_in0=f_in / FPS, t_hold=(f_h0 / FPS, f_h1 / FPS), t_release=f_out / FPS, Tin=Tin, Tout=Tout)
 
 
-def insert9c(yi, Q, h, t, kind, a95):
+def insert9c(yi, Q, h, t, kind, a95, rsearch=False):
     """9c: as insert9b, but the hold is a pose sequence Q [n, 34] (aim: replayed human hold; present: constant). Ramp-in ends in Q[0] with
     its velocity / acceleration, release starts from Q[-1] with its velocity / acceleration (finite differences of Q)."""
     T = len(yi); jj = ARM[h]; a, b = HOLD[kind]; f_h0 = max(1, int(round((t - a) * FPS))); f_h1 = min(T - 2, int(round((t + b) * FPS)))
@@ -137,6 +137,13 @@ def insert9c(yi, Q, h, t, kind, a95):
     Tin = float(np.clip(np.sqrt(5.77 * np.max(np.abs(Q[0] - yi[f_h0, jj]) / a9)), 0.3, 0.8))
     Tout = float(np.clip(np.sqrt(5.77 * np.max(np.abs(Q[-1] - yi[f_h1, jj]) / a9)), 0.3, 0.8))
     f_in = max(1, f_h0 - int(round(Tin * FPS))); f_out = min(T - 2, f_h1 + int(round(Tout * FPS)))
+    if rsearch:                                                       # 9c'': smallest T in [0.3, 1.0] s whose release quintic keeps every
+        for m_ in range(int(round(0.3 * FPS)), int(round(1.0 * FPS)) + 1):   # arm joint's peak |acc| <= its train a95 (else 1.0 s)
+            fo = min(T - 2, f_h1 + m_); pp, vv, aa = state(yi[:, jj], fo); mm = fo - f_h1
+            if mm < 2: break
+            seg = quintic(Q[-1], v[-1], acc[-1], pp, vv, aa, mm / FPS, mm + 1)
+            if np.max(np.abs(np.diff(seg, n=2, axis=0)) * FPS ** 2 / a9[None]) <= 1.0: break
+        f_out = fo; Tout = (f_out - f_h1) / FPS
     p0, v0, a0 = state(yi[:, jj], f_in); p1, v1, a1 = state(yi[:, jj], f_out)
     if f_h0 > f_in: yi[f_in:f_h0, jj] = quintic(p0, v0, a0, Q[0], v[0], acc[0], (f_h0 - f_in) / FPS, f_h0 - f_in)
     yi[f_h0:f_h1 + 1, jj] = Q
@@ -149,10 +156,13 @@ def insert9c(yi, Q, h, t, kind, a95):
 KEYS9C = 3                                                            # 9c: IK every 3rd hold frame (+ the last), cubic in between
 
 
-def hold9c(ik, qk, h, target, dw, it=5):
+def hold9c(ik, qk, h, target, dw, it=5, taper=0.0):
     """per-key IK keeping the forearm ray on the target while the wrist follows wk + dw[tau] (dw [n, 3], human replay)."""
     from scipy.interpolate import CubicSpline
     g = ik.geo(torch.as_tensor(qk, dtype=torch.float64)); wk = g['wrist'][h].numpy(); n = len(dw)
+    if taper > 0:                                                    # 9c'': the replayed velocity fades to zero over the last `taper` s
+        k = min(n - 1, int(round(taper * FPS))); vel = np.diff(dw, axis=0); u = (np.arange(n - 1) - (n - 1 - k)) / k
+        vel = vel * (1 - mj(u))[:, None]; dw = np.concatenate([dw[:1], dw[:1] + np.cumsum(vel, 0)])
     keys = sorted(set(list(range(0, n, KEYS9C)) + [n - 1])); Qk = []; q = np.asarray(qk, np.float32); bad = 0; perr = []
     for k in keys:
         if k == 0: Qk.append(q); perr.append(0.); continue
@@ -209,9 +219,9 @@ def insert(a):
                 if kind == 'aim':
                     i_ = pool_index(e['clip'], e['t'], len(pdw)); dw = np.array(pdw[i_][:nh], np.float64)
                     if int(ph[i_]) != h: dw[:, 1] = -dw[:, 1]                 # mirror the lateral axis for the other hand
-                    Q, hi = hold9c(ik, qk, h, tg, dw); rec.update(hi, pool_i=i_)
+                    Q, hi = hold9c(ik, qk, h, tg, dw, taper=a.taper); rec.update(hi, pool_i=i_)
                 else: Q = np.repeat(np.asarray(qk)[None], nh, 0)
-                tm = insert9c(yi, Q, h, e['t'], kd, a95)
+                tm = insert9c(yi, Q, h, e['t'], kd, a95, rsearch=a.release_search)
                 if tm: rec.update(tm); spans.append((tm['t_in0'], tm['t_release']))
                 continue
             if a.version == '9b':
@@ -288,6 +298,8 @@ def main():
     i = sub.add_parser('insert'); i.add_argument('--given', required=True); i.add_argument('--plan', required=True); i.add_argument('--out', required=True)
     i.add_argument('--mode', default='given', choices=['given', 'shuffle']); i.add_argument('--shard', default='0/1'); i.add_argument('--version', default='9', choices=['9', '9b', '9c'])
     i.add_argument('--hold-pool', default=None, help='9c: HOLD_POOL_TRAIN.npz'); i.add_argument('--pool', default='point', choices=['point', 'control'])
+    i.add_argument('--release-search', action='store_true', help="9c'': release T = smallest in [0.3, 1.0] s with peak arm acc <= a95")
+    i.add_argument('--taper', type=float, default=0.0, help="9c'': fade the replayed hold velocity to zero over the last TAPER s")
     r = sub.add_parser('release'); r.add_argument('--plan', required=True); r.add_argument('--gt-dir', required=True); r.add_argument('--out', required=True); r.add_argument('specs', nargs='+')
     a = ap.parse_args(); dict(insert=insert, release=release)[a.cmd](a)
 
