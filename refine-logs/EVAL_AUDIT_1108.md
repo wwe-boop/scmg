@@ -148,3 +148,5 @@ Status legend: PASS = verified with evidence (commit or number given); FAIL = sh
 ## Pass log
 - Pass 1 (15:00): new issues D5, D12, E3, F1, F2, A3 (single assert script), B3, C3, D1–D3, D8–D10 OPEN. Next pass after these are closed.
 - Pass 2 (17:05): H1–H4. Pass 3 (18:10): video check found V1 (palm sign bug, fixed) and E1b (prefix, resolved). Pass 4 (19:30): no new issue, audit passed.
+- 11-09 02:35 addendum: pair_win on a 100-clip G1 dev subset FAILS its sanity check (mismatched-GT 0.583 vs 0.5 ± 0.03; GT 0.714). New reading rule: pair_win is read only on the full dev set, and only with its sanity rows passing; never on quick-lane subsets.
+
