@@ -865,3 +865,48 @@ audit pass.
 - T + taper (row m9cpTT): as T-only, and the replayed wrist displacement's velocity fades to zero over the last 0.2 s of the hold with a
   minimum-jerk weight, so the release starts nearly at rest. (--taper 0.2)
 - Everything else as 9c' (same pool, same IK, same gates). Defaults off; the 9c / 9c' paths stay bitwise.
+## Evaluation audit, B items (2026-11-08 pass 1-2; dev / train only)
+- A5, target leakage. The plan enters inference only through the control tokens:
+  - bench_ex002.py infer loads the plan (lines 77-79) and uses it solely in cond.update(ctl_t / ctl_type / ctl_v / ctl_vm) and
+    ctl_lookahead (lines 89-92 and 101).
+  - The val View is built without ctl_tokens, so no CTL.json label reaches inference, and no dev labels are ever written
+    (ex002_ctl_tokens.py writes train only).
+  - The text / audio / speaker conditions come from the dataset and do not depend on the plan.
+  - The no-token runs are bitwise the base (IDENTITY, 6/6).
+  - Post-processing rows (5b / 5c blend, override, IK insertion) use the command by design.
+- B3, inference-seed SD (3 seeds, offline / psync):
+  - STG gain: tok5c 0.0133 / 0.0111 (per seed 0.095 0.088 0.114 / 0.094 0.094 0.075); m9b 0.0143 / 0.0062.
+  - count hit: SD 0 (1.000 every seed, override).
+  - apex angle: tok5c 0.91 / 0.29 deg; m9b 0.67 / 0.46 deg; none 0.18 / 1.75 deg.
+- C3, human STG reproduction (train BEAT2 deictic events, 1060; IN-SAMPLE for APEX.json):
+  - Score_a vs the rule apex 0.975; vs the annotated time 0.796.
+  - Score_b at the detected apex against a hindsight target on the GT ray at the rule apex 0.982; STG 0.965.
+  - Not comparable with the paper's MM-Conv GT values (Score_b 0.767, Score_a 0.941, STG 0.720): BEAT2 has no real targets, and the
+    detector was trained on these events. Our STG implementation is therefore checked only for internal consistency (detector timing,
+    ray geometry), not against the paper's human level.
+- D3, STG-gain cheating controls (enc-s0 none stream, offline seed 0, plan 1112 dense):
+
+  | control | STG | gain vs none (0.2585) | STG vs shuffled commands | given − shuffled |
+  |---|---|---|---|---|
+  | (i) right arm statically pointing at one random target the whole clip | 0.2988 | +0.040 | 0.2830 | +0.016 |
+  | (ii) fixed high arm pose at every aim command (9b ramps) | 0.2881 | +0.030 | 0.2733 | +0.015 |
+  | (iii) commanded arm pointing at a RANDOM target at every command | 0.3085 | +0.050 | 0.2792 | +0.029 |
+  | m9b (same seed / clips) | 0.3685 | +0.110 | 0.2736 | +0.095 |
+
+  None reaches the +0.10 gate, but the cheats collect 30-50 % of it. The shuffle-follow margin (given − shuffled) separates them
+  (+0.015 to +0.029 vs +0.095), so the STG gain must always be read with the shuffle check.
+- D12, release continuity: ex002_keyframe.py release writes median, p95 and max by default (max added in 366aed0; every table since
+  bd2ad8b reports all three).
+- G2, APEX.json data vs dev: the 1060 train deictic events used to train APEX.json share no stem with any dev item or clip (overlap 0).
+- Label provenance: see "Label provenance" above (hindsight relabels).
+- H2, designs tried for the EX002 control table (to date):
+  - Training lanes: 4 (lanes 1-3 fail quality; lane 4 true freeze fails quality unblended).
+  - Inference / post-processing modules with a verdict: 2 (override, adopted), 5 (fail STG), 5b (PASS on sibag-s2 incl. fresh-plan
+    confirmation), port to czm (fail STG), 7, 8 (czm; fail), 7b, 8b (sibag; fail), 9 (sibag; primary pass, side gates fail),
+    9b (enc; fail), 5c (enc; fails the 5b gates like 5b; fixes the dense cusps), m9b5c (fail, = 9b).
+  - Decoder side line: r3d arms A / B (fail).
+  - Started, no verdict yet: 9c (insert running), 9c' (quick lane; full run held), 9c'' T-only and T + taper (quick lane), 10a and 10b
+    (queued).
+  - Registered, never run: module 6 (conditional on 5b failing).
+  - Total: 24 designs / variants tried or started (18 with a verdict). Passing every gate on its base: module 5b (+ module 2) on
+    sibag-s2 only.
