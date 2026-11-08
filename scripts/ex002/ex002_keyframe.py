@@ -208,7 +208,7 @@ def release(a):
         grp = lab.rsplit('_s', 1)[0]; res.setdefault(grp, dict(v=[], j=[])); res[grp]['v'] += vals; res[grp]['j'] += jover
     out = {'_ref': res.pop('_ref')}
     for k, vv in res.items():
-        v = np.array(vv['v']); out[k] = dict(events=len(v), median=float(np.median(v)), p95=float(np.percentile(v, 95)), share_above_human_p95=float((v > p95).mean()),
+        v = np.array(vv['v']); out[k] = dict(events=len(v), median=float(np.median(v)), p95=float(np.percentile(v, 95)), max=float(v.max()), share_above_human_p95=float((v > p95).mean()),
                                              arm_ramp_jerk_over_limit=float(np.mean(vv['j'])) if vv['j'] else None)
         print(k, json.dumps({kk: round(vv, 3) for kk, vv in out[k].items()}))
     print('REF', out['_ref']); Path(a.out).write_text(json.dumps(out, indent=1))
