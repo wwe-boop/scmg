@@ -782,3 +782,34 @@ tok5b / m9b / m9b5c; front + 45 deg; frames at the command time in aim0.f.png / 
    - Training: the ctl_ loss curves are the same within noise (steps 1800-2000: ctl_ray 0.1015 vs 0.1008, ctl_finger 0.2216 vs 0.2221).
    - self_force_scope: both control trainings used self_force_p = 0 (self_forced 0.0 in every log line), so the 'encoders' scope never
      acted on the ctl_ modules. The scope only shaped the enc-s0 base itself.
+## Module 10 (pre-registered 2026-11-08 ~14:30, before any module-10 run; coordinator approved the draft with two additions)
+Base enc-s0 + ctlenc, decoder r3, 5c blend, plans 1112, seeds 0-2, offline AND psync. Reference row tok5c (m5c-enc).
+(a) Override shapes from a human library.
+  - Library: tokens/HAND_LIBRARY_TRAIN.npz (scripts/ex002/hand_library.py), TRAIN split only. For each hand h and count n (0..3): up to
+    2000 frames (seed 1115, every 5th train frame) whose frozen finger-count detector count (ex002_ctl.finger_counts) is n; stored as
+    the 8 finger joints of that hand.
+  - Each finger command and hand draws one entry by sha1("<clip>:<t:.3f>:10a:<h>") mod the library size and uses it in place of the
+    single HAND_SHAPES template. Hold 0.4 s and 0.3 s minimum-jerk ramps are unchanged (finger_override --fo-library; default off).
+  - Circularity: the library is filtered by the same detector that scores the finger-hit gate, so that gate is close to guaranteed for
+    (a) and is not evidence for it.
+  - Independent check, reported: per finger, the flexion joints of the sampled shape are classified extended or curled by joint angle,
+    by the nearest of the HAND_SHAPES all-extended (h_3) and all-curled (h_0) template values for that finger (Euclidean over the
+    finger's flexion joints), not by the detector's curl-fraction threshold. Agreement = share of shapes whose angle-classified
+    extended count equals n. Reported per (h, n) over the library and over the sampled events.
+(b) Control modules trained longer on enc-s0.
+  - Continue ctlenc (step 2000) with the same recipe (true freeze --train-only ctl_, self_force_p 0, lr 1e-4, 200-step warmup) for +1000
+    steps (= 3000).
+  - Quick check: raw (unblended) STG gain at 3000 vs 2000 on all 43 dev clips, offline, seed 0, dense plan 1112. The none run is the
+    frozen base, bitwise the m9b-enc none_s0. The 2000-step given run is m9b-enc gen/d_given_s0.
+  - Continue to 4000 steps only if the gain at 3000 exceeds 2000 by ≥ +0.005. Otherwise (b) stops at the quick check and is reported
+    as a negative.
+  - The final (b) checkpoint (3000 or 4000) regenerates given / shuffle runs (offline + psync, seeds 0-2, plans 1112).
+- Rows: tok5c (reference), tok10a, and, if (b) continues, tok10b and tok10ab. All with 5c, the minimum-jerk override and the same plans.
+- Gates (the original 5b gates, per protocol, against enc-s0 none on the same masks):
+  - STG(given) − STG(none) ≥ +0.10 on the dense plan, with the shuffle follow check (bootstrap CI reported);
+  - finger hit ≥ 0.9 (for (a) not evidence, see above);
+  - quality (i) sparse outside ±1 s and (ii) sparse whole clip ≤ C + δ;
+  - executability after CBF 100 %.
+- Report-only: the inside / outside / swap split of (ii) (scripts/ex002/diag/ii_split.py); liveliness guards; finger ramp jerk; the
+  independent shape check.
+- Adoption: a row that passes every gate becomes the token path for 9c and later modules; otherwise a negatives row.
