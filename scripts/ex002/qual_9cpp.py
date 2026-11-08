@@ -35,7 +35,7 @@ def main():
                 (('token-only (5c)', 'tok5c/d_given_s0', XF + '/m5c-enc/offline'), ('9c (registered)', 'm9c/d_given_s0', XF + '/m9c-enc/offline'),
                  ("9c'' (T + palm fix)", 'm9c/d_given_s0', XF + '/m9cpp-enc/offline')))
         for lab, d, root in rows:
-            y = np.load(f'{root}/{d}/{ci}.npy')[f0:f1]; tp = O / 'traj' / f"{name}__{d.replace('/', '_')}.npz"; np.savez(tp, Q37=q37(y), fps=50.0)
+            y = np.load(f'{root}/{d}/{ci}.npy')[f0:f1]; tp = O / 'traj' / f"{name}__p{len(panels)}_{d.replace('/', '_')}.npz"; np.savez(tp, Q37=q37(y), fps=50.0)
             if e['kind'] == 'aim': fr, ref = prim(y, target=e['target'], hand=e['hand'], win=(t - 0.4, t + 0.9), upper=upper)
             else:
                 hh = 0 if e['fingers'][0] > e['fingers'][1] else 1; fr, ref = prim(y, counts=e['fingers'], win=(t - 0.7, t + 0.7), upper=upper)
