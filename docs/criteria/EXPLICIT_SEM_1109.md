@@ -205,3 +205,12 @@ YOU 0.98, POINT 0.90, BIG 0.67, SMALL 0.33 on this seed, identical to before). S
   (wrist >= shoulder - 0.20 m) AND its signed palm angle is <= 45 deg; median and IQR (before / amendment 5 / amendment 6).
 - Quick lane: seed 0, TTS-sync, 43 recordings, 18 NUMBER commands (as amendment 5). Then the "three" and "first" close-ups are
   re-rendered with the render-side additions (COMMAND overlay, window start in the title, renderer-input sha256 == scored file).
+
+## Amendment 6 RESULT (11-09 06:58; 43 recordings, seed 0, TTS-sync, 18 NUMBER commands; release 20261109-065407-expl-a6-1109)
+NUMBER gates: count hit 1.00; palm signed median 3.08 deg (palm-forward share 0.89); raised share 1.00 -> PASS.
+Readable duration (report; seconds within [t - 1, t + 2] with the hand raised and the palm <= 45 deg), median [IQR]: before 0.00
+[0.00, 0.00]; amendment 5 1.44 [1.40, 1.50]; amendment 6 1.83 [1.77, 1.92].
+Other categories unchanged. Side gates: FGD v2 102.81 (a5 103.27, none 106.98); FKD 1.461; liveliness PASS; executability after CBF
+100 % (finger-ramp frames over the jerk limit 1.8 %, measured on the amendment-5 ramp frames).
+Note: shifting the override centre to t + 0.4 changes the sha1 key of the human-library hand shape, so a6 can pick a different
+library exemplar than a5 for the same command.
