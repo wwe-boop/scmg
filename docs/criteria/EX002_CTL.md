@@ -1083,3 +1083,42 @@ Report-only:
 - hold-window angle 0.64 / 0.67 deg; apex-in-hold 0.065 / 0.073 (m9cctl 0.096 / 0.117);
 - hold wrist speed 0.086 / 0.082 m/s (hindsight pool 0.160; m9cctl 0.114 / 0.113, pool 0.260).
 VERDICT: 9c FAILS (angle 26.5 / 25.3, signed palm, (ii)). Its control row passes the angle (23.8 / 22.8).
+## Module 9c'' result (registered 0e7edc4 + palm fix 2ebb4d1, decision 13e04fb; insertion dlcleb3ezgwlewt4, eval on speech_server GPU1;
+## LANE_DONE 20:49; real-deictic pool, T-only release search, palm fix; enc-s0 + ctlenc, 5c input, plans 1112, seeds 0-2)
+Rows: tok5c (reference) / m9c = 9c''. The linked m9cctl row is the unfixed 9c control (reference only). Offline / psync.
+PRIMARY:
+- angle 28.7 / 27.5 deg (gate 25): FAIL (9c 26.5 / 25.3; tok5c 32.7 / 34.4).
+- elevation above shoulder +4.4 / +3.5 (gate ±5): PASS.
+- STG gain +0.109 [+0.080, +0.140] / +0.102 [+0.071, +0.136] (gate +0.10): PASS on the mean, AT the gate (CI includes values below).
+  Shuffle follows: 0.358 vs 0.250 and 0.369 vs 0.248; margin +0.108 / +0.122, above the D3 cheat controls (+0.015 to +0.029).
+- count hit 1.0; presenting hand raised 0.999 / 0.998; signed palm 3.5 / 3.6 deg, forward share 0.998 / 0.994: PASS.
+SIDE:
+- (i) 86.95 / 107.00: PASS.
+- (ii) 80.94 / 101.21 (gates 90.15 / 114.34): PASS. ii_split: inside-window FGD 85.6 / 105.8 vs none 89.2 / 115.7 and tok5c 112.0 / 148.1;
+  outside = none.
+- executability 100 %; finger ramp 0.037 / 0.045 (= tok5c); arm ramps 0.013 / 0.012 (tok5c 0.225): PASS.
+- liveliness, sparse, both guards: PASS (protocol still 0.019 / 0.024, speed 0.323 / 0.327, amplitude 0.098 / 0.098). Dense report-only
+  FAIL.
+- release median / p95 / max: dense 14.4 / 47 / 178 and 14.7 / 47 / 211; sparse 14.9 / 31 / 147 and 15.7 / 32 / 174 (median PASS).
+  Tout median 0.78 s, 20 / 19 % at the 1.0 s cap.
+Report-only:
+- present wrist z − shoulder z −0.055 / −0.053 m (IQR −0.071 to −0.039 / −0.067 to −0.039), i.e. 6.5 / 6.7 cm above the registered −0.12;
+  IK residual 0.44 / 0.46.
+- rejected aim 2.0 / 2.4 %, present 0.4 / 0.3 %.
+- hold-window angle 0.77 / 0.80 deg; apex-in-hold 0.090 / 0.092; hold speed 0.128 / 0.122 m/s (deictic pool 0.28).
+STG split (the coordinator's hypothesis):
+- No aim on the dense plan has a present HOLD within ±1 s (commands ≥ 1.5 s apart, hold ±0.4 s), and every aim overlaps some present
+  insertion span, so those splits are degenerate.
+- Split used instead: a present performed by the SAME hand within 2 s (9c'' KEYFRAMES; 1152 of 1668 aim events):
+
+  | row | dense, same-hand present near (STG) | dense, other | sparse (isolated aims) |
+  |---|---|---|---|
+  | none | 0.253 / 0.258 | 0.265 / 0.264 | 0.253 / 0.245 |
+  | tok5c | 0.362 / 0.350 | 0.341 / 0.340 | 0.323 / 0.305 |
+  | 9c | 0.383 / 0.375 | 0.460 / 0.492 | 0.493 / 0.503 |
+  | 9c'' | 0.305 / 0.287 | 0.502 / 0.529 | 0.530 / 0.543 |
+
+- Hypothesis confirmed: next to a same-hand present, 9c'' keeps only +0.05 / +0.03 of STG gain over none. Elsewhere, and on the sparse
+  plan, it reaches +0.24 to +0.30 (the highest of all rows).
+VERDICT: 9c'' FAILS the pointing-angle gate (28.7 / 27.5) and passes every other primary and side gate, including (ii) and the signed
+palm. The angle and STG shortfall concentrates on aims next to a same-hand present (dense plan), which is what 9d's arbitration targets.
