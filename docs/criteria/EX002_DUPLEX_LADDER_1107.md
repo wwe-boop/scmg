@@ -68,3 +68,35 @@ L2 diagnostic (not a gate; the rest ramp on the BASE enc-s0 continuation without
   L2diag + ISC yield3d 100 % (0.36 s) v3 1.1 %  RKD-post 1.368 unsafe 0.0 %
 The 9b duration rule (0.3-0.8 s) gives a retraction far faster than the human tails (half-B median yield 1.22 s): RKD-post 1.37 vs
 R0causal + ISC 0.518; with ISC it passes yield / v3 / unsafe but loses on RKD.
+
+## L2d = design D3 (pre-registered 11-08 20:5x from refine-logs/FABLE_DESIGN_1108.md D3, before any run; supersedes L2b / L2c)
+Kinematically conditioned rest insertion (rest_ramp_ex002.py --version l2d; default = the L2 code path, bit-identical). Post-processing
+on the continuation (enc-s0; L1 when available), executed prefix = U as in L2; head (q34 2-3) and fingers (18-33) keep the continuation.
+ 1 End pose (conditioned): E_A = the half-A human tails (tails/seg_halfA; half B stays the reference): per tail the 12-D end feature
+   of yield_v4 (wrists + elbows relative to the hip, mean of the last 25 frames of [off, off + 107)) and the 34-joint mean pose of those
+   frames. At an interruption f: the 12-D feature of the executed pose at f; the k = 5 nearest E_A entries; one drawn with the seed
+   int(sha1(f"{ci}:{f}")[:8], 16). Waist (0-1) and arms (4-17) are set from its 34-joint pose.
+ 2 Duration (conditioned): half-A tail duration T_A = the start of the first quiet run (yield_v4 it2 quiet threshold v75 0.397 m/s,
+   25 frames; a tail without one is excluded from the fit) regressed (isotonic, increasing) on the wrist travel d = mean over the two
+   wrists of |end wrist - wrist at the speech offset| (m); T = fit(d_event) + a residual drawn from the half-A residuals (same seed),
+   clipped to [0.5, 2.0] s. Fixed before any model row: if the half-A R^2 of the fit is < 0.1, T is drawn from the unconditional half-A
+   T_A distribution instead (logged with R^2).
+ 3 Brake-then-ramp start: from the executed state at f (position exact, velocity from the 5-frame moving average as L2) every joint of
+   waist + arms decelerates with a raised-cosine velocity profile v(t) = v0 (1 + cos(pi t / t_b)) / 2 (acceleration 0 at both ends),
+   t_b = max_j pi |v0_j| / (2 a_j) clipped to [0.06, 0.5] s, a_j = the train a95 table (ARM_ACC_P95.json) for the arm joints and the
+   EX002RM acceleration limit x 0.5 for the waist; then the quintic (zero end velocity / acceleration) from the braked state to the end
+   pose over max(T - t_b, 0.3) s; hold the end pose to the window end.
+ 4 Deployed chain afterwards: 3c-4b + ISC (as every interruption row).
+Controls (same seeds): (a) unconditioned end pose (uniform E_A draw) + the duration rule; (b) conditioned end pose + fixed T = 1.22 s;
+(c) quintic C2 start (the L2 start: position / velocity / acceleration matched, no brake) with conditioned pose and duration;
+(d) mismatched source: end pose = a 34-joint pose at a random time of a random train item (data-v36_1 train rows, same seed rule) --
+the hindsight-token hold pool stores displacement windows, not poses, so random-time train poses are the pose analogue of it.
+Quick lane (CPU, <= 5 min): the 60 interruptions of the first 5 dev recordings (ci 0-4), raw chain (no 3c-4b / ISC), half-B reference:
+RKD-post, v3, yield3d, outward drift (per wrist: max over [f, f + 15] of the displacement along the unit wrist velocity at f - 1;
+max of the two wrists; median / p95 / max), for l2d and (a)-(d). KILL: l2d RKD-post >= 0.518 on this subset, or l2d v3 > 10 %.
+Full run (only after the coordinator's go): 476 dev interruptions, deployed chain, half-B reference: yield3d reported (not a sole gate),
+v3 <= 10 %, unsafe <= 1 %, RKD-post below R0causal + ISC (0.518) with the recording-clustered paired bootstrap 95 % CI excluding 0;
+withdrawal / activity components reported; end-pose 3-NN distance to the half-B end-pose set <= D90 on a share of events >= half B's
+own leave-one-out share; RKD-post without its end-height descriptor (kin feature 2) reported beside the full RKD; uninterrupted quality
+untouched (post-processing acts only after f); executability 100 %; reaction latency and outward drift (median / p95 / max) vs
+R0causal + ISC; controls (a)-(d) in the same table. Raw rows report v3 under the executed-U rule (primary) and the own-prefix rule.
