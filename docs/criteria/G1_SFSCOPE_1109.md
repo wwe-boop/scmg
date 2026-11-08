@@ -18,3 +18,12 @@ Source: refine-logs/FABLE_THEORY_1109.md §1.2 and main's queue item. G1 dev onl
 - Reported, not gated: still share and amplitude, stutter of enc vs sf0 and GT, dBA / dDiv / dJerk, and full vs sf0.
 - Pass -> the 3-seed DLC lane on main's go (the same hos dev protocol, 400 clips, 3 training seeds x per_clip 0 / 1),
   with "confirmed cross-platform" iff psync FGD <= sf0 within the seed range and the stutter at the sf0 level.
+
+## Quick-lane numbers: filed only (descoped by the user 11-09 02:2x; dlc23ffnvfw7kain finished 02:25)
+QUICK100 seed 0, official FGD offline / psync: sf0 (ctrl) 1.636 / 1.763; full 1.569 / 1.589; enc 1.594 / 1.751. czm2kws QUICK100
+range: offline [1.690, 1.712] -> widened to include sf0 [1.636, 1.712]; psync [1.733, 1.900]. Wrist speed (m/s) offline / psync:
+sf0 0.207 / 0.197, full 0.239 / 0.267, enc 0.210 / 0.306; GT 0.236. Still share psync: sf0 0.068, full 0.040, enc 0.015; GT 0.036.
+Stutter max / min, offline / psync: sf0 1.26 / 1.30, full 1.57 / 1.72, enc 1.30 / 1.30; GT 1.21.
+Read against the registered kills: Ka is not hit (enc's psync wrist ratio 1.29 x GT, above full's 1.13 x). Kb is not hit either:
+enc is inside the range on both protocols. Enc keeps the sf0-level stutter (full SF's is 1.57 / 1.72), but its psync FGD is
+worse than full's. No verdict and no follow-up (descoped).

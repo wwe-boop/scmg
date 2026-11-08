@@ -118,3 +118,10 @@ S1 0.581 (1.6 s) / 0.576 (2.4 s) < 0.60, so the gate FAILED; S2 0.745 / 0.699. A
   is therefore not sufficient on its own. A pass needs K1 together with the class-agnostic metrics: FGD within the range (K2),
   text use up (K3), and a liveliness wrist speed no more than 10 % below ctrl (here a gate, not only a flag). A pair_win-only
   gain is reported as "insufficient".
+
+## SemREPA-C quick lane: filed only (descoped by the user 11-09 02:2x; the DLC job dlc23ffnvfw7kain had already finished, 02:25)
+QUICK100, seed 0. pair_win sanity: GT 0.714, mismatched GT 0.583. |0.583 - 0.5| > 0.03, so the sanity row FAILS and pair_win is not
+reported, as registered. The 100-clip mismatched row is not at chance; 100 clips are too few for this check. FGD offline: ctrl
+1.636, semrepa 1.707. The czm2kws QUICK100 range is 1.690 / 1.711 / 1.712; widened to include ctrl it is [1.636, 1.712], so
+semrepa is inside. Wrist speed offline: ctrl 0.207, semrepa 0.191 m/s (-7.7 %), GT 0.236. Stutter max / min: ctrl 1.26,
+semrepa 1.37, GT 1.21. No verdict (descoped).
