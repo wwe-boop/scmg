@@ -1164,3 +1164,5 @@ tok10a = 5c + override with human-library shapes. Offline / psync:
 - Report-only: finger ramp frames over the jerk limit 0.046 / 0.057 (tok5c 0.037 / 0.045); protocol liveliness guard PASS.
 VERDICT (a): the library shapes remove the override's (ii) cost (92.25 → 88.02; 118.27 → 114.26) but leave the STG gain unchanged, so
 tok10a fails the 5b gate set on STG. Arm (b) (longer ctl training) is running.
+Module 10 (b) quick check: raw (unblended) STG gain, offline seed 0, dense plan 1112, 43 clips: step 2000 +0.106 [+0.078, +0.135], step 3000
++0.141 [+0.107, +0.176]. The rise is +0.034 ≥ +0.005, so (b) continues to 4000 (trained 22:24) and regenerates.
