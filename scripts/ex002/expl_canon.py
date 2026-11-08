@@ -190,6 +190,23 @@ def validate(a):
     Path(a.out).write_text(json.dumps(out, indent=1)); print(json.dumps(out, indent=1))
 
 
+def readable(a):
+    """amendment 6 report: per NUMBER command, seconds within [t - 1, t + 2] with the presenting hand raised (wrist >= shoulder -
+    0.20 m) AND its signed palm angle <= 45 deg (ex002_present conventions)."""
+    from ex002_present import geo_all, PALM_SIGN, RAISE, present_hand
+    P = [e for e in json.loads(Path(a.plan).read_text())['events'] if e['cat'] == 'NUMBER']; res = {}
+    for spec in a.specs:
+        lab, d = spec.split('=', 1); dur = []
+        for e in P:
+            y = np.load(Path(d) / f"{e['ci']}.npy"); g = geo_all(y); h = present_hand(e['fingers']); fe = int(round(e['t'] * FPS))
+            f0, f1 = max(0, fe - FPS), min(len(y), fe + 2 * FPS); w, s_ = g['wrist'][f0:f1, h], g['shoulder'][f0:f1, h]
+            nrm = np.cross(g['index_base'][f0:f1, h] - w, g['third_base'][f0:f1, h] - w)
+            cs = PALM_SIGN[h] * nrm[:, 0] / np.maximum(np.linalg.norm(nrm, axis=-1), 1e-9); ang = np.degrees(np.arccos(np.clip(cs, -1, 1)))
+            dur.append(float(((w[:, 2] >= s_[:, 2] - RAISE) & (ang <= 45.)).sum() / FPS))
+        res[lab] = dict(median_s=float(np.median(dur)), iqr_s=[float(np.percentile(dur, 25)), float(np.percentile(dur, 75))], n=len(dur))
+    Path(a.out).write_text(json.dumps(res, indent=1)); print(json.dumps(res, indent=1))
+
+
 def evaluate(a):
     """--plan / --none / every spec dir may be comma lists of equal length (one entry per seed): events are pooled over them and
     the bootstrap resamples recordings (all seeds of a recording together)."""
@@ -239,4 +256,5 @@ if __name__ == '__main__':
     k.add_argument('--self-chest', action='store_true', help='amendment 2 SELF variant (b): chest keyframe instead of the aim token')
     v = sub.add_parser('validate'); v.add_argument('--plan', required=True); v.add_argument('--gt', required=True); v.add_argument('--out', required=True)
     e = sub.add_parser('eval'); e.add_argument('--plan', required=True); e.add_argument('--none', required=True); e.add_argument('--out', required=True); e.add_argument('specs', nargs='+')
-    a = ap.parse_args(); {'plan': plan, 'keyframe': keyframe, 'validate': validate, 'eval': evaluate}[a.cmd](a)
+    r = sub.add_parser('readable'); r.add_argument('--plan', required=True); r.add_argument('--out', required=True); r.add_argument('specs', nargs='+')
+    a = ap.parse_args(); {'plan': plan, 'keyframe': keyframe, 'validate': validate, 'eval': evaluate, 'readable': readable}[a.cmd](a)
