@@ -176,3 +176,15 @@ Side gates (3-seed means):
 Report only: BIG wrist height relative to the shoulder (max in the window): none mean -0.19 m; given mean -0.05 m, max +0.06 m.
 The BIG keyframe brings the wrists to about shoulder height; it does not lift them clearly above it.
 Verdict: the canonical explicit-gesture row passes every gated category on TTS-sync and psync, with all side gates.
+
+## Amendment 5 (main 11-09 06:5x; registered before running): NUMBER presentation fix
+- Every NUMBER command also gets the 9c'' present keyframe with the palm fix (ex002_keyframe.py insert --version 9c --release-search
+  --palm-fix --fo-library HAND_LIBRARY_TRAIN.npz, NUMBER events only): the commanded hand raised on its own side (wrist >= shoulder
+  - 0.15 m, the 9c GRID9B offsets), palm to the listener, held over the finger window; the module-10 finger override as now. It is
+  applied on top of the full canonical row (final/<proto>/s<k>).
+- Same rate rules (amendment 3). Quick lane: the full run's 43 recordings, seed 0, TTS-sync (18 NUMBER commands).
+- Gates (NUMBER): count hit >= 0.90 (both hands, the validated metric); palm signed angle (present_hand_palm_angle_signed_median,
+  ex002_present.py) <= 45 deg; presenting-hand raised share (present_hand_raised_share_mean) >= 0.80. Side gates as before (FGD v2
+  <= none + delta, liveliness guard, executability 100 %); the other categories' success is re-reported (must not drop).
+- Renders, for the check: one "three" event (count 3; the first by sha1("<clip>:<onset:.3f>:explrender") among NUMBER commands
+  with count 3) and the "first" event. Panels GT / none / given (before) / given (amendment 5); front + hands close-up.
