@@ -849,3 +849,19 @@ Real-deictic end along-ray value: −37 mm [−105, −1] (onset window), i.e. a
 - Run: insertion of the point row only (row name m9c inside m9cp-enc), then the 9c eval stage. Same gates as 9b / 9c, reference tok5c.
 - 9c (registered) finishes as is. Its result will state that "point" means hindsight windows and that the point-vs-control contrast is
   mainly hand choice.
+9c' quick lane (disclosed; clips 0 and 1, seed 0, offline / psync; all gate metrics on the subset):
+- m9cp: STG gain +0.314 / +0.234 (tok5c +0.205 / +0.222); angle 11.4 / 13.0 deg; apex-in-hold 0.17 / 0.17; hold-window angle 0.9 / 0.8 deg.
+- presenting hand raised 1.00 / 1.00; palm 2 deg; executability 1.0; arm ramp jerk over the limit 0.033 / 0.053 (tok5c 0.256 / 0.289);
+  both liveliness guards PASS.
+- release median 30.0 / 34.3 (> 29.8, predicted FAIL), p95 85 / 87, max 92 / 164.
+- hold wrist speed 0.13 / 0.11 m/s vs pool 0.28 (IK lag).
+Coordinator: full 9c' held until the audit pass; 9c'' changes the release only.
+## Module 9c'' (pre-registered 2026-11-08 ~15:40, before any 9c'' run)
+9c' (deictic point pool) with the release changed; quick lane first (same 2 clips, both protocols, all gates), the full run only after the
+audit pass.
+- T-only (row m9cpT): the release duration is the smallest T in [0.3, 1.0] s (frame grid) whose quintic, matched to the hold-end state
+  (position, velocity, acceleration) and to the generator's state at the end, keeps every arm joint's peak |acceleration| ≤ its train a95
+  (ARM_ACC_P95.json). If none qualifies, T = 1.0 s. (--release-search)
+- T + taper (row m9cpTT): as T-only, and the replayed wrist displacement's velocity fades to zero over the last 0.2 s of the hold with a
+  minimum-jerk weight, so the release starts nearly at rest. (--taper 0.2)
+- Everything else as 9c' (same pool, same IK, same gates). Defaults off; the 9c / 9c' paths stay bitwise.
