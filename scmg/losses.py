@@ -51,6 +51,10 @@ class StageCfg:
     w_semrepa: float = 0.0         # 11-09 SemREPA (cfg.semrepa; docs/criteria/SEMREPA_1109.md): lambda x mean over valid chunks of
                                    # 1 - cos(repa_proj(planner block h_k), teacher(GT window centred on chunk k)); 0 = off
     semrepa_teacher: str = ''      # path of the frozen teacher (scripts/semantic/semrepa_teacher.py)
+    w_f4: float = 0.0              # 11-09 F4 (cfg.f4_align): symmetric in-batch InfoNCE (tau 0.07) between f4_txt(planner text tokens
+                                   # visible to chunk k with time in [c_k - 0.8, c_k + 0.8] s, mean) and f4_mot(GT chunk latents); 0 = off
+    w_f6: float = 0.0              # 11-09 F6 contrastive flow matching: lambda x mean_i relu(f6_margin x e_pos_i (detached) - e_mis_i),
+    f6_margin: float = 2.0         # e = per-instance supervised velocity MSE; mis = text + audio of batch item (b - 1); 0 = off
     w_safe: float = 0.0            # 11-05 G1 only: executable-contract loss on the decoded [ctx | target] frames (scmg/g1_safety.py:
                                    # URDF joint limits + calibrated left-right / arm-torso self-collision proxies); 0 = off
     safe_torso_w: float = 0.5      # weight of the weaker arm-torso proxy inside w_safe
@@ -1034,6 +1038,36 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         out['kl'] = (klm * cm).sum() / cm.sum().clamp(min=1)
         out['kl_raw'] = (kl.sum(-1) * cm).sum() / cm.sum().clamp(min=1)
         loss = loss + sc.w_kl * out['kl']
+    if sc.w_f4 > 0:                                        # 11-09 F4 text-motion latent alignment (computed last: RNG untouched)
+        if not getattr(cfg, 'f4_align', False): raise ValueError('StageCfg.w_f4 needs cfg.f4_align')
+        tmv = model.chunk_text_mask(tmask, tvis, K)                                     # [B, K, Kt] visible to chunk k
+        ck = (torch.arange(K, device=dev).float() * CHUNK_FRAMES + CHUNK_FRAMES / 2) / 50.
+        tsv = torch.nan_to_num(tsec, nan=1e9)
+        wv = (tmv & ((tsv[:, None, :] - ck[None, :, None]).abs() <= 0.8)).float()        # [B, K, Kt]
+        nw = wv.sum(-1)
+        zt = torch.einsum('bkt,btd->bkd', wv, text.float()) / nw.clamp(min=1)[..., None]
+        cv4 = (nw > 0) & (mask[:, :K * CHUNK_FRAMES].view(B, K, CHUNK_FRAMES) > .5).all(-1)
+        if int(cv4.sum()) >= 2:
+            a4 = F.normalize(model.f4_txt(zt[cv4]).float(), dim=-1); b4 = F.normalize(model.f4_mot(lat_k[cv4].flatten(-2)).float(), dim=-1)
+            lg4 = a4 @ b4.T / 0.07; l4 = torch.arange(len(a4), device=dev)
+            out['f4'] = 0.5 * (F.cross_entropy(lg4, l4) + F.cross_entropy(lg4.T, l4))
+            loss = loss + sc.w_f4 * out['f4']
+    if sc.w_f6 > 0:                                        # 11-09 F6 contrastive flow matching (computed last)
+        if cfg.mtc or cfg.planner != 'chunk' or cfg.style or ctl_c is not None or ins is not None:
+            raise ValueError('w_f6: plain chunk planner without mtc / style / ctl / mask insertion only')
+        rl = lambda x: x.roll(1, 0)
+        a_m, am_m, tx_m, tk_m = rl(a), rl(amask_k), rl(text), rl(tmask)
+        tv_m = rl(tvis) if tvis is not None else None; ts_m = rl(tsec)
+        h_m = model.plan(plan_input, a_m, am_m, tx_m, tk_m, g, tids=batch.get('tids'), tidm=tidm_d, sref=sref, tvis=tv_m, lvis=lvis, sstate=sstate)
+        ft_m = model.flow_text(tx_m, tk_m, tv_m, ts_m, K)
+        aw_m = aw.view(B, K, *aw.shape[1:]).roll(1, 0).flatten(0, 1); awm_m = awm.view(B, K, *awm.shape[1:]).roll(1, 0).flatten(0, 1)
+        v_m = model.flow_velocity(xt, t, known, model.sem_h(h_m).flatten(0, 1), gi, aw_m, awm_m, style_tok, state_ada, ftext=ft_m)
+        sf = sup.float(); ns = sf.sum(-1)
+        e_pos = (err * sf).sum(-1) / ns.clamp(min=1); e_mis = ((v_m - (x1i - noise)).square().mean(-1) * sf).sum(-1) / ns.clamp(min=1)
+        ok6 = ns > 0
+        out['f6'] = F.relu(sc.f6_margin * e_pos.detach() - e_mis)[ok6].mean() if ok6.any() else loss.new_zeros(())
+        out['f6_ratio'] = (e_mis[ok6].mean() / e_pos[ok6].mean().clamp(min=1e-8)).detach() if ok6.any() else loss.new_zeros(())
+        loss = loss + sc.w_f6 * out['f6']
     if _repa:                                              # 11-09 SemREPA on the main teacher-forced planner pass
         from .semrepa import load_teacher, teacher_targets
         tgt = teacher_targets(load_teacher(sc.semrepa_teacher, dev), q * qs + qm, K, CHUNK_FRAMES)       # [B, K, 192]

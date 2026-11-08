@@ -134,6 +134,10 @@ class Config:
     semrepa: bool = False
     semrepa_dim: int = 192
     semrepa_block: int = 2
+    # 11-09 F4 (docs/criteria/SEMBRIDGE_F4F6_1109.md; default off): text-motion latent alignment heads (InfoNCE in losses w_f4):
+    # f4_txt Linear(d, 256) on the planner's text tokens pooled over the chunk's visible words, f4_mot MLP(CHUNK z -> d -> 256) on
+    # the GT chunk latents; forked RNG (seed 1110); training only.
+    f4_align: bool = False
 
     def dict(self):
         return asdict(self)
@@ -496,6 +500,12 @@ class SCMG(nn.Module):
                 self.ctl_enc = nn.Sequential(nn.SiLU(), nn.Linear(d, d))
                 self.ctl_text = nn.Linear(d, d); nn.init.zeros_(self.ctl_text.weight); nn.init.zeros_(self.ctl_text.bias)
             for mod in (self.ctl_type, self.ctl_val, self.ctl_enc, self.ctl_text): mod.to(self.f_in.weight.device)
+        if getattr(cfg, 'f4_align', False) and not hasattr(self, 'f4_txt'):
+            with torch.random.fork_rng(devices=[]):
+                torch.manual_seed(1110)
+                self.f4_txt = nn.Linear(d, 256)
+                self.f4_mot = nn.Sequential(nn.Linear(CHUNK * cfg.z, d), nn.SiLU(), nn.Linear(d, 256))
+            self.f4_txt.to(self.f_in.weight.device); self.f4_mot.to(self.f_in.weight.device)
         if getattr(cfg, 'semrepa', False) and not hasattr(self, 'repa_proj'):
             from .semrepa import make_projector
             self.repa_proj = make_projector(d, cfg.semrepa_dim).to(self.f_in.weight.device)
