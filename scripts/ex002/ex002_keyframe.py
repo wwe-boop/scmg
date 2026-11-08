@@ -15,7 +15,7 @@ only used through this script and bench_ex002 --inpaint-dir.
            GT frames (gt_<ci>.npy); plus the share of ramp frames (in and out) whose arm jerk exceeds the limits34 arm jerk limits.
     SCMG_J=34 python ex002_keyframe.py insert --given D --plan P --out O [--mode given|shuffle]
     SCMG_J=34 python ex002_keyframe.py release --plan P --gt-dir G --out R.json label=<dir> ..."""
-import argparse, json, sys
+import argparse, hashlib, json, sys
 from pathlib import Path
 import numpy as np
 import torch
@@ -48,7 +48,9 @@ class IK:
     def pen(self, q):
         return self.K.penetration(q[None].float())[0].double()
 
-    def solve(self, q0, h, kind, target=None, it=20, pen_w=10.0, present_off=None):
+    def solve(self, q0, h, kind, target=None, it=20, pen_w=10.0, present_off=None, wrist_pos=None, zmin=None):
+        # 9c (default None = 9 / 9b unchanged): wrist_pos [3] adds w - wrist_pos (aim hold replay); zmin (m below the shoulder, e.g. 0.15)
+        # adds a hard-weighted hinge on wrist z >= shoulder z - zmin (present)
         q0 = torch.as_tensor(q0, dtype=torch.float64); q = q0.clone(); idx = ARM[h]
         sgn = None
         def res(x):
@@ -56,6 +58,7 @@ class IK:
             r = []
             if kind == 'aim':
                 t = torch.as_tensor(target, dtype=torch.float64); r.append((w - e) / (w - e).norm() - (t - w) / (t - w).norm())
+                if wrist_pos is not None: r.append(w - torch.as_tensor(wrist_pos, dtype=torch.float64))
             else:
                 if present_off is None:                                  # m9: left hand toward -y (midline), right toward +y
                     mid = 0.06 if h == 0 else -0.06; off = torch.tensor([0.30, -mid, -0.12], dtype=torch.float64)
@@ -64,6 +67,7 @@ class IK:
                 pt = s + off; r.append(w - pt)
                 n = torch.cross(g['index_base'][h] - w, g['third_base'][h] - w, dim=0); n = n / n.norm().clamp(min=1e-9)
                 r.append(n - sgn * torch.tensor([1., 0., 0.], dtype=torch.float64))
+                if zmin is not None: r.append(100. * torch.relu((s[2] - zmin) - w[2]).reshape(1))
             r.append(np.sqrt(LAM) * (x - q0[idx])); r.append(pen_w * self.pen(qq).square().sum().add(1e-12).sqrt().reshape(1))
             return torch.cat([x_.reshape(-1) for x_ in r])
         if kind != 'aim':
@@ -76,7 +80,11 @@ class IK:
             if rn.norm() < r.norm(): x, mu = xn, max(mu / 3, 1e-6)
             else: mu = mu * 5
         qf = q.clone(); qf[idx] = x; pen = float(self.pen(qf).max()) if len(self.pen(qf)) else 0.
-        return qf.numpy().astype(np.float32), dict(res=float(res(x).norm()), pen=pen)
+        info = dict(res=float(res(x).norm()), pen=pen)
+        if zmin is not None or wrist_pos is not None:
+            g = self.geo(qf); info['wz_minus_sz'] = float(g['wrist'][h][2] - g['shoulder'][h][2])
+            if wrist_pos is not None: info['wpos_err'] = float((g['wrist'][h] - torch.as_tensor(wrist_pos, dtype=torch.float64)).norm())
+        return qf.numpy().astype(np.float32), info
 
 
 def mj(x): x = np.clip(x, 0, 1); return x ** 3 * (10 - 15 * x + 6 * x * x)
@@ -117,6 +125,48 @@ def insert9b(yi, qk, h, t, kind, a95):
     return dict(t_in0=f_in / FPS, t_hold=(f_h0 / FPS, f_h1 / FPS), t_release=f_out / FPS, Tin=Tin, Tout=Tout)
 
 
+def insert9c(yi, Q, h, t, kind, a95):
+    """9c: as insert9b, but the hold is a pose sequence Q [n, 34] (aim: replayed human hold; present: constant). Ramp-in ends in Q[0] with
+    its velocity / acceleration, release starts from Q[-1] with its velocity / acceleration (finite differences of Q)."""
+    T = len(yi); jj = ARM[h]; a, b = HOLD[kind]; f_h0 = max(1, int(round((t - a) * FPS))); f_h1 = min(T - 2, int(round((t + b) * FPS)))
+    if f_h1 <= f_h0: return None
+    n = f_h1 - f_h0 + 1; Q = np.asarray(Q, np.float64)[:, jj]
+    Q = Q[:n] if len(Q) >= n else np.concatenate([Q, np.repeat(Q[-1:], n - len(Q), 0)])
+    v = np.gradient(Q, axis=0) * FPS if n > 2 else np.zeros_like(Q); acc = np.gradient(v, axis=0) * FPS if n > 2 else np.zeros_like(Q)
+    a9 = np.asarray(a95)[[j - 4 for j in jj]]
+    Tin = float(np.clip(np.sqrt(5.77 * np.max(np.abs(Q[0] - yi[f_h0, jj]) / a9)), 0.3, 0.8))
+    Tout = float(np.clip(np.sqrt(5.77 * np.max(np.abs(Q[-1] - yi[f_h1, jj]) / a9)), 0.3, 0.8))
+    f_in = max(1, f_h0 - int(round(Tin * FPS))); f_out = min(T - 2, f_h1 + int(round(Tout * FPS)))
+    p0, v0, a0 = state(yi[:, jj], f_in); p1, v1, a1 = state(yi[:, jj], f_out)
+    if f_h0 > f_in: yi[f_in:f_h0, jj] = quintic(p0, v0, a0, Q[0], v[0], acc[0], (f_h0 - f_in) / FPS, f_h0 - f_in)
+    yi[f_h0:f_h1 + 1, jj] = Q
+    if f_out > f_h1 + 1:
+        m = f_out - f_h1                                              # quintic from Q[-1] (frame f_h1) to the generator state (frame f_out)
+        yi[f_h1 + 1:f_out, jj] = quintic(Q[-1], v[-1], acc[-1], p1, v1, a1, m / FPS, m)[1:]
+    return dict(t_in0=f_in / FPS, t_hold=(f_h0 / FPS, f_h1 / FPS), t_release=f_out / FPS, Tin=Tin, Tout=Tout)
+
+
+KEYS9C = 3                                                            # 9c: IK every 3rd hold frame (+ the last), cubic in between
+
+
+def hold9c(ik, qk, h, target, dw, it=5):
+    """per-key IK keeping the forearm ray on the target while the wrist follows wk + dw[tau] (dw [n, 3], human replay)."""
+    from scipy.interpolate import CubicSpline
+    g = ik.geo(torch.as_tensor(qk, dtype=torch.float64)); wk = g['wrist'][h].numpy(); n = len(dw)
+    keys = sorted(set(list(range(0, n, KEYS9C)) + [n - 1])); Qk = []; q = np.asarray(qk, np.float32); bad = 0; perr = []
+    for k in keys:
+        if k == 0: Qk.append(q); perr.append(0.); continue
+        qn, info = ik.solve(q, h, 'aim', target, it=it, pen_w=100.0, wrist_pos=wk + dw[k])
+        if info['pen'] > 1e-6: bad += 1; Qk.append(Qk[-1]); perr.append(float('nan')); continue
+        q = qn; Qk.append(qn); perr.append(info['wpos_err'])
+    Qk = np.stack(Qk).astype(np.float64); Q = CubicSpline(np.asarray(keys, float), Qk, axis=0)(np.arange(n)) if len(keys) > 1 else np.repeat(Qk, n, 0)
+    return Q.astype(np.float32), dict(hold_keys=len(keys), hold_bad_keys=bad, hold_wpos_err_median=float(np.nanmedian(perr)) if len(perr) else 0.)
+
+
+def pool_index(clip, t, n):
+    return int(hashlib.sha1(f'{clip}:{t:.3f}:9c'.encode()).hexdigest()[:12], 16) % n
+
+
 def window(T, t, kind):
     a, b = HOLD[kind]; fr = np.arange(T) / FPS
     return mj((fr - (t - a - RAMP)) / RAMP) * mj(((t + b + RAMP) - fr) / RAMP), (t - a - RAMP, t + b + RAMP)
@@ -128,7 +178,9 @@ def insert(a):
     for e in P['events']:
         if not e.get('present'): by.setdefault(e['ci'], []).append(e)
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True); ik = IK(); shapes = json.loads(Path(HS).read_text())['shapes']; log = []
-    a95 = json.loads(Path(A95).read_text())['a95'] if a.version == '9b' else None
+    a95 = json.loads(Path(A95).read_text())['a95'] if a.version in ('9b', '9c') else None
+    if a.version == '9c':
+        PL = np.load(a.hold_pool); pdw, ph = PL[f'{a.pool}_dw'], PL[f'{a.pool}_hand']
     fs = sorted(Path(a.given).glob('*.npy'), key=lambda p: int(p.stem)); si, sn = (int(x) for x in a.shard.split('/'))
     for f in fs[si::sn]:
         ci = int(f.stem); y = np.load(f).astype(np.float32); T = len(y); yi = y.copy(); spans = []
@@ -136,7 +188,14 @@ def insert(a):
             v = e if a.mode == 'given' else dict(e, **e['shuffle']); fe = min(int(round(e['t'] * FPS)), T - 1)
             if e['kind'] == 'aim': h, kind, tg = v['hand'], 'aim', v['target']
             else: h, kind, tg = (0 if v['fingers'][0] > v['fingers'][1] else 1), 'present', None
-            if a.version == '9b':
+            if a.version == '9c':                                     # 9c: present with the wrist-height bound; aim keyframe as 9b
+                if kind == 'aim': qk, info = ik.solve(yi[fe], h, kind, tg, pen_w=100.0); info['grid'] = 0
+                else:
+                    for gi, off in enumerate(GRID9B):
+                        qk, info = ik.solve(yi[fe], h, kind, tg, pen_w=100.0, present_off=off, zmin=0.15); info['grid'] = gi
+                        if info['pen'] <= 1e-6 and info['wz_minus_sz'] >= -0.15 - 1e-3: break
+                    if info['wz_minus_sz'] < -0.15 - 1e-3: info['pen'] = max(info['pen'], 1.0); info['height_reject'] = True
+            elif a.version == '9b':
                 if kind == 'aim': qk, info = ik.solve(yi[fe], h, kind, tg, pen_w=100.0); info['grid'] = 0
                 else:
                     for gi, off in enumerate(GRID9B):                 # first collision-free grid point (nominal first)
@@ -145,6 +204,16 @@ def insert(a):
             else: qk, info = ik.solve(yi[fe], h, kind, tg)
             rec = dict(ci=ci, t=e['t'], kind=kind, hand=int(h), **info); log.append(rec)
             if info['pen'] > 1e-6: continue                          # self-penetrating keyframe -> rejected, no insertion (counted)
+            if a.version == '9c':
+                kd = 'aim' if kind == 'aim' else 'finger'; nh = int(round((HOLD[kd][0] + HOLD[kd][1]) * FPS)) + 1
+                if kind == 'aim':
+                    i_ = pool_index(e['clip'], e['t'], len(pdw)); dw = np.array(pdw[i_][:nh], np.float64)
+                    if int(ph[i_]) != h: dw[:, 1] = -dw[:, 1]                 # mirror the lateral axis for the other hand
+                    Q, hi = hold9c(ik, qk, h, tg, dw); rec.update(hi, pool_i=i_)
+                else: Q = np.repeat(np.asarray(qk)[None], nh, 0)
+                tm = insert9c(yi, Q, h, e['t'], kd, a95)
+                if tm: rec.update(tm); spans.append((tm['t_in0'], tm['t_release']))
+                continue
             if a.version == '9b':
                 tm = insert9b(yi, qk, h, e['t'], 'aim' if kind == 'aim' else 'finger', a95)
                 if tm: rec.update(tm); spans.append((tm['t_in0'], tm['t_release']))
@@ -217,7 +286,8 @@ def release(a):
 def main():
     ap = argparse.ArgumentParser(); sub = ap.add_subparsers(dest='cmd', required=True)
     i = sub.add_parser('insert'); i.add_argument('--given', required=True); i.add_argument('--plan', required=True); i.add_argument('--out', required=True)
-    i.add_argument('--mode', default='given', choices=['given', 'shuffle']); i.add_argument('--shard', default='0/1'); i.add_argument('--version', default='9', choices=['9', '9b'])
+    i.add_argument('--mode', default='given', choices=['given', 'shuffle']); i.add_argument('--shard', default='0/1'); i.add_argument('--version', default='9', choices=['9', '9b', '9c'])
+    i.add_argument('--hold-pool', default=None, help='9c: HOLD_POOL_TRAIN.npz'); i.add_argument('--pool', default='point', choices=['point', 'control'])
     r = sub.add_parser('release'); r.add_argument('--plan', required=True); r.add_argument('--gt-dir', required=True); r.add_argument('--out', required=True); r.add_argument('specs', nargs='+')
     a = ap.parse_args(); dict(insert=insert, release=release)[a.cmd](a)
 
