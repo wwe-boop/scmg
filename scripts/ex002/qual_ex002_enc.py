@@ -37,6 +37,28 @@ def view():
     return View(str(VIEW), 'val', '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg/text-e5-v36_1', st, mmap=True)
 
 
+JUDGE = '/mnt/cpfs/zbl-cpfs-new/USERS/zehan/scmg/releases/textpath-d6d7ab7/scripts/judge'   # B's judge-round subtitle words (text-path d6d7ab7)
+
+
+def sub_words(v, ci, f0, f_end):
+    """word-timed subtitles = B's words_of(clip, fixed=True) (alignment.json words; en chars merged on spaces, char durations capped 0.3 s),
+    window-relative, words starting inside [f0, f_end)."""
+    if JUDGE not in sys.path: sys.path.insert(0, JUDGE)
+    from make_pairs import words_of
+    return [dict(w=w, s=t0 - f0 / 50, e=t1 - f0 / 50) for t0, t1, w in words_of(v.clips[ci], fixed=True) if f0 / 50 <= t0 < f_end / 50]
+
+
+def subs(a):
+    out = Path(a.out); rule = json.loads((out / 'RULE.json').read_text()); v = view()
+    for c in rule['base']['clips']:
+        for P in ('offline', 'psync'):
+            (out / 'base' / f"{c['clip']}_{P}" / 'words.json').write_text(json.dumps(sub_words(v, c['ci'], c['f0'], c['f1']), ensure_ascii=False))
+    for s_ in rule['int']['selected']:
+        f = s_['f_i']; f0 = max(0, f - PRE)
+        (out / 'int' / s_['key'].replace('@', '_') / 'words.json').write_text(json.dumps(sub_words(v, s_['ci'], f0, f), ensure_ascii=False))
+    print('SUBS_DONE')
+
+
 def select(a):
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True); v = view()
     cl = [(ci, c['clip'], c['frames']) for ci, c in enumerate(v.clips)]
@@ -72,8 +94,7 @@ def prep(a):
             src = dict(GT=SIB / P / f'gt_{ci}.npy', sibag_s2=SIB / P / 's0' / f'{ci}.npy', enc_s0=ENC / P / 's0' / f'{ci}.npy')
             for lab, p in src.items(): np.savez(d / f'{lab}.npz', Q37=to37(np.load(p).astype(np.float64)[f0:f1], li), fps=np.float64(50))
             x = np.asarray(pcm, np.float32) / 32768.; sf.write(d / 'audio.wav', x[int(f0 / 50 * 16000):int(f1 / 50 * 16000)], 16000)
-            (d / 'words.json').write_text(json.dumps([dict(w=w['text'], s=w['start_time'] - f0 / 50, e=w['end_time'] - f0 / 50) for w in words
-                                                     if f0 / 50 <= w['start_time'] < f1 / 50], ensure_ascii=False))
+            (d / 'words.json').write_text(json.dumps(sub_words(v, ci, f0, f1), ensure_ascii=False))
             jb.append(dict(trajs=[dict(path=str(d / f'{lab}.npz'), kind='q37', label=lab) for lab in src], audio=str(d / 'audio.wav'),
                            out=str(d / 'raw.mp4'), title=f"EX002 {c['clip']} {P}  GT | sibag-s2 | enc-s0", views=['front', 'q34'], no_preview=True))
     for k, s in enumerate(rule['int']['selected']):
@@ -89,8 +110,7 @@ def prep(a):
         np.savez(d / 'GT_tail.npz', Q37=to37(np.concatenate([pre, post]), li), fps=np.float64(50)); labs.append('GT_tail')
         x = np.asarray(pcm, np.float32) / 32768.; x = x[int(f0 / 50 * 16000):int(f1 / 50 * 16000)].copy(); x[int((f - f0) / 50 * 16000):] = 0.
         sf.write(d / 'audio.wav', x, 16000)
-        (d / 'words.json').write_text(json.dumps([dict(w=w['text'], s=w['start_time'] - f0 / 50, e=w['end_time'] - f0 / 50) for w in words
-                                                 if f0 / 50 <= w['start_time'] < f / 50], ensure_ascii=False))
+        (d / 'words.json').write_text(json.dumps(sub_words(v, ci, f0, f), ensure_ascii=False))
         np.save(d / 'meta.npy', np.array([f0, f, f1]))
         ji.append(dict(trajs=[dict(path=str(d / f'{lab}.npz'), kind='q37', label=lab) for lab in labs], audio=str(d / 'audio.wav'), out=str(d / 'raw.mp4'),
                        title=f"EX002 interruption {s['key']}  B3+ISC | R0causal+ISC | Funnel+ISC | L2diag+ISC | GT tail", views=['front', 'q34'], no_preview=True))
@@ -98,10 +118,16 @@ def prep(a):
     print('PREP', len(jb), len(ji))
 
 
-def burn(raw, dst, words, t_int=None):
-    esc = lambda s: s.replace('\\', '\\\\').replace(':', '\\:').replace("'", "’").replace('%', '\\%')
-    fl = [f"drawtext=fontfile={FONT}:text='{esc(w['w'])}':x=(w-text_w)/2:y=h-110:fontsize=44:fontcolor=white:box=1:boxcolor=black@0.6:"
-          f"enable='between(t,{max(0, w['s']):.2f},{w['e'] + 0.3:.2f})'" for w in words]
+def burn(raw, dst, words, t_int=None, lang='en'):
+    """rolling word-timed subtitle: from each word's start until the next word starts (last word: end + 0.3 s) the line shows the
+    last <= 10 words ending with that word (zh joined without spaces)."""
+    esc = lambda s: s.replace('\\', '\\\\').replace(':', '\\:').replace("'", "\u2019").replace('%', '\\%').replace(',', '\\,')
+    sep = '' if lang == 'zh' else ' '; fl = []
+    for i, w in enumerate(words):
+        e = min(words[i + 1]['s'], w['e'] + 1.0) if i + 1 < len(words) else w['e'] + 0.3   # half-open [s_i, s_i+1): lines never overlap
+        line = sep.join(x['w'] for x in words[max(0, i - 9):i + 1])
+        fl.append(f"drawtext=fontfile={FONT}:text='{esc(line)}':x=(w-text_w)/2:y=h-150:fontsize=72:fontcolor=white:box=1:boxcolor=black@0.6:"
+                  f"enable='gte(t,{max(0, w['s']):.3f})*lt(t,{max(e, w['s'] + 0.05):.3f})'")
     if t_int is not None:
         fl += [f"drawbox=x=0:y=0:w=iw:h=ih:color=red@0.9:t=8:enable='gte(t,{t_int:.3f})'",
                f"drawtext=fontfile={FONT}:text='INTERRUPT':x=(w-text_w)/2:y=40:fontsize=40:fontcolor=red:box=1:boxcolor=white@0.7:enable='gte(t,{t_int:.3f})'"]
@@ -117,13 +143,13 @@ def post(a):
     for c in rule['base']['clips']:
         for P in ('offline', 'psync'):
             n = f"{c['clip']}_{P}"; d = out / 'base' / n; dst = out / 'video' / f'{n}.mp4'
-            burn(d / 'raw.mp4', dst, json.loads((d / 'words.json').read_text()))
+            burn(d / 'raw.mp4', dst, json.loads((d / 'words.json').read_text()), lang=c['lang'])
             T = (c['f1'] - c['f0']) / 50.; ts = list(np.linspace(0.4, T - 0.4, 12))
             Q.contact_sheet(dst, ts, out / 'sheets' / f'{n}_sheet.png', [f'{t:.1f} s' for t in ts])
             man['base'][n] = dict(video=f'video/{n}.mp4', sheet=f'sheets/{n}_sheet.png', panels=['GT', 'sibag-s2', 'enc-s0'], protocol=P, lang=c['lang'])
     for s in rule['int']['selected']:
         n = s['key'].replace('@', '_'); d = out / 'int' / n; f0, f, f1 = np.load(d / 'meta.npy').tolist(); rel = (f - f0) / 50.
-        dst = out / 'video' / f'int_{n}.mp4'; burn(d / 'raw.mp4', dst, json.loads((d / 'words.json').read_text()), rel)
+        dst = out / 'video' / f'int_{n}.mp4'; burn(d / 'raw.mp4', dst, json.loads((d / 'words.json').read_text()), rel, lang=s['clip'].split('-')[1])
         ts = [rel + x for x in (-0.4, -0.1, 0.1, 0.25, 0.4, 0.6, 0.8, 1.0, 1.25, 1.5, 1.75, 2.05)]
         Q.contact_sheet(dst, ts, out / 'sheets' / f'int_{n}_sheet.png', [f't-t_i {t - rel:+.2f} s' for t in ts])
         man['int'][s['key']] = dict(video=f'video/int_{n}.mp4', sheet=f'sheets/int_{n}_sheet.png', t_i_in_video=rel,
@@ -133,6 +159,6 @@ def post(a):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(); sp = ap.add_subparsers(dest='cmd', required=True)
-    for n in ('select', 'prep', 'post'):
+    for n in ('select', 'prep', 'post', 'subs'):
         p = sp.add_parser(n); p.add_argument('--out', required=True); p.add_argument('--words-dir', default=str(B / 'ex002-causal-1107/words'))
-    a = ap.parse_args(); dict(select=select, prep=prep, post=post)[a.cmd](a)
+    a = ap.parse_args(); dict(select=select, prep=prep, post=post, subs=subs)[a.cmd](a)
