@@ -14,12 +14,17 @@ X = '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/control-token-1105/ex002'
 PLANS = ['PLAN_dev', 'PLAN_dev_sparse', 'PLAN_dev_fresh_dense', 'PLAN_dev_fresh_sparse', 'PLAN_dev_port_dense', 'PLAN_dev_port_sparse',
          'PLAN_dev_m78b_dense', 'PLAN_dev_m78b_sparse', 'PLAN_dev_m9_dense', 'PLAN_dev_m9_sparse', 'PLAN_dev_m9b_dense', 'PLAN_dev_m9b_sparse']
 PRE, POST, INNER, OUTER = 0.3, 0.9, 0.6, 0.9
+W5B_366AED0 = 'def weight(T, ts, inner, outer, pre=None, post=None):\n    # symmetric (module 5): 1 for |t - t_cmd| <= inner, cosine to 0 at outer; asymmetric (5b): 1 on [t - pre, t + post], same ramp width\n    fr = np.arange(T) / FPS; w = np.zeros(T); r = outer - inner\n    for t in ts:\n        if pre is None: d = np.abs(fr - t) - inner\n        else: d = np.where(fr < t - pre, (t - pre) - fr, np.where(fr > t + post, fr - (t + post), 0.))\n        x = np.clip(1 - np.maximum(d, 0) / r, 0, 1) if pre is not None else np.clip((outer - np.abs(fr - t)) / r, 0, 1)\n        w = np.maximum(w, 0.5 - 0.5 * np.cos(np.pi * x))\n    return w\n'   # verbatim weight() of 366aed0 (release dirs have no git)
 
 
 def old_weight():
-    src = subprocess.run(['git', 'show', '366aed0:scripts/ex002/ex002_local_blend.py'], capture_output=True, text=True, check=True,
-                         cwd=Path(__file__).resolve().parents[2]).stdout
-    m = types.ModuleType('old_blend'); m.__file__ = __file__; exec(compile(src.split("\ndef main")[0], 'old', 'exec'), m.__dict__); return m.weight
+    m = types.ModuleType('old_blend'); m.__dict__.update(np=np, FPS=FPS); exec(compile(W5B_366AED0, 'old', 'exec'), m.__dict__)
+    try:                                                            # in a git checkout: the embedded copy must equal 366aed0
+        src = subprocess.run(['git', 'show', '366aed0:scripts/ex002/ex002_local_blend.py'], capture_output=True, text=True, check=True,
+                             cwd=Path(__file__).resolve().parents[2]).stdout
+        assert src[src.index('def weight('):src.index('def main():')].rstrip() + '\n' == W5B_366AED0, 'embedded 5b weight differs from 366aed0'
+    except (subprocess.CalledProcessError, FileNotFoundError): pass
+    return m.weight
 
 
 def main():
