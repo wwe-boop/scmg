@@ -90,6 +90,9 @@ def infer(a):
             toks = tokens_for(by[ci], a.mode); tv = [token_value(t) for t in toks]
             cond.update(ctl_t=np.array([t['t'] for t in toks], np.float32), ctl_type=np.array([x[0] for x in tv], np.int64),
                         ctl_v=np.stack([x[1] for x in tv]), ctl_vm=np.stack([x[2] for x in tv]))
+            if any(t.get('desc') is not None for t in toks):      # 11-09 P2 SEM tokens: descriptor channel
+                cond.update(ctl_d=np.stack([np.asarray(t['desc'], np.float32) if t.get('desc') is not None else np.zeros(16, np.float32) for t in toks]),
+                            ctl_dm=np.array([float(t.get('desc') is not None) for t in toks], np.float32))
         kw = dict(H=INF)
         if a.protocol == 'engine': kw = dict(H=2 * U80, text_mode='x2', x2_rate=15., x2_lag=0.15, deploy_timing=True)
         if a.protocol == 'psync':

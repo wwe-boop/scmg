@@ -54,7 +54,8 @@ def tokens_for(evs, mode):
     toks = []
     for e in evs:
         val = e if mode == 'given' else dict(e, **e['shuffle'])
-        if e['kind'] == 'aim': toks.append(dict(type=ctl.POINT, t=e['t'], target=val['target'], hand=val['hand']))
+        if e['kind'] == 'sem': toks.append(dict(type=ctl.SEM, t=e['t'], hand=val['hand'], desc=val['desc']))   # 11-09 P2
+        elif e['kind'] == 'aim': toks.append(dict(type=ctl.POINT, t=e['t'], target=val['target'], hand=val['hand']))
         else: toks.append(dict(type=ctl.TYPE_ID['beat'], t=e['t'], fingers=val['fingers'], **({'clip': e['clip']} if 'clip' in e else {})))
     return toks
 

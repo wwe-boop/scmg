@@ -161,6 +161,9 @@ class StageCfg:
     ctl_jitter_types: tuple = ()   # 11-06 round 5: only these token types are jittered (scmg/ctl.py TYPE_ID, e.g. (1, 2) deictic / iconic);
                                    # () = every annotation token (round-3 behaviour)
     ctl_lr_scale: float = 1.0      # 11-06: learning-rate multiplier of the control-token modules (scmg.train param group)
+    sem_cf_p: float = 0.0          # 11-09 P2 sem_cf (cfg.ctl_desc): P(sample's kept SEM tokens get another SEM token's descriptor + hand)
+    w_sem_desc: float = 0.0        # 11-09 P2 outcome loss: E(descriptor of the decoded window [a, b], given descriptor) (scmg/sem_desc.py)
+    sem_bank: str = ''             # SEM_BANK.json (descriptor mu / sd of the train bank) for w_sem_desc
     ctl_cf_p: float = 0.0          # 11-06 counterfactual control: P(sample's kept POINT tokens get ANOTHER token's target, rolled over
                                    # the batch); their segment [a - 0.3, b + 0.3] is removed from the flow loss and only the ray loss
                                    # (w_ctl_aux, toward the swapped target) supervises it -> following the token is the only way down
@@ -560,7 +563,21 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             n0 = torch.round(cval[..., 0] * (COUNT_MAX / 2) + COUNT_MAX / 2)
             n1 = torch.remainder(n0 + torch.randint(1, COUNT_MAX + 1, n0.shape, device=dev), COUNT_MAX + 1)
             cval = cval.clone(); cval[..., 0] = torch.where(ccf, (n1 - COUNT_MAX / 2) / (COUNT_MAX / 2), cval[..., 0])
-        u = model.ctl_embed(batch['ctl_type'].long() * cm.long(), cval, cvm)
+        cdesc = cdm = None
+        if getattr(cfg, 'ctl_desc', False) and 'ctl_d' in batch:     # 11-09 P2: descriptor channel (+ counterfactual swap)
+            from .ctl import SEM
+            cdesc = batch['ctl_d'].float(); cdm = batch['ctl_dm'].float() * cm.float()
+            if sc.sem_cf_p > 0:
+                isS = cm & (batch['ctl_type'] == SEM) & (cdm > 0)
+                scf = isS & r(sc.sem_cf_p)[:, None]
+                bi_, ji_ = isS.nonzero(as_tuple=True)
+                if len(bi_) > 1:
+                    src_ = torch.roll(torch.arange(len(bi_), device=dev), 1)
+                    nd_ = cdesc.clone(); nd_[bi_, ji_] = cdesc[bi_[src_], ji_[src_]]
+                    nv_ = cval.clone(); nv_[bi_, ji_, 3] = cval[bi_[src_], ji_[src_], 3]
+                    cdesc = torch.where(scf[..., None], nd_, cdesc); cval = torch.where(scf[..., None], nv_, cval)
+                    cf = scf if cf is None else (cf | scf)
+        u = model.ctl_embed(batch['ctl_type'].long() * cm.long(), cval, cvm, cdesc, cdm)
         nowk = torch.arange(K, device=dev).float() * CHUNK_FRAMES / 50.
         if sc.p_async > 0:                # arrives with the word it is attached to; time known once voiced (streaming samples)
             arr_c = anchor_arrival(arr, batch['ttime'], tvalid, ct)
@@ -588,7 +605,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         qsec = model.flow_seconds(torch.arange(K, device=dev), cfg.ctx + CHUNK, cfg.ctx)
         cc = model.ctl_flow_cond(u, ct, keep, timed, qsec)
         if cc is not None: ctl_c = cc.flatten(0, 1)
-        ctl = dict(cm=cm, keep=keep, qsec=qsec, cval=cval, cf=cf, cvm=cvm)
+        ctl = dict(cm=cm, keep=keep, qsec=qsec, cval=cval, cf=cf, cvm=cvm, cdesc=cdesc, cdm=cdm)
     if getattr(cfg, 'ret', False) and 'ret_t' in batch:      # retrieved exemplars: arrive with their word, used once their time is known
         from .ctl import anchor_arrival, visibility
         rt = batch['ret_t'].float(); rm = batch['ret_m'].bool() & torch.isfinite(rt) & ~r(sc.ret_drop)[:, None]
@@ -947,7 +964,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
 
     # ---- decoded continuity / rhythm
     if sc.w_cont > 0 or sc.w_rhy > 0 or sc.w_phys > 0 or sc.w_foot > 0 or sc.w_safe > 0 or \
-            ((sc.w_ctl_aux > 0 or sc.w_ctl_count > 0 or sc.w_ctl_finger > 0) and ctl is not None):
+            ((sc.w_ctl_aux > 0 or sc.w_ctl_count > 0 or sc.w_ctl_finger > 0 or sc.w_sem_desc > 0) and ctl is not None):
         x1hat = torch.where(known[..., None], x1i, xt + (1 - t[..., None]) * v)
         # decode with the context the streamer has: 3 more history chunks before the known context (the decoder looks
         # ~7 latents back) and the next chunk's first latent as look-ahead (inference emits a frame only once the latent
@@ -990,6 +1007,9 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             from .g1_safety import contract_loss
             sf = contract_loss(y.float() * qs + qm, fv_all * w_inst[:, None])   # the executable contract holds in the bridge too
             out.update(sf); loss = loss + sc.w_safe * (sf['safe_lim'] + sf['safe_lr'] + sc.safe_torso_w * sf['safe_torso'])
+        if sc.w_sem_desc > 0 and ctl is not None and ctl.get('cdesc') is not None:     # 11-09 P2 outcome loss
+            out.update(sem_desc_loss(y.float() * qs + qm, batch, ctl, fv * w_inst[:, None], B, K, sc.sem_bank))
+            loss = loss + sc.w_sem_desc * out['sem_desc']
         if sc.w_ctl_aux > 0 and ctl is not None:
             out.update(ctl_ray_loss(y.float() * qs + qm, batch, ctl, fv * w_inst[:, None], B, K, extra=sc.w_ctl_ray_el > 0 or sc.w_ctl_raise > 0 or sc.w_ctl_ray_az > 0))
             loss = loss + sc.w_ctl_aux * out['ctl_ray']
@@ -1077,6 +1097,44 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         loss = loss + sc.w_semrepa * out['semrepa']
     out['loss'] = loss
     return out
+
+
+_SEMB = {}
+
+
+def sem_desc_loss(yp, batch, ctl, fw, B, K, bank):
+    """11-09 P2: yp [M = B K, 2 CF, J] decoded [ctx | target] frames (physical), fw [M, 2 CF]. The target halves of the K chunks of
+    a sample form its window estimate; for every kept SEM token with a descriptor, visible to the chunk of its window start
+    (ctl_a), window [a, a + 1.2 s] inside the estimate with all frames weighted > 0: E(descriptor of the decoded window with the
+    GIVEN hand, given descriptor) (scmg/sem_desc.py), weighted by the window's mean frame weight."""
+    from .common import EMBODIMENT
+    if EMBODIMENT != 'ex002': raise ValueError('StageCfg.w_sem_desc is the EX002 descriptor term (SCMG_J=34)')
+    from .ctl import SEM
+    from . import sem_desc as SD
+    if bank not in _SEMB:
+        import json as _j
+        from .common import P as _P
+        _SEMB[bank] = _j.loads(open(_P(bank)).read())
+    st = _SEMB[bank]; dev = yp.device; CF = CHUNK_FRAMES; T = K * CF
+    fa = torch.round(torch.nan_to_num(batch['ctl_a'].float(), -1e3) * 50.).long()
+    ka = torch.div(fa.clamp(min=0), CF, rounding_mode='floor').clamp(max=K - 1)
+    ok = ctl['cm'] & (batch['ctl_type'] == SEM) & (ctl['cdm'] > 0) & (fa >= 0) & (fa + SD.NW <= T)
+    ok = ok & torch.gather(ctl['keep'], 1, ka[:, None, :]).squeeze(1)
+    yw = yp.view(B, K, 2 * CF, -1)[:, :, CF:].reshape(B, T, -1)
+    fw_ = fw.view(B, K, 2 * CF)[:, :, CF:].reshape(B, T)
+    bi, ji = ok.nonzero(as_tuple=True)
+    z = dict(sem_desc=yp.sum() * 0., sem_desc_n=torch.zeros((), device=dev))
+    if len(bi) == 0: return z
+    idx = fa[bi, ji][:, None] + torch.arange(SD.NW, device=dev)[None]                         # [n, NW]
+    wv = fw_[bi[:, None], idx]                                                                # [n, NW]
+    good = (wv > 0).all(1)
+    if not good.any(): return z
+    bi, ji, idx, wv = bi[good], ji[good], idx[good], wv[good]
+    hand = (ctl['cval'][bi, ji, 3] > 0).long()
+    d = SD.standardise(SD.descriptor_q(yw[bi[:, None], idx], hand), st['mu'], st['sd'])
+    e = SD.error(d, ctl['cdesc'][bi, ji].float()); w = wv.mean(1)
+    return dict(sem_desc=(e * w).sum() / w.sum().clamp(min=1e-3), sem_desc_n=torch.tensor(float(len(bi)), device=dev),
+                sem_desc_raw=e.detach().mean())
 
 
 def ctl_ray_loss(yp, batch, ctl, fw, B, K, extra=False):
