@@ -22,7 +22,9 @@ PC = sorted(PROSODY_COLS.values())
 
 
 def main():
-    ap = argparse.ArgumentParser(); ap.add_argument('--sem', required=True); ap.add_argument('--out', required=True); a = ap.parse_args()
+    ap = argparse.ArgumentParser(); ap.add_argument('--sem', required=True); ap.add_argument('--out', required=True)
+    ap.add_argument('--groups', default='e5,lex,pros,hist', help='post-hoc diagnostic (11-09, not a gate): feature groups kept')
+    a = ap.parse_args(); keep = set(a.groups.split(','))
     S = Path(a.sem); Bk = np.load(S / 'SEM_BANK.npz'); dev = json.loads((S / 'DEV_EVENTS.json').read_text())['events']
     items = json.loads((Path(V) / 'train.json').read_text()); sp = json.loads((Path(V) / 'SPLIT.json').read_text())
     recs = {**recordings(items, set(sp['train_ids'])), **recordings(items, set(sp['val_ids']))}
@@ -52,13 +54,15 @@ def main():
         a0, a1 = fr(t_tok - 2), max(fr(t_tok), fr(t_tok - 2) + 1); pr = r['F'][a0:a1]
         h0, h1 = fr(t_tok - 1), max(fr(t_tok), fr(t_tok - 1) + 1)
         lex = np.zeros(len(LEXC), np.float32); lex[LEXC.index(kwcat) if kwcat in LEXC else 0] = 1
-        return e5, np.concatenate([lex, pr.mean(0), pr.std(0), r['sp'][h0:h1].mean(0), r['hz'][h0:h1].mean(0)])
+        parts = ([lex] if 'lex' in keep else []) + ([pr.mean(0), pr.std(0)] if 'pros' in keep else []) + \
+                ([r['sp'][h0:h1].mean(0), r['hz'][h0:h1].mean(0)] if 'hist' in keep else [])
+        return (e5 if 'e5' in keep else np.zeros(768, np.float32)), (np.concatenate(parts) if parts else np.zeros(1, np.float32))
     Xtr = [feats(str(s), float(t), str(c)) for s, t, c in zip(Bk['stem'], Bk['t_tok'], Bk['cat'])]
     Xdv = [feats(e['stem'], e['t_tok'], e['cat']) for e in dev]
     Ytr = Bk['D'].astype(np.float64); Ydv = np.array([e['desc'] for e in dev], np.float64)
     grp_tr = np.array([str(s) for s in Bk['stem']]); grp_dv = np.array([e['stem'] for e in dev])
     E5tr = np.stack([x[0] for x in Xtr]); E5dv = np.stack([x[0] for x in Xdv])
-    mu5 = E5tr.mean(0); U, s_, Vt = np.linalg.svd(E5tr - mu5, full_matrices=False); P32 = Vt[:32].T
+    mu5 = E5tr.mean(0); U, s_, Vt = np.linalg.svd(E5tr - mu5, full_matrices=False); P32 = Vt[:32].T if 'e5' in keep else np.zeros((768, 1))
     Z = lambda E5, X: np.concatenate([(E5 - mu5) @ P32, np.stack([x[1] for x in X])], 1)
     Ztr, Zdv = Z(E5tr, Xtr), Z(E5dv, Xdv); zm, zs = Ztr.mean(0), Ztr.std(0) + 1e-6; Ztr, Zdv = (Ztr - zm) / zs, (Zdv - zm) / zs
     Ef = lambda P, Y: np.sum((P - Y) ** 2, -1) / SD.ND
@@ -93,7 +97,7 @@ def main():
     red = 1 - e_mod.mean() / e_mm.mean(); ci = [float(np.percentile(bs, 2.5)), float(np.percentile(bs, 97.5))]
     r2 = 1 - ((Pdv - Ydv) ** 2).sum(0) / ((Ydv - Ytr.mean(0)) ** 2).sum(0)
     wc = {SD.NAMES[j]: float(np.mean([Ytr[Bk['cls'] == c, j].var() * (Bk['cls'] == c).mean() for c in cm]) * len(cm) / Ytr[:, j].var()) for j in range(SD.ND)}
-    res = dict(n_train=len(Ytr), n_dev=len(Ydv), cv=cv, cv_marginal_mean=cv_mm, chosen=best,
+    res = dict(groups=sorted(keep), n_train=len(Ytr), n_dev=len(Ydv), cv=cv, cv_marginal_mean=cv_mm, chosen=best,
                dev=dict(E_model=float(e_mod.mean()), E_marginal_mean=float(e_mm.mean()), E_marginal_sample=float(e_ms.mean()), E_class_mean_lexicon=float(e_cls.mean())),
                reduction_vs_marginal_mean=float(red), reduction_ci95=ci, r2_dev={SD.NAMES[j]: float(r2[j]) for j in range(SD.ND)},
                within_class_over_total_var_train=wc, GATE=dict(rule='E_model <= 0.90 E_marginal_mean and CI low > 0', pass_=bool(red >= 0.10 and ci[0] > 0)))
