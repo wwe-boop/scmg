@@ -1053,3 +1053,7 @@ M2 result (REPORT-ONLY; scripts/ex002/human_splice.py, ctl-port 815847e; diag/M2
     human splices add +3.5 on the sparse plan, against the token path's +5.96 / +9.25 over the none row (ii_split). About 40-60 % of
     the token excess is the size of a human-spliced obedience cost.
   - With check (b) failed, (ii)_H is reported with that caveat and is not used as a floor. The registered (ii) gate is unchanged.
+Module 9d amendment (2026-11-08 ~21:00, made BEFORE any 9d run; no 9d result exists). Coordinator decision on arbitration: the present
+gates (presenting hand raised ≥ 0.80, signed palm median ≤ 45°) score the hand the system actually presents, read from the run's
+KEYFRAMES (ex002_present.py actual_hand_* fields). The plan-rule-hand numbers (present_hand_*) are reported beside them. Count hit stays
+per hand as before. Applies to every 9d row; for rows without arbitration the actual and rule hands coincide.
