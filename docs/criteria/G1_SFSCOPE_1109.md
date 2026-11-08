@@ -16,5 +16,5 @@ Source: refine-logs/FABLE_THEORY_1109.md §1.2 and main's queue item. G1 dev onl
 - Kill (any): Ka enc wrist-speed ratio (vs GT, psync) not above full's; Kb enc FGD above the upper end of the range, offline or
   psync.
 - Reported, not gated: still share and amplitude, stutter of enc vs sf0 and GT, dBA / dDiv / dJerk, and full vs sf0.
-- Pass -> the 3-seed DLC lane on main's go (§1.2: fix-base? no, the same hos dev protocol, 3 training seeds x per_clip 0 / 1,
-  400 clips), with "confirmed cross-platform" iff psync FGD <= sf0 within the seed range and the stutter at the sf0 level.
+- Pass -> the 3-seed DLC lane on main's go (the same hos dev protocol, 400 clips, 3 training seeds x per_clip 0 / 1),
+  with "confirmed cross-platform" iff psync FGD <= sf0 within the seed range and the stutter at the sf0 level.
