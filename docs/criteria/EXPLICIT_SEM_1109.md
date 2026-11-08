@@ -145,3 +145,12 @@ Side gates: FGD v2 TTS-sync 112.89 / psync 111.57 (none 114.83); outside +-1 s 1
 PASS (still 0.019 / 0.020, wrist 0.316 / 0.323 m/s, amp 0.099 / 0.101).
 Combined canonical row (SELF chest + YOU / POINT point keyframes + NUMBER finger override + BIG / SMALL keyframes): every gated
 category (SELF, YOU, NUMBER) PASSES on TTS-sync and psync; the not-gated BIG / POINT succeed on all their commands, SMALL on 1 of 2.
+
+## Full dev run (registered before running; same rules as amendments 1-4)
+- All 43 dev recordings x per_clip seeds 0 / 1 / 2, rows TTS-sync (primary) and psync. none = the stored enc-s0 psync outputs
+  (ex002-sfscope-1108/enc-s0/psync/s<k>, the same protocol, the bitwise base path). The canonical row = the tok10ab model
+  (m10-enc b4k) + 5c blend + module-10 finger library + BIG / SMALL / SELF-chest keyframes + YOU / POINT point keyframes.
+- Per category, success pooled over the 3 seeds, given - none >= +20 pp with the recording-clustered bootstrap CI excluding 0;
+  a category is gated only with >= 5 commands per seed (mean).
+- Side gates (3-seed means): FGD v2 <= none + delta, delta = max(0.03 x none, 2 x SD of none's 3 seeds) (EX002 gate 3);
+  FGD v2 outside +-1 s of the commands reported; liveliness guard; executability after CBF = 100 % of clips (ex002_exec.py).
