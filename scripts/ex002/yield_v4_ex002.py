@@ -124,6 +124,12 @@ def audit(a):
     Path(a.out).write_text(json.dumps(res, indent=1))
 
 
+def tails(a):
+    """activity / withdrawal / v4 of an extra human tail set (e.g. the fresh dev-speaker tails) under frozen parameters."""
+    par = json.loads(Path(a.params).read_text()); T = tail_windows(a.seg); rs = [judge(par, q, off) for _, q, off in T]
+    res = summ(rs); Path(a.out).write_text(json.dumps(res, indent=1)); print('TAILS', a.seg, json.dumps(res), flush=True)
+
+
 def score(a):
     par = json.loads(Path(a.params).read_text()); ints = json.loads(Path(X + '/interrupts_dev_ex002.json').read_text())['interrupts']; res = {}
     for spec in a.rows:
@@ -143,5 +149,6 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser(); sp = ap.add_subparsers(dest='cmd', required=True)
     p = sp.add_parser('calib'); p.add_argument('--out', required=True)
     p = sp.add_parser('audit'); p.add_argument('--params', required=True); p.add_argument('--out', required=True)
+    p = sp.add_parser('tails'); p.add_argument('--params', required=True); p.add_argument('--out', required=True); p.add_argument('--seg', required=True)
     p = sp.add_parser('score'); p.add_argument('--params', required=True); p.add_argument('--out', required=True); p.add_argument('rows', nargs='+')
-    a = ap.parse_args(); dict(calib=calib, audit=audit, score=score)[a.cmd](a)
+    a = ap.parse_args(); dict(calib=calib, audit=audit, score=score, tails=tails)[a.cmd](a)
