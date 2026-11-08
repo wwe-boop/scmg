@@ -157,3 +157,5 @@ gate 1 FAIL; GT in speech 26.5 % -> gate 2 FAIL; mismatched reference +2.0 pp ->
 No grid point reaches the registered 0.90, so the rule picks nothing; deviation (logged before the it1 validation): it1 takes the
 highest half-A pass rate, pct 70 / skip 0.5 (0.883; tie with 60 / 0.5 within 0.006 broken toward the higher percentile as the rule
 orders). Since no grid point can do better on half A, it1 is the last iteration: if gates 1-3 fail, PSS is recorded as invalid.
+M1 it1 (pct 70 / skip 0.5; v_s 0.585 m/s): half-B tails 84.8 %, fresh 66.7 % (13_lu 100 %, 2_scott 45 %) -> gate 1 FAIL; GT in speech
+25.6 % -> gate 2 FAIL; mismatched reference +1.3 pp (pass). Last iteration -> PSS is an INVALID metric on EX002 (not used for any row).
