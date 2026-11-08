@@ -83,3 +83,25 @@ fell from 1.39 to about 1.2. 10 recordings, 62 oracle events. GT sanity on these
   passes; none fails wrist amplitude (0.082 vs 0.75 x GT 0.083); retrieval fails wrist speed and amplitude (0.253 / 0.069).
 - note: the bank median lag from (keyword onset) to the segment midpoint is 0.0 s, because 42 % of the bank tokens use the
   t - 0.2 fallback. The retrieval "own" windows are therefore centred on the word onset.
+
+## Round 4b pre-check: is the descriptor predictable from deployable causal inputs? (written 11-09 before computing it)
+Source: refine-logs/FABLE_ROUND4B_1109.md §1 + main review. CPU only, no generator. scripts/ex002/sem_precheck.py.
+- Samples: the 5316 train bank events (fit) and the 247 dev events (score). Target = standardised D (16), scored with E.
+- Causal features at the token time t_tok (keyword onset - 0.2 s):
+  - e5: the prefix-causal e5 (models/text-e5-causal-v36_1) of the last 5 timed tokens with time <= t_tok + 0.2, mean. PCA to 32
+    dims, fitted on train.
+  - lexicon category one-hot of the keyword (15).
+  - prosody: the 8 prosody columns of feat89, mean and std over [t_tok - 2, t_tok] (16).
+  - hand in use: per hand, mean wrist speed and mean wrist height minus shoulder height over [t_tok - 1, t_tok] (4), from the
+    GT history (the deployed generator's own history plays this role).
+  - All features z-scored on train.
+- Models: ridge (alpha in {0.1, 1, 10, 100, 1000}) and k-NN (k in {5, 20, 50}, Euclidean on the z-scored features, mean of the
+  neighbours' D). Hyper-parameters and the ONE model to score are chosen by 5-fold recording-grouped CV on train only. Dev is
+  scored once.
+- Baselines (dev E): marginal mean (train mean of D); marginal sample (a random train D, mean over 20 draws); class mean via the
+  keyword's lexicon category -> LEX2SEM class (deployable).
+- Reported: R^2 per component on dev; within-class / total variance ratio per component on train (oracle class).
+- Gate (the "gain" threshold): PASS iff the CV-chosen model's dev E <= 0.90 x E(marginal mean), AND the recording-clustered
+  bootstrap 95 % CI (2000 resamples of the 43 dev recordings) of 1 - E(model) / E(marginal mean) lies above 0.
+  PASS -> Design A quick lane (pre-registered separately). FAIL -> finding "the semantic descriptor is not inferable from
+  deployable causal inputs on BEAT2", written here and as a negatives row; no MDN run.
