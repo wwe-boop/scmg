@@ -590,3 +590,33 @@ VAE isolation (read-only, numbers only; scripts/ex002/diag/vae_diag.py on speech
   - The decoder makes the 4-frame pattern and the joint-4/5 signature: both are already in the GT reconstruction.
   - The magnitude splits into a decoder part (GT reconstruction 1.20x) and a generator part. Generator latents are partly off-manifold:
     projection takes 1.59x down to 1.35x, which is still above the GT reconstruction's 1.20x.
+## Decoder-only fine-tune r3d (pre-registered 2026-11-08 ~11:30, before any r3d run; coordinator approved after the VAE isolation)
+Goal: remove the decoder's 4-frame acceleration pattern without touching the latent space.
+- Recipe. Init vae-r3. Encoder parameters and latent statistics are frozen; this is asserted at save, as in scripts/echog_g1/vae_decoder_ft.py
+  (c67ede4), so every EX002 generator stays valid without retraining. Data: data-v36_1 TRAIN split only. Script:
+  scripts/ex002/vae_decoder_ft_ex002.py.
+- Loss. The r3 loss (rec + 0.3 vel + 0.1 acc in normalised units; the KL is constant), plus physical-unit velocity and acceleration
+  matching on the moving upper body (joints 2–33: head, arms, fingers; waist / pedestal excluded): relative L1,
+  mean |Δ^k ŷ − Δ^k x| / mean |Δ^k x| in rad/s and rad/s², k = 1, 2, weights 1 / 1. lr 1e-4, 200-step warmup, batch 64 × 256 frames, EMA 0.999.
+- Arms:
+  - A: z = mu + σ·eps from the frozen posterior;
+  - B: as A, but on 50 % of the batches z = mu + 0.3·eps (latent-error robustness, aimed at the off-manifold generator latents).
+- Schedule. Quick lane of 2000 steps per arm. An arm goes on to 10k steps only if its quick-lane checkpoint passes gates 1–2. The final
+  candidate is the 10k checkpoint, and every gate is evaluated on it.
+- Gates. Dev only; "GT" = the 43 dev clips (enc-s0 offline gt_*.npy); spike threshold = GT p99 = 28.1 rad/s²; statistics as
+  scripts/ex002/diag/spikes_where.py.
+  1. Reconstruction (mu decode of the dev GT) not worse than r3 by more than 2 %, on both the normalised L1 over all joints and the mean
+     |Δq| over the upper body. Same script, same clips; r3: 0.032 rad upper body.
+  2. Reconstructed GT window p95 ≤ 1.2x GT (≤ 32.96); reconstructed frames above the GT p99 ≤ 1.5 % (r3 2.9 %); flat latent phase, all four
+     per-frame-in-latent rates within 0.9–1.1 (r3 0.47–1.29).
+  3. On regenerated enc-s0 none outputs (bench_ex002 infer --vae r3d, offline AND psync, seeds 0–2, per_clip, same as A's enc-s0 runs):
+     - window p95 ≤ 1.3x GT (≤ 35.7) per protocol (r3: 50.3 / 57.1);
+     - FGD v2 and FKD not worse than r3 by more than one seed SD (3-seed means; r3 = A's enc-s0 runs re-scored in the same job);
+     - liveliness: the protocol guard (lively_floor_ex002.py, pooled seeds) and my guard both pass.
+- Adoption rule:
+  - one arm passes all gates: it becomes the EX002 decoder, and every EX002 table re-runs on its outputs;
+  - both pass: take the lower gate-3 window p95 (mean of the two protocols);
+  - neither passes: keep r3 and log a negatives row.
+- Reported for the winner: per-frame-in-latent rates, arm-joint split, and one before / after render (same clip, r3 vs r3d decode,
+  front view).
+- Cost: one 4-GPU pod, about 1.2 h for both arms.
