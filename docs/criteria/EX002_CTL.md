@@ -656,3 +656,17 @@ Diagnosis of the angle failure (offline seed 0, 197 aim events of 15 clips, read
 - The frozen apex detector (APEX.json, logistic regression with positive weights on wrist speed) never chose a frame inside the hold:
   75 % of apex frames fall before it, 25 % after, and the median error at those frames is 31.4 deg.
 - The hold is exactly static (speed 0), which the detector scores low. The gate (apex rule) is unchanged.
+## r3d result (dlc1p9g16zayjbbt, LANE_DONE 12:13 2026-11-08): both arms stop after the quick lane (2000 steps)
+Gates 1-2 on the quick-lane checkpoints (encoder identical to r3 in both arms, asserted):
+
+| | A (posterior) | B (+ latent noise) | r3 | threshold |
+|---|---|---|---|---|
+| normalised L1 | 0.1365 (+7.0 %) | 0.1616 (+26.6 %) | 0.1276 | gate 1: ≤ +2 % |
+| upper-body mean abs (rad) | 0.0362 (+12.8 %) | 0.0476 (+48 %) | 0.0321 | gate 1: ≤ +2 % |
+| reconstructed GT window p95 | 25.8 | 22.9 | 32.9 | gate 2: ≤ 32.96 (GT 27.5) |
+| frames above the GT p99 | 1.09 % | 0.67 % | 2.87 % | gate 2: ≤ 1.5 % |
+| latent-phase rates | 1.19 / 1.05 / 0.73 / 1.03 | 1.14 / 1.05 / 0.76 / 1.05 | 1.29 / 1.06 / 0.47 / 1.18 | gate 2: all in 0.9–1.1 |
+
+VERDICT: both arms FAIL gate 1 (reconstruction) and the flat-phase part of gate 2. Both lower the spike magnitude below GT (smoother than
+the human data). The 4-frame pattern weakens but stays (frame 2 at 0.73 / 0.76). By the adoption rule, r3 stays the EX002 decoder; no
+10k run and no gate 3. Module 9c runs on r3.
