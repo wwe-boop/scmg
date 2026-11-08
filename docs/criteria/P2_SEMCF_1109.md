@@ -177,3 +177,5 @@ Controls (offline given, reduction vs none, CI):
   upper 31.8) -> the counterfactual + outcome terms matter. c1 still follows the swap (1.650 vs 2.254).
 - c2 onset 37.0 % [31.4, 42.3]; c3 late 36.3 % [31.8, 41.0]. The main reduction exceeds both point-wise (the registered reading:
   "the lead matters"), but the CIs overlap: the -0.2 s lead is a small effect.
+VERDICT (main 11-09): P2 full run FAILS under the registered rule (G3 FGD v2 misses by 0.97). Kept as reported findings: G1 / G2 / G5
+and the controls (mechanism evidence). No re-tuning of P2. Negatives row 64.
