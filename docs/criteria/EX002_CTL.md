@@ -1040,3 +1040,16 @@ training and inference; frames outside every window get exactly zero from the co
   table; label: "human motion spliced", not "human obeying".
 - Validity checks: (a) H with zero insertions scores 0; (b) H built from hindsight-token windows (CTL 'aim' random-time windows of the
   more-extended hand) scores ≤ (ii)_H; (c) (ii)_H on the dense plan ≫ the sparse value.
+M2 result (REPORT-ONLY; scripts/ex002/human_splice.py, ctl-port 815847e; diag/M2_HUMAN_SPLICE_1108.json). Pools (train): deictic 486 / 574
+(left / right), hindsight 1246 / 1697, raised presenting windows 1175–10478 per (hand, count).
+- (ii)_H, sparse plan, FGD v2 of the human-spliced GT vs GT: 3.47 ± 0.27 (3 window seeds: 3.46 / 3.21 / 3.75).
+- Validity:
+  - (a) zero insertions: 0.000 → PASS.
+  - (b) hindsight windows: 4.29 ± 0.03, NOT ≤ 3.47 → FAIL. The hindsight random-time windows raise FGD more than the real deictic
+    windows, so the memo's assumption that "less marked windows raise FGD less" does not hold.
+  - (c) dense 39.2 ± 2.3 ≫ sparse 3.47 → PASS.
+- Reading:
+  - (ii)_H is on the GT scale, while (ii) compares a generator with GT. The comparable quantity is the excess an obedient insertion adds:
+    human splices add +3.5 on the sparse plan, against the token path's +5.96 / +9.25 over the none row (ii_split). About 40-60 % of
+    the token excess is the size of a human-spliced obedience cost.
+  - With check (b) failed, (ii)_H is reported with that caveat and is not used as a floor. The registered (ii) gate is unchanged.
