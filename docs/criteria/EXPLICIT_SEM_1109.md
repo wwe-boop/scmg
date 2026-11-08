@@ -91,3 +91,13 @@ Revisions (this is the one allowed revision per metric):
   both at the apex-detector frame within t +- 1 s.
 SELF, BIG, SMALL and NUMBER metrics are unchanged. Validation is re-run on all 10 recordings; a metric still below 90 % is
 reported as failed and its category is not gated.
+
+## Data-driven path: sanity RESULT (11-09 04:1x; expl-1109/EXPL_SANITY.json)
+Exemplars: 68,217 train / 668 dev category-word occurrences (train: SELF 17,157, YOU 16,721, NUMBER 15,090, POINT 13,817,
+SMALL 2,838, BIG 2,594; dev: SELF 412, YOU 110, POINT 73, NUMBER 42, SMALL 16, BIG 15). Classifier train CV balanced
+accuracy 0.254 (C 10; chance 0.167). Dev GT own-label rates: SELF 0.150, YOU 0.155, POINT 0.123, NUMBER 0.333, BIG 0.200,
+SMALL 0.063; the gate is chance + 20 pp = 0.367. ALL SIX categories FAIL. Balanced 0.171, shuffled 0.169. Under the registered
+rule fewer than 2 categories survive -> METRIC INVALID: on BEAT2, the arm kinematics at explicit words do not identify the
+word category (consistent with S1 and the 0.99 within-class ratio). The first build crashed at the empty refit; the numbers
+come from the same exemplars, re-run with the fixed code (--reuse).
+-> Every category uses the canonical path (amendment 1 / 2).
