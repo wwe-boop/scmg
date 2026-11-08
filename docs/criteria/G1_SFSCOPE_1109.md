@@ -39,3 +39,21 @@ Caveats, stated with the verdict:
 - One training seed and one inference seed on 100 clips; the psync czm2kws range is wide (1.733-1.900).
 - History-source ablation (§1.2 iii) not run: the inference has no teacher-forced-history mode, so it is not cheap.
 - pair_win not read (invalid on 100 clips).
+
+## Full G1 dev lane (main's go 11-09; registered before submission)
+- Arms sf0 / full / enc as in the quick lane, czm2kws recipe, hos-base warm start, 2000 steps, training seeds 0 / 1 / 2 (9 models),
+  one release, one 8-GPU pod.
+- Evaluation on the 400 D-spk dev clips (A/dev_stems.txt): official evaluator, CFG 2.5, 10 steps, offline + psync x per_clip
+  seeds 0 / 1 (36 benchmarks). Liveliness: g1_liveliness.py, normalised by the 400-clip dev GT. Stutter: beat_phase.py, max / min
+  of the 10-bin chunk-phase histogram, per run. pair_win: rec-sem-hos-seed0..2 on the full dev events, offline runs. The GT and
+  mismatched-GT sanity rows come first (mismatched = a 400-stem derangement across recordings, seed 20261109). pair_win is
+  reported only if GT is clearly > 0.5 and |mismatched - 0.5| <= 0.03.
+- History-source ablation: skipped. It would need a new teacher-forced-history inference mode; it is not added in this lane.
+- Reading, registered with main:
+  enc is CONFIRMED CROSS-PLATFORM iff all three hold:
+  (1) psync FGD: enc's mean over the 3 training seeds (each the mean of per_clip 0 / 1) <= the largest of sf0's three
+      training-seed means ("within the sf0 seed range");
+  (2) psync stutter: enc's max / min (mean over the 6 runs) <= sf0's mean + 0.05 ("at sf0's level");
+  (3) psync wrist speed: the mean over the 6 runs is within [0.75, 1.25] x GT.
+  Otherwise enc stays an EX002 finding. Full SF is reported as is (its psync FGD and its stutter side by side), with no gate.
+  Offline numbers, dBA / dDiv / dJerk, still share, amplitude and pair_win are reported.
