@@ -32,7 +32,9 @@ def pts(q):
 
 def feats(q, f):
     p = pts(q[f - 1:f + W]); w = p[:, :2]; s = np.linalg.norm(np.diff(w, axis=0), axis=-1).max(1) * I.FPS     # [W] hand speed
-    e = (p[-Q:, :4] - p[-Q:, 4:5]).mean(0).reshape(-1); return s, e
+    e = (p[-Q:, :4] - p[-Q:, 4:5]).mean(0).reshape(-1)
+    e0 = (p[:3, :4] - p[:3, 4:5]).mean(0).reshape(-1)            # pose at the event (frames f-1 .. f+1)
+    return s, e, e0
 
 
 def quiet(s, v75, v95):
@@ -61,23 +63,34 @@ def tail_windows(seg_dir):
 
 def calib(a):
     T = tail_windows(X + '/tails/seg_halfA'); S, E = [], []
-    for _, q, off in T: s, e = feats(q, off); S.append(s); E.append(e)
-    S = np.concatenate(S); E = np.stack(E); v75, v95 = float(np.percentile(S, 75)), float(np.percentile(S, 95))
+    F = [feats(q, off) for _, q, off in T]; S = np.concatenate([f_[0] for f_ in F]); E = np.stack([f_[1] for f_ in F])
     loo = np.array([knn(E, E[i], skip=i) for i in range(len(E))]); d90 = float(np.percentile(loo, 90))
-    par = dict(v75=v75, v95=v95, D90=d90, k=3, quiet_frames=Q, end_frames=Q, n_A=len(E), E_A=E.tolist(), source='A-half tails (seg_halfA)')
-    ap = [quiet(feats(q, off)[0], v75, v95) is not None for _, q, off in T]
-    par['A_activity_pass'] = float(np.mean(ap)); par['A_withdrawal_pass_loo'] = float(np.mean(loo <= d90))
+    E0 = [f_[2] for f_ in F]; need = np.array([knn(E, e0) > d90 for e0 in E0])
+    # iteration 2 (A half only): quiet / stroke percentiles = the smallest pair on the grid whose activity pass on the A-half
+    # NEEDED events (pose at the event outside the end-pose support) is >= 0.90
+    grid = [(qp, sp) for qp in (75, 80, 85, 90, 95) for sp in (95, 97, 99, 100)]; pick = None; tried = []
+    for qp, sp in grid:
+        v1, v2 = float(np.percentile(S, qp)), float(np.percentile(S, sp))
+        r = float(np.mean([quiet(F[i][0], v1, v2) is not None for i in np.nonzero(need)[0]])) if need.any() else 0.; tried.append((qp, sp, r))
+        if pick is None and r >= 0.90: pick = (qp, sp, v1, v2)
+    if pick is None: qp, sp, r = max(tried, key=lambda x: x[2]); pick = (qp, sp, float(np.percentile(S, qp)), float(np.percentile(S, sp)))
+    par = dict(iteration=2, quiet_pct=pick[0], stroke_pct=pick[1], v75=pick[2], v95=pick[3], D90=d90, k=3, quiet_frames=Q, end_frames=Q, n_A=len(E),
+               E_A=E.tolist(), source='A-half tails (seg_halfA)', grid=tried, A_needed_share=float(need.mean()))
+    par['A_activity_pass_needed'] = float(np.mean([quiet(F[i][0], pick[2], pick[3]) is not None for i in np.nonzero(need)[0]]))
+    par['A_withdrawal_pass_loo'] = float(np.mean(loo <= d90))
     Path(a.out).write_text(json.dumps(par)); print('CALIB', json.dumps({k: v for k, v in par.items() if k != 'E_A'}))
 
 
 def judge(par, q, f, skip=None):
-    E = np.asarray(par['E_A']); s, e = feats(q, f); t = quiet(s, par['v75'], par['v95']); d = knn(E, e, par['k'], skip)
-    return dict(activity=t is not None, withdrawal=d <= par['D90'], v4=(t is not None) and d <= par['D90'], latency=t, knn=d)
+    E = np.asarray(par['E_A']); s, e, e0 = feats(q, f); t = quiet(s, par['v75'], par['v95']); d = knn(E, e, par['k'], skip)
+    need = knn(E, e0, par['k'], skip) > par['D90']                 # iteration 2: the pose at the event is outside the support
+    return dict(activity=t is not None, withdrawal=d <= par['D90'], v4=(t is not None) and d <= par['D90'], latency=t, knn=d, needed=bool(need))
 
 
 def summ(rs):
     if not rs: return dict(n=0)
-    return dict(n=len(rs), v4=float(np.mean([r['v4'] for r in rs])), activity=float(np.mean([r['activity'] for r in rs])),
+    nd = [r for r in rs if r['needed']]
+    return dict(n=len(rs), n_needed=len(nd), v4_needed=float(np.mean([r['v4'] for r in nd])) if nd else None, v4=float(np.mean([r['v4'] for r in rs])), activity=float(np.mean([r['activity'] for r in rs])),
                 withdrawal=float(np.mean([r['withdrawal'] for r in rs])),
                 latency_median=float(np.median([r['latency'] for r in rs if r['v4']])) if any(r['v4'] for r in rs) else None)
 

@@ -105,3 +105,10 @@ yield (yield3d kept as a secondary column). Reason: only 20 / 297 (6.7 %) A-half
 tail, so yield3d scores human behaviour near the bottom. Definition, calibration (A half only) and validity gates (B-half tails
 >= 85 %, speech continuations GT / FRONT / B1 <= 15 %): scripts/ex002/yield_v4_ex002.py (d0d67b0) and refine-logs/EVAL_PROTOCOL.md
 section 6. Iterations of the definition (A half only) are listed here as they happen. Iteration 1 = the d0d67b0 definition.
+  v4 iteration 1 audit (A-calibrated v75 0.169 / v95 0.584 m/s, D90 0.131 m): B-half tails 58.3 % (activity 68.9 %, withdrawal 80.1 %)
+  -> gate FAIL; GT in speech 0.4 %, FRONT 0.0 %, B1 36.1 % -> B1 gate FAIL (frozen poses at t_i often already lie in the human end-pose
+  support). yield3d on the same tail windows: A 17.5 % (4.6 % of the needed), B 16.6 % (10.1 % of the needed).
+  v4 iteration 2 (A half only, written before its audit): (i) an event is NEEDED iff the pose at the event (frames f-1..f+1) lies
+  outside the A-half end-pose support (3-NN distance > D90); v4 is reported on the needed events (primary) and on all; (ii) the quiet /
+  stroke speed thresholds are A-half percentiles chosen as the smallest pair on the grid {75..95} x {95..100} whose activity pass on the
+  A-half needed events is >= 90 %. Gates unchanged, applied to the needed events.
