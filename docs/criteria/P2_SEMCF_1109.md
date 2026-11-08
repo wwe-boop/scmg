@@ -62,3 +62,9 @@ recordings (none vs given); the TTS-sync row on the same 10.
 Secondary (only on main's go after a pass): pair_win full - no-text >= +0.10 with CI (the §7.45 bar). Risk stated in advance:
 pair_win may not move even if the descriptors are realised (the recogniser measures class timing, not kinematics); the result
 would then be "controllable semantic kinematics", not "better semantics".
+
+## Metric validation result (11-09 02:2x, sem_bank.py on speech_server; before any model number)
+Bank 5316 train events, 247 dev events. Descriptor mu / sd in sem-1109/SEM_BANK.json. Dev GT: V1 own E = 0.000; V2 mismatched
+(derangement across recordings) E = 2.556; GT window moved +-1 s vs own = 1.768, between 0 and E_mis as registered -> metric
+valid. The keyword had no aligned occurrence within t +- 1 s for 2231 / 5316 train and 103 / 247 dev events; for those the token
+time falls back to t - 0.2 s (as registered).
