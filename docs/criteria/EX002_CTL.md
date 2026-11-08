@@ -756,3 +756,29 @@ tok5b / m9b / m9b5c; front + 45 deg; frames at the command time in aim0.f.png / 
 - aim0 (left hand): the red forearm ray runs close to the yellow command direction in the m9b / m9b5c panels and further from it in
   tok5b.
 - At the command time m9b and m9b5c look the same.
+## Why the token path does not transfer to enc-s0 (read-only diagnosis, numbers only; coordinator after the 5c result)
+1. Where the (ii) cost sits (sparse plan, seeds 0-2; scripts/ex002/diag/ii_split.py; diag/II_SPLIT_1108.json). Windows (32 frames,
+   stride 16) are split into inside (overlap ±1 s of a command, 41 % of windows) and outside. Offline / psync:
+
+   | run | whole = (ii) | outside | inside-only | swap |
+   |---|---|---|---|---|
+   | none | 86.29 / 109.02 | 86.83 / 107.06 | 89.21 / 115.72 | — |
+   | tok5cplain | 90.05 / 115.30 | 86.84 / 107.10 | 105.29 / 139.04 | 86.29 / 109.05 |
+   | tok5c (override) | 92.25 / 118.27 | 86.84 / 107.10 | 112.02 / 148.12 | 86.29 / 109.05 |
+
+   - Swap = the whole-clip FGD with the inside windows taken from the none run. It returns to the none value, so the entire (ii) excess
+     (+5.96 / +9.25 over none) sits in the command windows; outside windows equal none's.
+   - The override's share of the excess: +2.20 / +2.97 (37 % / 32 %).
+   - Per-window Mahalanobis d² to the GT window Gaussian, inside windows: none 42.5 / 44.4, tok5cplain 41.5 / 41.9, tok5c 42.6 / 42.9.
+     The token windows are not individually atypical; the inside excess is a distribution-level effect (lower spread near commands).
+2. STG on enc-s0 vs sibag-s2 (diag/raw):
+   - Unblended (raw) given runs, aim angle (median, offline / psync): sibag ctl4 29.9 / 32.5, enc ctlenc 30.1 / 32.0 (none 50.7 / 51.7 vs
+     45.6 / 46.4). The raw aiming is the same on both bases.
+   - Raw STG gain: sibag +0.144 [+0.121, +0.168] / +0.135 [+0.116, +0.156]; enc +0.113 [+0.093, +0.133] / +0.099 [+0.082, +0.116]
+     (plans 1111 vs 1112).
+   - In STG terms: the enc none STG is higher (0.257 / 0.260 vs 0.245 / 0.232) and the enc given STG slightly lower
+     (0.370 / 0.358 vs 0.389 / 0.367).
+   - The blend costs about 0.04 of gain on sibag (raw +0.144 → tok5b +0.106) and about 0.015 on enc (+0.113 → +0.095–0.099).
+   - Training: the ctl_ loss curves are the same within noise (steps 1800-2000: ctl_ray 0.1015 vs 0.1008, ctl_finger 0.2216 vs 0.2221).
+   - self_force_scope: both control trainings used self_force_p = 0 (self_forced 0.0 in every log line), so the 'encoders' scope never
+     acted on the ctl_ modules. The scope only shaped the enc-s0 base itself.
