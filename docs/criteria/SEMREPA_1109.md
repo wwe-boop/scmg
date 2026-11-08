@@ -90,3 +90,14 @@ or the sealed sets.
   offline FGD is above the upper end. K1 (Δpair_win < +0.02) and K3 (text use not above ctrl) are unchanged.
 - Liveliness on QUICK100, reported.
 - Only a pass leads to the 400-clip x 3-seed lane of section 3, unchanged.
+
+## Result of the teacher gate (11-09 01:4x) and amendment 2: teacher v2 (written before any v2 number)
+- v1 failed the gate twice (negatives row 60): S1 0.537 (1.6 s) / 0.563 (2.4 s) < 0.60; S2 0.707 / 0.678 passed. Diagnosis: the
+  raw e5 window vectors are anisotropic (cos ~ 0.86 between any two windows), and the cosine-regression head learns the mean
+  direction (cos own 0.863 = cos mismatched 0.863). As registered, no planner lane ran on v1.
+- v2 changes only the word term. Target = L2-normalise(mean window e5 - mu), with mu = the mean e5 token feature over the timed
+  tokens of the hos TRAIN items. Loss = symmetric InfoNCE between the normalised e5 head and the targets of the batch (in-batch
+  negatives, temperature 0.07 fixed, windows without a target excluded), weight 1. Class CE, architecture (1.6 s), data, seed 7
+  and the 6000 steps are unchanged.
+- The same gates apply, computed with the v2 target definition: S1 >= 0.60 and S2 >= 0.60. One pre-stated revision (2.4 s)
+  is allowed. If that also fails: negatives row, and SemREPA stops at the teacher.
