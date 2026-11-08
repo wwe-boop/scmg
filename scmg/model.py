@@ -37,14 +37,13 @@ SEM_SCALE = float(_os.environ.get('SCMG_SEM_SCALE', '1'))   # 11-05: inference-o
 INF = 10 ** 6
 
 
-@dataclass
-
 def ctl_window(dt):
     """D5 gate: 1 on [-0.3, 0.9] s, raised-cosine ramps of 0.3 s, 0 outside [-0.6, 1.2] s."""
     x = torch.clamp(torch.minimum((dt + 0.6) / 0.3, (1.2 - dt) / 0.3), 0., 1.)
     return 0.5 - 0.5 * torch.cos(torch.pi * x)
 
 
+@dataclass
 class Config:
     n_source: int = 7          # preserve legacy init/RNG exactly; BAgger explicitly expands to N_SOURCE
     z: int = 16                    # VAE latent dim
