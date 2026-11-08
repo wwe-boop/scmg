@@ -1122,3 +1122,11 @@ STG split (the coordinator's hypothesis):
   plan, it reaches +0.24 to +0.30 (the highest of all rows).
 VERDICT: 9c'' FAILS the pointing-angle gate (28.7 / 27.5) and passes every other primary and side gate, including (ii) and the signed
 palm. The angle and STG shortfall concentrates on aims next to a same-hand present (dense plan), which is what 9d's arbitration targets.
+9c'' renders (qual-1108/ex002-9cpp-full; rule ctl-port 1e09ed1, file-name fixes 5f..; offline seed 0; panels tok5c / 9c / 9c''; frames at the
+command time *_5.0.png):
+- present0 and present1 (right hand presents): in 9c'' the right hand is raised on its own side beside the head, fingers up, palm to
+  the camera. In 9c the hand is lower and across or out to the side with the palm not forward. In tok5c both hands stay low.
+- aim0 (left hand, target up and left): hold-window angle 0.4 deg in 9c'' (9c 0.6, tok5c 23.2). The apex detector picks t + 0.98 s in
+  9c'' (13.5 deg there) vs t + 0.62 s in 9c (1.6 deg).
+- aim2 (left hand, target on the robot's RIGHT, y −1.36 m, i.e. a cross-body point): hold angle 1.8 / 1.9 deg (9c'' / 9c), but the
+  detector picks the window start t − 1.0 s in both (53.4 deg); tok5c 63.6 deg at its apex (t + 0.48).
