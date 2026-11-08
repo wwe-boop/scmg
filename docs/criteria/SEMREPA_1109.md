@@ -77,3 +77,16 @@ or the sealed sets.
   judge.
 - Risk stated in advance: T and the pair_win recognisers share the BEAT2 label source, so a pair_win gain can partly reflect
   label agreement rather than perceived semantics. It is reported next to the blind-judge check.
+
+## Amendment 1 (main 11-09, written before any teacher-sanity or planner number): quick lane first
+- First run = a true quick lane. Both arms train 2000 steps, as in section 3. Evaluation covers 100 dev clips: QUICK100 = numpy
+  default_rng(20261109).choice of the sorted 400 dev stems (A/dev_stems.txt), 100 without replacement, sorted. It uses per_clip
+  seed 0 only, offline + offline no-text. psync is not run.
+- pair_win: the same recognisers, restricted to the events of QUICK100 (g1_recognizer.py score --allow-missing). The GT and
+  mismatched-GT sanity rows use the same stems (mismatched = a derangement inside QUICK100, seed 20261109). Mean over the 3
+  recognisers, seed 0.
+- K2 range on QUICK100: the official FGD of czm2kws (isodev-1107 offline seeds 0 / 1 / 2) re-evaluated on QUICK100 with the
+  same evaluator (bench.sh eval, no new inference). It is widened to include ctrl if ctrl falls outside. Kill if semrepa's
+  offline FGD is above the upper end. K1 (Δpair_win < +0.02) and K3 (text use not above ctrl) are unchanged.
+- Liveliness on QUICK100, reported.
+- Only a pass leads to the 400-clip x 3-seed lane of section 3, unchanged.
