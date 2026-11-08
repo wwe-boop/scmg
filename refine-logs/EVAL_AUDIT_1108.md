@@ -159,3 +159,5 @@ Status legend: PASS = verified with evidence (commit or number given); FAIL = sh
 - Pass 2 (17:05): H1–H4. Pass 3 (18:10): video check found V1 (palm sign bug, fixed) and E1b (prefix, resolved). Pass 4 (19:30): no new issue, audit passed.
 - 11-09 02:35 addendum: pair_win on a 100-clip G1 dev subset FAILS its sanity check (mismatched-GT 0.583 vs 0.5 ± 0.03; GT 0.714). New reading rule: pair_win is read only on the full dev set, and only with its sanity rows passing; never on quick-lane subsets.
 - 11-09 03:4x pass 5 (A): frozen-arm tails = retarget reset-pose fallback in the tail route (108 / 757 tails, 12 recordings); training and dev GT clean; tail-based references affected (P5e).
+- 11-09 05:20 addendum: pair_win sanity also FAILS on the full 400-clip G1 dev set in the current pipeline: GT 0.712 vs mismatched GT 0.572, with only 212 of 392 events surviving the length crop of the mismatched stems. Until the mismatched-GT construction is fixed (length-matched or circular pairing) and its sanity row passes, pair_win is not reported anywhere.
+
