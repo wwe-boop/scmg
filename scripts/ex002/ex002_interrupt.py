@@ -82,7 +82,7 @@ def infer(a):
                               text_mode='voiced', x2_rate=15., x2_lag=0.15, deploy_timing=True, causal_inputs=mk(), asr_lag=0.5,
                               t_int=t_i, keep_tok=keep, audio='silence', fm=view.fm, fs=view.fs, n_total=n_run * CHUNK_FRAMES,
                               restart='chunk', fresh_feat=lambda silence_from=None, T=None, t_words=None: mk(silence_from, T, t_words),
-                              yield_token=a.yield_token)
+                              yield_token=a.yield_token, yield_delay=a.yield_delay)
         while (stm.o + stm.k * CHUNK) < n_run * CHUNK: stm.tick(None, None, None)
         stm.flush()
         y = torch.stack(stm.all_frames()).cpu().numpy().astype(np.float32)[:f_i + TAIL]
@@ -91,7 +91,7 @@ def infer(a):
     with (out / f'GEN_LOG.{si}of{sn}.jsonl').open('a') as f:
         for x in log: f.write(json.dumps(x) + '\n')
     (out / 'PROTOCOL.json').write_text(json.dumps(dict(ckpt=a.ckpt, protocol='psync', audio_after_t_i='silence', restart='chunk', seed=a.seed,
-                                                       seed_mode='per_clip', steps=a.steps, cfg_w=a.cfg_w, yield_token=a.yield_token), indent=1))
+                                                       seed_mode='per_clip', steps=a.steps, cfg_w=a.cfg_w, yield_token=a.yield_token, yield_delay=a.yield_delay), indent=1))
     print('EX002_INTERRUPT_DONE', len(rows), f'{time.time() - t0:.0f}s')
 
 
@@ -107,7 +107,7 @@ def main():
     p.add_argument('--seed', type=int, default=0); p.add_argument('--steps', type=int, default=10); p.add_argument('--cfg-w', type=float, default=2.0)
     p.add_argument('--shard', default='0/1'); p.add_argument('--pstats', default=X + '/PROSODY_STATS_ex002_v36_1_train.json')
     p.add_argument('--campplus', default=B + '/causal-train-1105/campplus'); p.add_argument('--words-dir', default=X + '/words')
-    p.add_argument('--spk-refresh', default='grades'); p.add_argument('--causal-feat', default='inc'); p.add_argument('--yield-token', action='store_true')
+    p.add_argument('--spk-refresh', default='grades'); p.add_argument('--causal-feat', default='inc'); p.add_argument('--yield-token', action='store_true'); p.add_argument('--yield-delay', type=float, default=0., help='token-use control: YIELD at t_i + d')
     a = ap.parse_args(); dict(plan=plan, infer=infer)[a.cmd](a)
 
 

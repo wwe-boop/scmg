@@ -7,9 +7,10 @@
 
 ## 11-08 补充：EX002 自强制范围（exposure-robust conditioning）
 - 根因：EX002 活跃底座 sibag-s0/1/2 由 dcd50fb 之前的代码训出；那时 autocast 权重缓存使自强制 batch 只更新条件编码器，planner / Local Flow 不更新。dcd50fb 修复后同配方动作被压住；sf0 最静。详见 ops/SCMG_NEGATIVE_RESULTS_1107.md “Root cause 2026-11-08”。
-- 论文写法：sibag-s2 = “self-forcing p = 0.5；因 autocast 缓存 bug，自强制 batch 只更新条件编码器”。不写成“自强制关闭”。
+- 训练事实：sibag-s0/1/2（release 2a81db6）为 self_force_p 0.5，在 autocast 缓存 bug 下训练：自强制 batch 只更新条件编码器，planner / Local Flow 不更新。
 - 方法开关：StageCfg.self_force_scope = 'encoders'（默认 'all' 不变；与旧代码逐位一致）。EX002 新底座按 docs/criteria/EX002_SFSCOPE_1108.md 选（当前代码 + encoders，±因果匹配）；sf0 / all / encoders 三方对比进补充表。G1 主表不变（sf0）。
-- 结果（EX002_SFSCOPE_1108.md）：encoders 在 FGD v2、FKD、活跃度上全面最好（两种子 86.5 / 105.8，all 119.7 / 143.4，sf0 172.0 / 212.3），EX002 底座 = enc-s0（3 个训练种子报均值 ± SD）。EX002 上因果训练匹配无益（czm-enc-s0 psync 126.3 vs 109.0，守卫不过；负面表第 41 行）：因果匹配的主张只在 G1 成立（G1 显著），EX002 如实报告“此配方上无益”。
+- 结果（EX002_SFSCOPE_1108.md）：encoders 在 FGD v2、FKD、活跃度上均最好（两种子 86.5 / 105.8，all 119.7 / 143.4，sf0 172.0 / 212.3），按冻结规则 EX002 底座 = enc-s0（3 个训练种子：offline 87.7 ± 2.1，psync 102.2 ± 7.0）。EX002 因果训练匹配（czm-enc-s0）未通过选择规则 (a)/(c)/(e)（psync 126.3 vs 109.0；负面表第 41 行）。
+- EX002 安全层定稿 = 3c-4b（单线程；EX002_CBF_1108.md）。实测：门槛 ①–③ 通过、零 fallback、逐位可复现；门槛 ④ 未通过：空闲 9950X 单线程单块 p99 183.9 / 171.3 ms（psync / offline），预注册目标 100 ms；未在机载计算机上测。3c-5 / 3c-6 无时延收益（负面表第 42 行）。r3d 解码器决定后，在新解码上按同样空闲条件只重测 3c-4b 时延。
 - 回归保护：每个 release 先过 scripts/tests/ref_train_ex002.sh（CHECK=1 写 REF_TRAIN_OK.json）再提交车道；bench_ex002 eval 对每条车道默认输出 13 点活跃度守卫。
 
 ## V9 变更：P4 控制符加目标方向，对上空间指向基准（用户 11-05 22:3x 定；覆盖 V8 中“不带空间目标”）
@@ -417,3 +418,6 @@
 | R4-8 Human-Retargeted | 拆成真值 → GMR 与原文 Human-Retargeted 两行（§5） |
 | R4-9 安全 | 投影安全层处理自碰撞、滤波后违约必须为 0、跨全部生成器（§4.3） |
 | R4-10 排期 | F 冻结推到 11-08，关键路径前置（§9） |
+
+## 11-08 用户决定：G1 主表不设打断列
+取消已冻结的 G1 打断测试计划（静音输入 + R0causal_p / B2_p / ECHO-G B2），不在测试集上运行；G1 打断结果只作为开发集记录保留。打断只在 EX002 上评测。

@@ -14,10 +14,27 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import icommon_ex002 as I
 
 
+def isc_stream(S, L, U, y, f, fb_, K, T):
+    """module ISC: stream U through the chunk holding f_i (committed), then roll the layer back to the executed frames < f_i and
+    re-plan f_i .. fb_-1 from the continuation y with the committed-but-unexecuted frames + braking tail as the plan (the
+    recursive-feasibility candidate); then normal K-frame chunks of y from fb_ on."""
+    L.reset(); out = []
+    for s0 in range(0, fb_, K): out.append(L.step(U[s0:s0 + K]))
+    c0 = fb_ - K; oc = out[-1]; keep = f - c0                     # frames of the committed chunk that were executed
+    out[-1] = oc[:keep]
+    L.plan = np.concatenate([oc[keep:], L.plan], 0) if L.plan is not None else oc[keep:].copy()
+    h0 = len(L.hist) - len(oc); L.hist = L.hist[:h0 + keep]
+    if hasattr(L, 'raw'): L.raw = L.raw[:len(L.hist)]
+    out.append(L.step(y[f:fb_]))
+    for s0 in range(fb_, T, K): out.append(L.step(y[s0:min(s0 + K, T)]))
+    return np.concatenate(out, 0)[:T], L.stats
+
+
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('--in-dir', required=True); ap.add_argument('--prefix-from', required=True)
     ap.add_argument('--out-dir', required=True); ap.add_argument('--interrupts', required=True); ap.add_argument('--shard', default='0/1')
     ap.add_argument('--B', type=int, default=13); ap.add_argument('--tail-smooth', type=float, default=1e-3); ap.add_argument('--max-iter', type=int, default=8)
+    ap.add_argument('--isc', action='store_true', help='module ISC: re-plan the committed chunk from f_i (EX002_INTERRUPT_1107.md)')
     a = ap.parse_args()
     from scmg import safety_proj as S
     from scmg.safety_ex002_3f import EX002RMLimits, K_3F
@@ -33,8 +50,12 @@ def main():
         # 11-08 fix: the safety layer commits whole 16-frame chunks, so the chunk holding f_i was already projected from U when the
         # interruption arrives; the continuation enters the layer at the next chunk boundary (frames f_i .. boundary-1 = U's)
         fb_ = -(-f // K_3F) * K_3F
-        z = np.concatenate([U[:fb_], y[fb_:]])[:f + I.WIN]
-        ys, st = S.run_stream(L, z, K_3F); fb += st['fallback_frames']
+        if a.isc and fb_ != f:
+            ys, st = isc_stream(S, L, U, y, f, fb_, K_3F, f + I.WIN)
+        else:
+            z = np.concatenate([U[:fb_], y[fb_:]])[:f + I.WIN]
+            ys, st = S.run_stream(L, z, K_3F)
+        fb += st['fallback_frames']
         np.save(out / name, ys.astype(np.float32)); n += 1
     print('SAFETY_INT_DONE', n, 'fallback_frames', fb, f'{time.time() - t0:.0f}s')
 

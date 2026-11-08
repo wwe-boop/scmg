@@ -51,3 +51,7 @@ re-selected on czm6kws) as comparisons in the same run; the first test run's num
 - The interruption metrics (yield, v3, RKD, react) have no public protocol: sanity checks before use and released with the
   paper -- GT post-speech tails score as the best (yield / RKD of held-out human halves = floor), mismatched GT (tail windows of
   other clips) score at chance for the paired metrics (v3 / react); reported in the same table.
+
+11-08 (user decision, via coordinator): the G1 main table has NO interruption column; the frozen G1 interruption test plan (silence input +
+R0causal_p / B2_p / ECHO-G B2) is dropped and is NOT run on test. G1 interruption results stay dev records only; interruption is
+evaluated on EX002 only.
