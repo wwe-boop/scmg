@@ -127,3 +127,13 @@ Side gates (10 recordings): FGD v2 none 114.83 / TTS-sync 115.64 / TTS-sync + ch
 commands: none 122.73, TTS-sync 122.73 (identical: the edits are local). FKD 1.83 / 1.83 / 1.82 / 1.80. Liveliness guard PASS on
 all rows (still 0.019, wrist 0.30-0.31 m/s, amp 0.093-0.095).
 Verdict per category: SELF PASS (chest keyframe only), NUMBER PASS, YOU FAIL. POINT / BIG / SMALL are reported, not gated.
+
+## Amendment 4 (main's go 11-09 05:0x; registered before running): YOU / POINT through the IK keyframe route
+- YOU and POINT commands get a point keyframe instead of relying on the token: IK (aim kind: forearm ray toward the target AND wrist
+  at shoulder + 0.45 m x unit(target - shoulder), the arm extended), 3 chained rounds x 30 iterations; held 0.4 s over
+  [t - 0.1, t + 0.3]; quintic ramps to / from the run's own state (insert9b rule, train a95). The commanded hand as in the plan.
+- Applied on top of the amendment-2 output with the SELF chest keyframe (final/<proto>_chest), giving final/<proto>_point.
+  The other categories are unchanged in that row.
+- The metric (angle <= 15 deg AND extension >= 0.40 m at the apex frame), the gate (+20 pp with CI, TTS-sync primary), the side
+  gates and the 10 recordings are unchanged. Render: one YOU event (the first "you" by sha1("<clip>:<onset:.3f>:explrender")),
+  panels GT / none / given (token) / given (point keyframe).
