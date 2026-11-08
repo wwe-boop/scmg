@@ -535,3 +535,10 @@ the next ramp-in gives w a corner (derivative jump), and the blended pose gets a
   my earlier suggestion before any run. Checked anyway by recomputing tok psync (ii) with 5c on m9-sibag (expected bitwise 105.8). The
   dense-plan whole-clip FGD v2 of tok psync, 5b vs 5c, is reported as the place where the bug can act.
 - Downstream: after the m9b-enc run, every tok / ik / 9b row moves to 5c.
+5c run setup (2026-11-08 ~10:50, before any 9b or 5c number): post-processing job scripts/ex002/ex002_ctl_m5c.sh (exp/ctl-port), started after
+the m9b-enc job ends.
+- Rows: tok5c (5c + minimum-jerk override) and m9b5c (9b insertion, exactly as pre-registered in 12f8351, on 5c plain instead of 5b plain).
+  m9b5c is scored with the full 9b gate set, the tok5c row being its reference. The 5b rows of m9b-enc are reported next to them.
+- Identity checks: on the sparse plan, 5c vs 5b, and m9b5c vs m9b (expected bitwise).
+- sibag-s2: m9-sibag tok with 5c on both plans (the (ii) check above, and the dense whole-clip FGD v2); release median / p95 / max
+  re-scored for the m9-sibag tok / ik / m9 rows.
