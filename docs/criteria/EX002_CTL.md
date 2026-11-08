@@ -571,3 +571,22 @@ JSON control-token-1105/ex002/diag/SPIKES_WHERE_1108.json).
   offline / 105 psync (0.88x / 0.81x GT). The czmws test predictions (read-only, predictions only, no GT; logged in TEST_USAGE.jsonl) are
   110 / 119 (0.85x / 0.91x). Frames above the G1 GT p99: 0.5–1.2 %. So on G1 the generator is not spikier than its human data; the
   excess is EX002-relative: EX002 GT is about 5x smoother than G1 GT (27.5 vs 130), and the generator does not reach that smoothness.
+VAE isolation (read-only, numbers only; scripts/ex002/diag/vae_diag.py on speech_server GPU1; JSON diag/VAE_DIAG_1108.json). Threshold for
+"spike" = GT p99 = 28.1 rad/s².
+- A. Dev GT (43 clips) → vae-r3 encode (mu) → decode:
+  - window p95 32.9 vs GT 27.5 (1.20x); p99 35.9 vs 28.1; frames above the GT p99 2.9 % (GT 1 %); max 217;
+  - per-frame-in-latent rate 1.29 / 1.06 / 0.47 / 1.18 (GT flat 1.00 ± 0.01): the same 4-frame pattern as the generator, stronger;
+  - joint split L j4 17 % / j5 16 %, R j4 13 % / j5 31 %, the same signature as the generator (GT spikes sit on wrist joints 5–7);
+  - silence 5.4 % vs speech 2.6 %;
+  - reconstruction error: mean |Δq| 0.032 rad (upper body), 0.048 rad (arms).
+- B. enc-s0 offline seed 0, 8 clips (0, 6, ..., 42), committed latents captured. The streamed output matches the enc-s0 files bitwise.
+  GT on the same clips: window p95 28.7.
+  - streamed (1-latent look-ahead, as emitted): 45.5 (1.59x GT), frames above the GT p99 5.6 %, phase 1.13 / 1.07 / 0.77 / 1.04;
+  - one-shot decode of the same latents: 45.7, identical pattern; max |diff| to streamed 4e-4 rad, so the streaming does not add spikes;
+  - decode without look-ahead (next latent replaced by a copy): 357, phase 1.9 / 0.07 / 0.04 / 1.99. The look-ahead is needed, and it is used;
+  - streamed output re-encoded and decoded (projection onto the codec manifold): 38.9 (1.35x), frames above the GT p99 4.8 %,
+    phase 1.16 / 1.06 / 0.69 / 1.08. This removes about 40 % of the excess over GT.
+- Reading:
+  - The decoder makes the 4-frame pattern and the joint-4/5 signature: both are already in the GT reconstruction.
+  - The magnitude splits into a decoder part (GT reconstruction 1.20x) and a generator part. Generator latents are partly off-manifold:
+    projection takes 1.59x down to 1.35x, which is still above the GT reconstruction's 1.20x.
