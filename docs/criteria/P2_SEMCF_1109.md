@@ -125,4 +125,4 @@ Source: refine-logs/FABLE_ROUND4B_1109.md §1 + main review. CPU only, no genera
   The whole registered gain comes from the preceding 1 s of motion (amplitude / speed persistence), which the generator already
   conditions on. From the deployable TEXT + AUDIO inputs the descriptor is predictable by only ~4 %, below the 10 % bar the
   pre-check used. Reading: the registered gate passed, but for the purpose it was meant for ("can a deployable source beat the
-  marginal on WHAT gesture to make") the answer is no. Design A would mostly learn persistence. Not run pending main's decision.
+  marginal on WHAT gesture to make") the answer is no. Design A would mostly learn persistence. Design A NOT run (main 11-09: agreed); negatives row 61.
