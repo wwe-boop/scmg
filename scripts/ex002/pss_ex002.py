@@ -39,9 +39,10 @@ def pss(r_post, r_ref, rmin): return 1 - r_post / max(r_ref, rmin)
 def calib(a):
     H = [h for h in human(X + '/tails/seg_halfA') if h[1] is not None]
     pk = [s[max(a0 - 1, 0):off - 1].max() for _, s, a0, off in H]; vs = float(np.percentile(pk, a.vs_pct))
-    rr = [rate(s, a0, off, vs) for _, s, a0, off in H]; rmin = float(np.percentile(rr, 10)); sk = int(round(a.skip * FPS))
+    rr = [rate(s, a0, off, vs) for _, s, a0, off in H]; rmin = 1 / ((END - 15) / FPS); sk = int(round(a.skip * FPS))   # amendment 11-08: one stroke per post window
+    p10 = float(np.percentile(rr, 10)); zero = float(np.mean(np.array(rr) == 0))
     passA = float(np.mean([pss(rate(s, off + sk, off + END, vs), rate(s, a0, off, vs), rmin) >= 0.5 for _, s, a0, off in H]))
-    par = dict(vs=vs, vs_pct=a.vs_pct, rmin=rmin, skip=a.skip, n_A=len(H), A_pass=passA, source='half-A tails (seg_halfA)')
+    par = dict(vs=vs, vs_pct=a.vs_pct, rmin=rmin, A_rate_p10=p10, A_zero_rate_share=zero, skip=a.skip, n_A=len(H), A_pass=passA, source='half-A tails (seg_halfA)')
     Path(a.out).write_text(json.dumps(par, indent=1)); print('PSS_CALIB', json.dumps(par))
 
 

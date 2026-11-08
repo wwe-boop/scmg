@@ -146,3 +146,8 @@ Validity gates (half A calibrates; nothing else is looked at before they are wri
 Known limits (recorded): humans are paired with their own preceding speech, models with their own counterfactual continuation -- not
 the same pairing; B3 (generator continues) has PSS ~ 0 by construction; B1 / FRONT pass PSS by construction and are rejected only by
 withdrawal / RKD.
+M1 amendment 11-08 21:2x (found in the half-A calibration, before any validity number): with v_s = the half-A median per-tail peak
+(0.335 m/s), 56.5 % of the 154 half-A pre-offset speech windows (median 1.5 s) contain no stroke, so their p10 rate is 0 and the
+registered rho_min = p10 = 0 leaves PSS undefined when the reference window has no stroke. rho_min is set instead to one stroke per
+post window (1 / 1.84 s = 0.543 / s), i.e. a reference without strokes counts as one stroke: an event then passes iff its post window
+has no stroke. Everything else (v_s rule, windows, gates 1-3, iteration rule) unchanged.

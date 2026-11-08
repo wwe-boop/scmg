@@ -100,3 +100,7 @@ withdrawal / activity components reported; end-pose 3-NN distance to the half-B 
 own leave-one-out share; RKD-post without its end-height descriptor (kin feature 2) reported beside the full RKD; uninterrupted quality
 untouched (post-processing acts only after f); executability 100 %; reaction latency and outward drift (median / p95 / max) vs
 R0causal + ISC; controls (a)-(d) in the same table. Raw rows report v3 under the executed-U rule (primary) and the own-prefix rule.
+L2d quick-lane correction 11-08 21:2x: "the first 5 dev recordings (ci 0-4)" held only 9 of the interruptions (ci 0 / 1 / 4 have none;
+the registration assumed 60). The quick lane is re-run on the first 5 recordings that HAVE interruptions (ci 2, 3, 5, 6, 7: 41
+interruptions). Disclosure: the 9-interruption run (ci 2, 3) was seen: l2d RKD-post 1.39, v3 0 %, unsafe WBC 78 % (raw chain);
+controls a / b / c / d RKD 1.42 / 1.13 / 1.42 / 1.79; R0causal raw 0.67, B3 raw 0.58. Kill rule unchanged.
