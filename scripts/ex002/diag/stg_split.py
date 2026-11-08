@@ -11,7 +11,8 @@ FPS = 50
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('--plan', required=True); ap.add_argument('--ctl', required=True); ap.add_argument('--ref', required=True, nargs='+')
-    ap.add_argument('--out', required=True); ap.add_argument('--same-hand', action='store_true', help='9d: flag = another plan command on the same hand within +-1 s')
+    ap.add_argument('--out', required=True); ap.add_argument('--span', action='store_true', help='use the present insertion span [t_in0, t_release] instead of the hold')
+    ap.add_argument('--same-hand', action='store_true', help='9d: flag = another plan command on the same hand within +-1 s')
     ap.add_argument('specs', nargs='+'); a = ap.parse_args()
     from scmg import ex002_ctl as E, ctl
     from ex002_apex import Detector
@@ -21,7 +22,7 @@ def main():
     for r in a.ref:
         for f in glob.glob(r + '/KEYFRAMES.*.json'):
             for e in json.loads(Path(f).read_text())['events']:
-                if e['kind'] == 'present' and 't_hold' in e: holds.setdefault(e['ci'], []).append(tuple(e['t_hold']))
+                if e['kind'] == 'present' and 't_hold' in e: holds.setdefault(e['ci'], []).append((e['t_in0'], e['t_release']) if a.span else tuple(e['t_hold']))
     flag = {(e['ci'], round(e['t'], 3)): any(h0 <= e['t'] + 1 and h1 >= e['t'] - 1 for h0, h1 in holds.get(e['ci'], [])) for e in aims}
     if a.same_hand:
         hand = lambda x: x['hand'] if x['kind'] == 'aim' else (0 if x['fingers'][0] > x['fingers'][1] else 1)
