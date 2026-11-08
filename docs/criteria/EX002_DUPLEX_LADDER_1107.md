@@ -23,3 +23,20 @@ Gates (per row; the full system must pass): yield >= 90 %, v3 <= 10 %, unsafe <=
 same base model (R0causal_p / funnel re-selected on EX002 dev with silence), paired recording bootstrap excluding 0; uninterrupted
 quality (bench_ex002 psync FGD v2) not worse than the base by more than its seed range. Reaction latency (event -> first changed
 frame, wall clock, idle GPU) reported separately. Failing rows: negatives row + diagnosis + next module (standing rule).
+
+## REVISION 2026-11-08 12:0x (coordinator; written before any run of this ladder): event-machinery ladder on enc-s0
+Base: enc-s0 (sibag recipe + self_force_scope encoders, EX002_SFSCOPE_1108.md). Decoder = a parameter (BENCH_VAE; vae-r3 now, r3d if
+it passes). Interruption benchmark, input after t_i (digital silence), metrics and human refs as EX002_INTERRUPT_1107.md.
+Rungs (one model for L1-L3, quick lane = 2000 steps from enc-s0, seed 0, same recipe + scope encoders):
+  L1  yield token only: a YIELD control token through the existing ctl route (cfg ctl / ctl_flow), trained on post-speech tails of
+      the TRAIN split (GT motion after the speech offset, YIELD at the offset) mixed into the base data; inference --yield-token.
+  L2  L1 + rest-keyframe insertion: target = the speaker's rest pose (human_ref R_sil, 34 joints), reached with B's 9b adaptive
+      minimum-jerk ramp (exp/ctl-port, reused, not forked), held with no release back to the generator until the next turn.
+  L3  L2 + the deployed safety chain with ISC (3c-4b + interrupt-aware commit).
+Comparison rows on the same base and chain: Funnel + ISC, R0causal + ISC (EX002_INTERRUPT_1107.md ISC RESULT), B3 + ISC.
+Gate (the interruption rule): yield3d >= 90 %, v3 <= 10 %, unsafe (after the safety layer) <= 1 %, then the lower RKD-post; reported
+for L1 / L2 on the raw and the ISC chain, L3 = the full chain; uninterrupted psync FGD v2 of the duplex model within the enc seed
+range (95.1-109.0).
+Leakage rule (the tails are also the human reference): the 757 retargeted tails (433 recordings) are split by recording
+(crc32(recording) % 2): half A is the training positive set, half B the RKD / rest reference; EVERY row of this ladder and of the
+comparison rows is re-scored against half B only (the earlier full-set numbers stay as they are, labelled).
