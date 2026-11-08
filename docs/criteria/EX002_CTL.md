@@ -447,3 +447,30 @@ every primary gate -- the angle error, STG, chest height and palm angle are comp
 scored from its actual output (no insertion there, i.e. the token-only / re-generated motion). No event is ever dropped from a denominator
 (this is how ex002_aim_error / evaluate / ex002_present already work: they iterate over the plan's events). The reject share is reported
 per protocol as its own row.
+## Module 9 result (dlccwprez8uqhqyg, LANE_DONE 10:05 2026-11-08; sibag-s2 + ctl4; fresh plans 1111, seeds 0-2; DLC A800)
+Rows: tok = 5b + minimum-jerk override (token-only), ik = 5b + IK insertion (no re-conditioning), m9 = re-conditioned + IK (the module).
+Rejected keyframes (scored from their actual output everywhere): offline ik 6.7 % aim / 19.4 % present, m9 8.9 % / 23.2 %; psync ik 7.8 % / 18.1 %,
+m9 9.8 % / 23.4 %.
+PRIMARY (all PASS for m9, both protocols):
+- pointing: median forearm angular error offline 23.4 / psync 23.9 deg (gate 25; ik 27.8 / 27.9, tok 35.0 / 37.7, none 50.7 / 51.7); elevation
+  above-shoulder -0.5 / -0.9 deg (gate +-5; tok -6.6 / -11.8); STG 0.426 vs 0.245 = +0.181 [+0.150, +0.215] / 0.454 vs 0.232 = +0.222 [+0.192,
+  +0.253]; shuffle follows (0.452 vs 0.270; 0.469 vs 0.287). Token-only gain +0.106 [0.088, 0.125] / +0.094 [0.077, 0.112].
+- present: count hit 1.000; presenting hand raised 0.818 / 0.823 of command frames (gate 0.80; tok 0.18 / 0.09); palm angle 1.0 / 1.0 deg
+  (sign-agnostic; tok 75.8 / 75.1).
+SIDE GATES (m9):
+- quality (i) FAIL: offline 111.0 > 100.29, psync 124.8 > 102.61 (ik 93.0 / 98.1 pass; tok 93.0 / 98.1). (ii) FAIL: offline 111.8 > 99.37, psync
+  127.2 > 101.07 (ik 96.6 passes offline, 105.8 fails psync; tok 96.6 / 105.8).
+- ramp jerk FAIL: finger ramps over the limit 0.072 / 0.100 vs tok 0.035 / 0.044 (> +2 pts); arm insertion ramps 0.551 / 0.565 (dense) vs tok
+  0.228 / 0.231.
+- executability after CBF 100 % PASS.
+- liveliness, protocol guard (decides; sparse given): offline FAIL (still 0.029, wrist speed 0.303 < 0.308, amplitude 0.0899 < 0.090, held 0,
+  stutter 1.068), psync PASS (0.028 / 0.323 / 0.092 / 0 / 1.051); ik passes both (0.022 / 0.343 / 0.099; 0.022 / 0.363 / 0.100). My guard:
+  offline speed 0.303 fails, psync passes. Dense (report-only): m9 still 0.052 / 0.059, speed 0.251 / 0.265, amplitude 0.074 / 0.076.
+- release continuity FAIL: median peak arm acceleration around release 54.4 (dense) / 47.5 (sparse) offline, 55.3 / 49.8 psync vs human p95
+  29.8 (tok 20.1 / 19.7; ik 55.3 / 53.5).
+VERDICT: module 9 passes every primary gate (geometry solved) and FAILS the side gates: quality (i) / (ii), ramp jerk, release continuity, and the
+offline liveliness guard. Re-conditioning by latent inpainting does not remove the release jump (54 vs ik 55) and costs ~18 FGD v2 (111 vs 93);
+the IK insertion itself (0.3 s ramps, 0.6 s hold) produces arm accelerations ~1.8x the human p95 at release.
+Qualitative (qual-1108/ex002-m9; aim0 / aim1 / present0; front + 45 deg): in aim0 the forearm ray (red) runs parallel to the command direction
+(yellow) in the ik / m9 panels; in present0 the right hand comes up to the face / chest with the palm forward but crosses toward the midline and
+partly covers the face in the front view.
