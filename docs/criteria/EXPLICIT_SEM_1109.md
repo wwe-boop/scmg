@@ -101,3 +101,13 @@ rule fewer than 2 categories survive -> METRIC INVALID: on BEAT2, the arm kinema
 word category (consistent with S1 and the 0.99 within-class ratio). The first build crashed at the empty refit; the numbers
 come from the same exemplars, re-run with the fixed code (--reuse).
 -> Every category uses the canonical path (amendment 1 / 2).
+
+## Amendment 3 (main 11-09 04:2x; a rate rule fixed by design, BEFORE any canonical generation number)
+The first canonical run was stopped during its metric validation (no generation number existed). New trigger rules:
+- at most 1 explicit gesture per sentence (sentence = one data-v36_1 item / utterance), the first eligible word wins;
+- minimum spacing 3 s between any two explicit gestures (replaces 1.2 s);
+- SELF triggers only on en "me / my / myself / mine" and zh "自己" or "我" directly followed by "的" (possessive); never on the
+  subject "I" / a bare "我";
+- YOU, POINT, NUMBER, BIG and SMALL keep their words.
+Command counts per category are reported after the rule; categories with fewer than 5 commands are reported but not gated.
+Everything else (amendments 1-2: targets, metrics, synthetic validation, gates, renders) is unchanged.
