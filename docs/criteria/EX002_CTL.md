@@ -506,3 +506,714 @@ same right: the retargeted data sits at its own acceleration limits); 3-clip pos
 (point), 0.77 / 0.77 s (present); release peak acceleration median 27.1 (tok 27.8; human p95 29.8), p95 254 (tail); arm ramp jerk over-limit 0.033
 (tok 0.294). Plans for the run: PLAN_dev_m9b_dense.json (1092 events, 556 aim; sha256 a0336b83…12b2), PLAN_dev_m9b_sparse.json (302 events,
 163 aim; sha256 2ad29827…5eed).
+## Module 5c (pre-registered 2026-11-08 ~10:30, before any 5c gate number; coordinator after the 9b release-tail diagnosis)
+Bug fixed: 5b composes the per-command windows by max(); on the dense plans (about 72 % of command gaps in 1.2–1.8 s) a ramp-out crossing
+the next ramp-in gives w a corner (derivative jump), and the blended pose gets a cusp (see the 9b release-tail diagnosis above).
+- 5c: w = 1 − Π_i (1 − w_i) on frames where ≥ 2 windows are non-zero; elsewhere the single window, as in 5b. This is C1, keeps every
+  command's own window [t − 0.3, t + 0.9] s with 0.3 s raised-cosine ramps, and does not fill gaps. ex002_local_blend.py --compose smooth;
+  the default (max) is unchanged.
+- Unit test scripts/ex002/test_blend5c.py, ALL_OK before any run:
+  (A) the default equals the 5b weight at 366aed0 bitwise on every dev plan;
+  (B) on 349 clip-plans without overlapping windows (every sparse plan) 5c equals 5b bitwise;
+  (C) on 167 overlapping clip-plans, max |w''| is 107.5 ≤ the two-window bound 1.5 π²/r² = 164.5 (+5 % margin: 172.7), while 5b reaches 521.7.
+  Disclosed before the gates: on smoke clip 0, arm frames over 100 rad/s² are 2.6 % with 5b, 0.77 % with 5c, 1.2 % in the none stream.
+- Validation (post-processing only): on the enc-s0 generations of the m9b-enc job (dlc127d7nvk060w9: ctlenc control modules,
+  plans 1112 dense / sparse, seeds 0–2, offline AND psync).
+- Gates: the original 5b gates, per protocol, against enc-s0 none on the same plan masks:
+  - STG(given) − STG(none) ≥ +0.10 on the dense plan, with the shuffle follow check (recording bootstrap CI reported);
+  - finger hit ≥ 0.9 with the override;
+  - quality (i) sparse FGD v2 outside ±1 s, and (ii) sparse whole clip, both ≤ C + δ (δ = max(0.03 C, 2 SD) of the none seeds);
+    on the sparse plans 5c is 5b bitwise (test B), and they are recomputed as a check;
+  - executability after CBF 100 %.
+- Report-only, both plans, 5b vs 5c vs none vs GT:
+  - share of arm frames over 100 rad/s², p99, and the p95 of the peak over random 0.2 s windows;
+  - release continuity (median / p95 / max);
+  - arm ramp jerk;
+  - dense-plan whole-clip FGD v2.
+- Hypothesis "the 5b blend caused tok's psync (ii) failure on sibag-s2": (ii) is scored on the sparse plan, where no windows overlap
+  (0 of 261 gaps on PLAN_dev_m9_sparse are < 1.8 s), so 5c equals 5b there and the prediction is NO change (105.8 stays). This refutes
+  my earlier suggestion before any run. Checked anyway by recomputing tok psync (ii) with 5c on m9-sibag (expected bitwise 105.8). The
+  dense-plan whole-clip FGD v2 of tok psync, 5b vs 5c, is reported as the place where the bug can act.
+- Downstream: after the m9b-enc run, every tok / ik / 9b row moves to 5c.
+5c run setup (2026-11-08 ~10:50, before any 9b or 5c number): post-processing job scripts/ex002/ex002_ctl_m5c.sh (exp/ctl-port), started after
+the m9b-enc job ends.
+- Rows: tok5c (5c + minimum-jerk override) and m9b5c (9b insertion, exactly as pre-registered in 12f8351, on 5c plain instead of 5b plain).
+  m9b5c is scored with the full 9b gate set, the tok5c row being its reference. The 5b rows of m9b-enc are reported next to them.
+- Identity checks: on the sparse plan, 5c vs 5b, and m9b5c vs m9b (expected bitwise).
+- sibag-s2: m9-sibag tok with 5c on both plans (the (ii) check above, and the dense whole-clip FGD v2); release median / p95 / max
+  re-scored for the m9-sibag tok / ik / m9 rows.
+Generator acceleration-spike diagnosis (read-only, numbers only; coordinator 11-08; scripts/ex002/diag/spikes_where.py on speech_server;
+JSON control-token-1105/ex002/diag/SPIKES_WHERE_1108.json).
+- Correction: the "enc-s0 none random 0.2 s window p95 147" quoted earlier came from 6 clips of seed 0. Over all 43 dev clips × 3 seeds it is
+  50.3 offline / 57.1 psync (GT 27.5).
+- Magnitude (arm, max over arms of the joint-norm acceleration, 0.2 s windows with stride 0.1 s):
+
+  | stream | window p95 | ratio to GT | frames > 100 | p99 | max |
+  |---|---|---|---|---|---|
+  | EX002 GT | 27.5 | 1.0x | 0.10 % | 28.2 | 5762 (a GT glitch frame) |
+  | enc-s0 none offline | 50.3 | 1.8x | 0.66 % | 84.3 | 331 |
+  | enc-s0 none psync | 57.1 | 2.1x | 0.69 % | 86.8 | 314 |
+  | sibag-s2 none offline | 46.7 | 1.7x | 0.54 % | 79.0 | 337 |
+  | sibag-s2 none psync | 64.4 | 2.3x | 0.82 % | 93.4 | 449 |
+
+  Frames above the GT p99: 6.3 / 7.9 % (enc-s0) and 6.0 / 9.5 % (sibag-s2), against 1 % in GT. Resampled to 30 fps the ratios stay
+  (enc-s0 45.7 / 51.9 vs GT 26.5).
+- Location:
+  - Phase: a 4-frame (one latent) pattern. Relative spike rate by frame within the latent is about 1.14–1.19 / 1.05 / 0.69–0.75 / 1.05–1.07
+    (frame 0 / 1 / 2 / 3; GT is flat, 1.00 ± 0.01). No extra rate at the 320 ms chunk boundary (phase 0 of 16) or at the streamer's emission
+    boundary (phase 12): phases 0 / 4 / 8 / 12 are equal within ±0.06.
+  - Joints: the spikes sit on arm joints 4 and 5 (enc-s0: L 14 / 17 %, R 11–13 / 21–22 %) and joint 3 (7–9 %). GT's few spikes sit on the
+    wrist joints 5–7.
+  - Fingers and head/waist: per-joint p99 is fingers 60–65 vs GT 45, head/waist 10–12 vs GT 4.5.
+  - Speech vs silence: rate of frames above the GT p99 is 5.4 % in speech vs 14.1 % in silence offline, and 7.2 % vs 14.2 % psync
+    (GT 0.9 % vs 1.5 %). Silence is 2.0–2.6x spikier, against 1.6x in GT. Speech covers 90 % of frames.
+- G1 (joint space, arms 25:39 of robot_repr, 30 fps, same window rule): G1 GT dev window p95 130 (frames above 100: 3.0 %). czm6kws dev 114
+  offline / 105 psync (0.88x / 0.81x GT). The czmws test predictions (read-only, predictions only, no GT; logged in TEST_USAGE.jsonl) are
+  110 / 119 (0.85x / 0.91x). Frames above the G1 GT p99: 0.5–1.2 %. So on G1 the generator is not spikier than its human data; the
+  excess is EX002-relative: EX002 GT is about 5x smoother than G1 GT (27.5 vs 130), and the generator does not reach that smoothness.
+VAE isolation (read-only, numbers only; scripts/ex002/diag/vae_diag.py on speech_server GPU1; JSON diag/VAE_DIAG_1108.json). Threshold for
+"spike" = GT p99 = 28.1 rad/s².
+- A. Dev GT (43 clips) → vae-r3 encode (mu) → decode:
+  - window p95 32.9 vs GT 27.5 (1.20x); p99 35.9 vs 28.1; frames above the GT p99 2.9 % (GT 1 %); max 217;
+  - per-frame-in-latent rate 1.29 / 1.06 / 0.47 / 1.18 (GT flat 1.00 ± 0.01): the same 4-frame pattern as the generator, stronger;
+  - joint split L j4 17 % / j5 16 %, R j4 13 % / j5 31 %, the same signature as the generator (GT spikes sit on wrist joints 5–7);
+  - silence 5.4 % vs speech 2.6 %;
+  - reconstruction error: mean |Δq| 0.032 rad (upper body), 0.048 rad (arms).
+- B. enc-s0 offline seed 0, 8 clips (0, 6, ..., 42), committed latents captured. The streamed output matches the enc-s0 files bitwise.
+  GT on the same clips: window p95 28.7.
+  - streamed (1-latent look-ahead, as emitted): 45.5 (1.59x GT), frames above the GT p99 5.6 %, phase 1.13 / 1.07 / 0.77 / 1.04;
+  - one-shot decode of the same latents: 45.7, identical pattern; max |diff| to streamed 4e-4 rad, so the streaming does not add spikes;
+  - decode without look-ahead (next latent replaced by a copy): 357, phase 1.9 / 0.07 / 0.04 / 1.99. The look-ahead is needed, and it is used;
+  - streamed output re-encoded and decoded (projection onto the codec manifold): 38.9 (1.35x), frames above the GT p99 4.8 %,
+    phase 1.16 / 1.06 / 0.69 / 1.08. This removes about 40 % of the excess over GT.
+- Reading:
+  - The decoder makes the 4-frame pattern and the joint-4/5 signature: both are already in the GT reconstruction.
+  - The magnitude splits into a decoder part (GT reconstruction 1.20x) and a generator part. Generator latents are partly off-manifold:
+    projection takes 1.59x down to 1.35x, which is still above the GT reconstruction's 1.20x.
+## Decoder-only fine-tune r3d (pre-registered 2026-11-08 ~11:30, before any r3d run; coordinator approved after the VAE isolation)
+Goal: remove the decoder's 4-frame acceleration pattern without touching the latent space.
+- Recipe. Init vae-r3. Encoder parameters and latent statistics are frozen; this is asserted at save, as in scripts/echog_g1/vae_decoder_ft.py
+  (c67ede4), so every EX002 generator stays valid without retraining. Data: data-v36_1 TRAIN split only. Script:
+  scripts/ex002/vae_decoder_ft_ex002.py.
+- Loss. The r3 loss (rec + 0.3 vel + 0.1 acc in normalised units; the KL is constant), plus physical-unit velocity and acceleration
+  matching on the moving upper body (joints 2–33: head, arms, fingers; waist / pedestal excluded): relative L1,
+  mean |Δ^k ŷ − Δ^k x| / mean |Δ^k x| in rad/s and rad/s², k = 1, 2, weights 1 / 1. lr 1e-4, 200-step warmup, batch 64 × 256 frames, EMA 0.999.
+- Arms:
+  - A: z = mu + σ·eps from the frozen posterior;
+  - B: as A, but on 50 % of the batches z = mu + 0.3·eps (latent-error robustness, aimed at the off-manifold generator latents).
+- Schedule. Quick lane of 2000 steps per arm. An arm goes on to 10k steps only if its quick-lane checkpoint passes gates 1–2. The final
+  candidate is the 10k checkpoint, and every gate is evaluated on it.
+- Gates. Dev only; "GT" = the 43 dev clips (enc-s0 offline gt_*.npy); spike threshold = GT p99 = 28.1 rad/s²; statistics as
+  scripts/ex002/diag/spikes_where.py.
+  1. Reconstruction (mu decode of the dev GT) not worse than r3 by more than 2 %, on both the normalised L1 over all joints and the mean
+     |Δq| over the upper body. Same script, same clips; r3: 0.032 rad upper body.
+  2. Reconstructed GT window p95 ≤ 1.2x GT (≤ 32.96); reconstructed frames above the GT p99 ≤ 1.5 % (r3 2.9 %); flat latent phase, all four
+     per-frame-in-latent rates within 0.9–1.1 (r3 0.47–1.29).
+  3. On regenerated enc-s0 none outputs (bench_ex002 infer --vae r3d, offline AND psync, seeds 0–2, per_clip, same as A's enc-s0 runs):
+     - window p95 ≤ 1.3x GT (≤ 35.7) per protocol (r3: 50.3 / 57.1);
+     - FGD v2 and FKD not worse than r3 by more than one seed SD (3-seed means; r3 = A's enc-s0 runs re-scored in the same job);
+     - liveliness: the protocol guard (lively_floor_ex002.py, pooled seeds) and my guard both pass.
+- Adoption rule:
+  - one arm passes all gates: it becomes the EX002 decoder, and every EX002 table re-runs on its outputs;
+  - both pass: take the lower gate-3 window p95 (mean of the two protocols);
+  - neither passes: keep r3 and log a negatives row.
+- Reported for the winner: per-frame-in-latent rates, arm-joint split, and one before / after render (same clip, r3 vs r3d decode,
+  front view).
+- Cost: one 4-GPU pod, about 1.2 h for both arms.
+## Module 9b result (dlc127d7nvk060w9, LANE_DONE 12:09 2026-11-08; enc-s0 + ctlenc; fresh plans 1112, seeds 0-2; DLC A800)
+IDENTITY: the control model's none output equals A's enc-s0 runs bitwise (6/6 runs, max |diff| 0).
+Rows: tok = 5b + minimum-jerk override (reference); m9b = 9b insertion on 5b plain. m9 (sibag-s2, f184a6f) is quoted as a reference row.
+Rejected keyframes: aim 2.0 % offline / 2.4 % psync; present 0.3 % / 0.3 %; fallback grid used for 1.4 % / 1.3 % of presents. Median Tin / Tout:
+aim 0.40 / 0.46 s (offline), 0.42 / 0.46 s (psync); present 0.71 / 0.70 s, 0.71 / 0.69 s.
+tok on enc-s0 (reference, reported first):
+- STG gain +0.095 [+0.077, +0.115] offline, +0.084 [+0.070, +0.100] psync (below +0.10);
+- angle 33.2 / 34.6 deg; elevation above shoulder -3.5 / -8.8 deg; presenting hand raised 0.21 / 0.11; palm 74.6 / 75.7 deg;
+- (i) 86.96 / 107.04 (pass); (ii) 92.25 > 90.15 offline and 118.27 > 114.34 psync (FAIL on both protocols);
+- release median 18.9 / 20.2 (dense), 20.3 / 21.4 (sparse).
+PRIMARY (m9b, offline / psync):
+- pointing angle (median forearm angular error at the apex frame): 29.0 / 28.2 deg, gate 25: FAIL (m9 23.4 / 23.9; tok 33.2 / 34.6;
+  none 45.6 / 46.4);
+- elevation above shoulder +1.5 / -0.7 deg (gate ±5): PASS;
+- STG +0.122 [+0.095, +0.153] / +0.127 [+0.102, +0.154]: PASS; shuffle follows (0.365 vs 0.275; 0.391 vs 0.276);
+- present count hit 1.000: PASS; presenting hand raised 0.824 / 0.799 (gate 0.80): offline PASS, psync FAIL by 0.001; palm 2.0 / 2.0 deg: PASS.
+SIDE GATES (m9b):
+- quality (i) sparse outside ±1 s 86.97 ≤ 92.16 / 107.04 ≤ 112.74: PASS;
+- quality (ii) sparse whole clip 92.15 > 90.15 / 116.40 > 114.34: FAIL (tok fails too: 92.25 / 118.27);
+- ramp jerk: finger ramps over the limit 0.037 / 0.045 = tok; arm ramps 0.042 / 0.039 dense and 0.024 / 0.022 sparse
+  (tok 0.213 / 0.213, 0.173 / 0.182): PASS;
+- executability after CBF 100 %: PASS;
+- liveliness, sparse given:
+  - protocol guard PASS / PASS (offline still 0.022, speed 0.314, amplitude 0.095; psync 0.026 / 0.316 / 0.094);
+  - my guard PASS / PASS (0.029 / 0.314 / 0.095; 0.032 / 0.316 / 0.094);
+  - dense (report-only): protocol guard fails on speed / amplitude (0.290 / 0.075; 0.273 / 0.073);
+- release continuity, median peak arm acceleration around release, dense 27.1 / 27.8 and sparse 24.5 / 24.1 ≤ 29.8: PASS.
+  Report-only p95: dense 226 / 242 (the 5b dense-plan cusps, root cause row 47), sparse 67.2 / 60.0 (tok 73.0 / 72.8). Max: from the 5c job.
+VERDICT: module 9b FAILS the primary pointing-angle gate (both protocols), presenting-hand raised on psync (0.799), and quality (ii)
+(both protocols; tok fails it too). It passes STG, elevation, count, palm, quality (i), ramp jerk, executability, both liveliness guards
+and release continuity (median).
+Diagnosis of the angle failure (offline seed 0, 197 aim events of 15 clips, read-only):
+- At the middle frame of the IK hold the median forearm angular error is 0.9 deg (IK residual median 4.2 deg).
+- The frozen apex detector (APEX.json, logistic regression with positive weights on wrist speed) never chose a frame inside the hold:
+  75 % of apex frames fall before it, 25 % after, and the median error at those frames is 31.4 deg.
+- The hold is exactly static (speed 0), which the detector scores low. The gate (apex rule) is unchanged.
+## r3d result (dlc1p9g16zayjbbt, LANE_DONE 12:13 2026-11-08): both arms stop after the quick lane (2000 steps)
+Gates 1-2 on the quick-lane checkpoints (encoder identical to r3 in both arms, asserted):
+
+| | A (posterior) | B (+ latent noise) | r3 | threshold |
+|---|---|---|---|---|
+| normalised L1 | 0.1365 (+7.0 %) | 0.1616 (+26.6 %) | 0.1276 | gate 1: ≤ +2 % |
+| upper-body mean abs (rad) | 0.0362 (+12.8 %) | 0.0476 (+48 %) | 0.0321 | gate 1: ≤ +2 % |
+| reconstructed GT window p95 | 25.8 | 22.9 | 32.9 | gate 2: ≤ 32.96 (GT 27.5) |
+| frames above the GT p99 | 1.09 % | 0.67 % | 2.87 % | gate 2: ≤ 1.5 % |
+| latent-phase rates | 1.19 / 1.05 / 0.73 / 1.03 | 1.14 / 1.05 / 0.76 / 1.05 | 1.29 / 1.06 / 0.47 / 1.18 | gate 2: all in 0.9–1.1 |
+
+VERDICT: both arms FAIL gate 1 (reconstruction) and the flat-phase part of gate 2. Both lower the spike magnitude below GT (smoother than
+the human data). The 4-frame pattern weakens but stays (frame 2 at 0.73 / 0.76). By the adoption rule, r3 stays the EX002 decoder; no
+10k run and no gate 3. Module 9c runs on r3.
+## Module 9c (pre-registered 2026-11-08 ~13:20, before any 9c run; coordinator after the 9b result and the train-statistics check)
+Base: enc-s0 + ctlenc, decoder r3 (r3d not adopted). Input: the m9b-enc generations blended with 5c (tok5c = 5c + override is the
+reference row). 9c changes exactly two things relative to 9b; everything else (keyframe IK for aim, ramps, timing, gates) is as 12f8351.
+1. Pointing hold motion replayed from human data:
+   - Pool: tokens/HOLD_POOL_TRAIN.npz (sha256 c35f2424…; scripts/ex002/hold_pool.py), TRAIN split only.
+   - point pool: 2947 entries from 3000 sampled pointing tokens (of 89,514; seed 1114). Each entry is the wrist displacement of the token's
+     hand over [t − 0.1, t + 0.6] s (36 frames, the aim-hold window).
+   - control pool: 2947 windows of the same length from train speech spans, at least 1.0 s from any pointing token, random hand.
+   - Pool statistics, written before any run (mean wrist speed over the window, median [IQR]): point 0.160 [0.066, 0.271] m/s,
+     end displacement 5.7 cm; control 0.260 [0.117, 0.423] m/s, 9.6 cm. (Source check, window [t − 0.3, t + 0.6]: along-ray push-out
+     5 mm [0, 23], perpendicular drift 4.7 cm [1.8, 9.5]; HOLD_STATS_TRAIN.json a5f96b11.)
+   - Sampling rule: pool index = sha1("<clip>:<t:.3f>:9c") mod pool size, the same rule for both pools. If the pool entry's hand differs
+     from the command hand, the lateral (y) axis is mirrored.
+   - Per-frame IK during the hold: the wrist target is w_k + dw[τ] (w_k = the 9b keyframe wrist), and the forearm ray is kept on the
+     command target (residual as 9b + wrist-position residual). IK at every 3rd hold frame plus the last one, warm-started from the
+     previous key, 5 iterations, pen_w 100; a key with self-penetration is replaced by the previous key; cubic interpolation between keys.
+     The ramps match the hold's own velocity / acceleration at both ends (quintic, as 9b).
+   - Rows: m9c uses the point pool; m9cctl, the control, uses the control pool through the same pipeline.
+2. Present reachability: a hard-weighted lower bound on wrist height (wrist z ≥ shoulder z − 0.15 m, hinge weight 100) inside the IK,
+   alongside self-collision. A grid point is accepted only if collision-free and within the bound (1 mm tolerance); the fallback grid is
+   as 9b. The event is rejected (counted as a failure everywhere) only if every grid point fails. Present holds stay static.
+- No anticipation change (point and present timing as 9b).
+- Gates: identical to 9b, per protocol, rejected events scored from their actual output. Reference = tok5c. Primary: apex-based
+  angle ≤ 25 deg; elevation ±5; STG ≥ +0.10 with shuffle follow; count ≥ 0.9; presenting hand raised ≥ 0.80; palm ≤ 45. Side: (i) / (ii)
+  ≤ C + δ; ramp jerk ≤ tok5c + 2 pts; executability 100 %; protocol + my liveliness guard (sparse given); release median ≤ 29.8.
+- Report-only: hold-window forearm angle (median over hold frames), apex-in-hold share, hold wrist speed vs the pool statistics
+  (scripts/ex002/ex002_hold_report.py); release p95 / max; held-key share; the 5c effect on (ii) via tok5c vs the 5b tok row of m9b-enc.
+- Quick check first: a disclosed 3-clip smoke (timing and pipeline only). Then the DLC run (scripts/ex002/ex002_ctl_m9c.sh). Renders follow
+  with a selection rule committed before rendering.
+Module 9c quick check (disclosed, before the DLC run): 3 clips (offline seed 0, dense plan; m9b-enc generations, 5c plain), on speech_server CPU.
+- m9c: aim 38 events, rejected 2.6 %, held (penetrating) keys 0.05 per event, wrist-target error median 1.9 cm.
+- m9cctl: same, held keys 0.24 per event, wrist-target error 3.0 cm.
+- present: 38 events, 0 rejected, 0 height rejects, grid point 0 for all, wrist − shoulder z median −0.129 m.
+- Default-path check: the 9b insertion with the new code reproduces the m9b-enc output of clip 5 bitwise.
+- Cost: about 500 s per clip per row on speech_server, about 3x 9b. The insert stage therefore runs on CPU pods split by NSH / ISH, then
+  the eval stage runs on a 4-GPU pod.
+## Module 5c result (dlc150dvyjw8nthi, LANE_DONE 13:46 2026-11-08; post-processing of the m9b-enc generations; DLC)
+IDENTITY:
+- Sparse plan: 5c equals 5b bitwise (tok5c, tok5cplain, m9b5c vs m9b; 43/43 clips × 3 seeds × 2 protocols; sibag-s2 too).
+- Dense plan: 13/43 clips bitwise; the rest differ, max |diff| 0.35–0.51 rad, at the window crossings.
+Original 5b gates on enc-s0, tok5c (tok5b of m9b-enc in brackets), offline / psync:
+- STG gain +0.099 [+0.080, +0.118] / +0.088 [+0.071, +0.105] (tok5b +0.095 / +0.084): FAIL (< +0.10 on both). Shuffle follows (0.365 vs
+  0.311; 0.350 vs 0.309).
+- finger hit 1.000 (override): PASS.
+- (i) 86.96 ≤ 92.16 / 107.04 ≤ 112.74: PASS.
+- (ii) 92.25 > 90.15 / 118.27 > 114.34: FAIL, bitwise = 5b. Without the override (tok5cplain): 90.05 ≤ 90.15 / 115.30 > 114.34.
+- executability 100 %: PASS.
+VERDICT: 5c fails the original 5b gates on enc-s0 (STG and (ii)), exactly where 5b fails them on enc-s0; on the sparse plan it is 5b
+bitwise. On sibag-s2 the 5b gates had passed (fresh-plan confirmation).
+Blend-artifact report (dense plan, offline / psync):
+- arm frames over 100 rad/s²: tok5b 1.30 / 1.32 % → tok5c 0.88 / 0.86 % (none 0.66 / 0.69 %, GT 0.10 %);
+- random-window p95: 185 / 186 → 90 / 89 (none 50 / 57);
+- max: 1307 / 1405 → 405 / 305;
+- dense whole-clip FGD v2: 178.7 / 216.2 → 179.0 / 216.5 (none 86.3 / 109.0);
+- finger ramp frames over the jerk limit (dense): 0.038 / 0.046 → 0.029 / 0.039.
+(ii) hypothesis on sibag-s2: tok5c psync 105.80 = tok5b 105.80 (offline 96.61 = 96.61), bitwise as predicted: the blend bug did not cause
+the sibag-s2 tok psync (ii) failure. Dense whole-clip FGD v2 on sibag-s2: 179.35 → 179.73 / 202.49 → 202.90.
+Release continuity, median / p95 / max (rad/s²), every row:
+
+| row | dense, offline | dense, psync | sparse, offline | sparse, psync |
+|---|---|---|---|---|
+| sibag tok5b | 20.1 / 80.6 / 220 | 21.6 / 80.6 / 261 | 19.7 / 72.6 / 184 | 22.0 / 75.8 / 184 |
+| sibag ik | 55.3 / 99.2 / 220 | 55.9 / 103.3 / 261 | 53.5 / 108.1 / 186 | 55.8 / 112.9 / 204 |
+| sibag m9 | 54.4 / 98.7 / 299 | 55.3 / 104.0 / 343 | 47.5 / 112.3 / 172 | 49.8 / 111.0 / 192 |
+| enc tok5b | 18.9 / 78.1 / 231 | 20.2 / 75.1 / 165 | 20.3 / 73.0 / 208 | 21.4 / 72.8 / 222 |
+| enc m9b | 27.1 / 226.1 / 1044 | 27.8 / 241.8 / 1235 | 24.5 / 67.2 / 195 | 24.1 / 60.0 / 133 |
+| enc tok5c | 18.8 / 77.2 / 231 | 20.1 / 75.0 / 165 | = tok5b | = tok5b |
+| enc m9b5c | 27.1 / 92.5 / 217 | 27.5 / 90.5 / 229 | = m9b | = m9b |
+
+m9b5c with the 9b gates (dense rows change, sparse rows = m9b):
+- angle 28.3 / 27.7: FAIL;
+- elevation +1.4 / -0.8: PASS;
+- STG +0.128 [+0.102, +0.158] / +0.131 [+0.105, +0.160]: PASS;
+- presenting hand raised 0.824 / 0.799: FAIL psync; palm 2.0: PASS;
+- (i): PASS; (ii): FAIL (= m9b);
+- arm ramps 0.030 / 0.028 (tok5c 0.225): PASS;
+- executability: PASS; liveliness sparse: PASS;
+- release median 27.1 / 27.5: PASS.
+Same verdict as 9b.
+Qualitative (qual-1108/ex002-m9b; rule ctl-port d5fcb52: plan 1112 dense, offline seed 0, sha1-ranked aim0 / present0 / aim1; panels
+tok5b / m9b / m9b5c; front + 45 deg; frames at the command time in aim0.f.png / present0.f.png):
+- present0 (fingers L2 R2, right hand presents): in the m9b and m9b5c panels the right hand is raised in front of the right side of the
+  chest with the palm forward. It does not cross to the face (m9 did). In tok5b the hands stay low at the hips.
+- aim0 (left hand): the red forearm ray runs close to the yellow command direction in the m9b / m9b5c panels and further from it in
+  tok5b.
+- At the command time m9b and m9b5c look the same.
+## Why the token path does not transfer to enc-s0 (read-only diagnosis, numbers only; coordinator after the 5c result)
+1. Where the (ii) cost sits (sparse plan, seeds 0-2; scripts/ex002/diag/ii_split.py; diag/II_SPLIT_1108.json). Windows (32 frames,
+   stride 16) are split into inside (overlap ±1 s of a command, 41 % of windows) and outside. Offline / psync:
+
+   | run | whole = (ii) | outside | inside-only | swap |
+   |---|---|---|---|---|
+   | none | 86.29 / 109.02 | 86.83 / 107.06 | 89.21 / 115.72 | — |
+   | tok5cplain | 90.05 / 115.30 | 86.84 / 107.10 | 105.29 / 139.04 | 86.29 / 109.05 |
+   | tok5c (override) | 92.25 / 118.27 | 86.84 / 107.10 | 112.02 / 148.12 | 86.29 / 109.05 |
+
+   - Swap = the whole-clip FGD with the inside windows taken from the none run. It returns to the none value, so the entire (ii) excess
+     (+5.96 / +9.25 over none) sits in the command windows; outside windows equal none's.
+   - The override's share of the excess: +2.20 / +2.97 (37 % / 32 %).
+   - Per-window Mahalanobis d² to the GT window Gaussian, inside windows: none 42.5 / 44.4, tok5cplain 41.5 / 41.9, tok5c 42.6 / 42.9.
+     The token windows are not individually atypical; the inside excess is a distribution-level effect (lower spread near commands).
+2. STG on enc-s0 vs sibag-s2 (diag/raw):
+   - Unblended (raw) given runs, aim angle (median, offline / psync): sibag ctl4 29.9 / 32.5, enc ctlenc 30.1 / 32.0 (none 50.7 / 51.7 vs
+     45.6 / 46.4). The raw aiming is the same on both bases.
+   - Raw STG gain: sibag +0.144 [+0.121, +0.168] / +0.135 [+0.116, +0.156]; enc +0.113 [+0.093, +0.133] / +0.099 [+0.082, +0.116]
+     (plans 1111 vs 1112).
+   - In STG terms: the enc none STG is higher (0.257 / 0.260 vs 0.245 / 0.232) and the enc given STG slightly lower
+     (0.370 / 0.358 vs 0.389 / 0.367).
+   - The blend costs about 0.04 of gain on sibag (raw +0.144 → tok5b +0.106) and about 0.015 on enc (+0.113 → +0.095–0.099).
+   - Training: the ctl_ loss curves are the same within noise (steps 1800-2000: ctl_ray 0.1015 vs 0.1008, ctl_finger 0.2216 vs 0.2221).
+   - self_force_scope: both control trainings used self_force_p = 0 (self_forced 0.0 in every log line), so the 'encoders' scope never
+     acted on the ctl_ modules. The scope only shaped the enc-s0 base itself.
+## Module 10 (pre-registered 2026-11-08 ~14:30, before any module-10 run; coordinator approved the draft with two additions)
+Base enc-s0 + ctlenc, decoder r3, 5c blend, plans 1112, seeds 0-2, offline AND psync. Reference row tok5c (m5c-enc).
+(a) Override shapes from a human library.
+  - Library: tokens/HAND_LIBRARY_TRAIN.npz (scripts/ex002/hand_library.py), TRAIN split only. For each hand h and count n (0..3): up to
+    2000 frames (seed 1115, every 5th train frame) whose frozen finger-count detector count (ex002_ctl.finger_counts) is n; stored as
+    the 8 finger joints of that hand.
+  - Each finger command and hand draws one entry by sha1("<clip>:<t:.3f>:10a:<h>") mod the library size and uses it in place of the
+    single HAND_SHAPES template. Hold 0.4 s and 0.3 s minimum-jerk ramps are unchanged (finger_override --fo-library; default off).
+  - Circularity: the library is filtered by the same detector that scores the finger-hit gate, so that gate is close to guaranteed for
+    (a) and is not evidence for it.
+  - Independent check, reported: per finger, the flexion joints of the sampled shape are classified extended or curled by joint angle,
+    by the nearest of the HAND_SHAPES all-extended (h_3) and all-curled (h_0) template values for that finger (Euclidean over the
+    finger's flexion joints), not by the detector's curl-fraction threshold. Agreement = share of shapes whose angle-classified
+    extended count equals n. Reported per (h, n) over the library and over the sampled events.
+(b) Control modules trained longer on enc-s0.
+  - Continue ctlenc (step 2000) with the same recipe (true freeze --train-only ctl_, self_force_p 0, lr 1e-4, 200-step warmup) for +1000
+    steps (= 3000).
+  - Quick check: raw (unblended) STG gain at 3000 vs 2000 on all 43 dev clips, offline, seed 0, dense plan 1112. The none run is the
+    frozen base, bitwise the m9b-enc none_s0. The 2000-step given run is m9b-enc gen/d_given_s0.
+  - Continue to 4000 steps only if the gain at 3000 exceeds 2000 by ≥ +0.005. Otherwise (b) stops at the quick check and is reported
+    as a negative.
+  - The final (b) checkpoint (3000 or 4000) regenerates given / shuffle runs (offline + psync, seeds 0-2, plans 1112).
+- Rows: tok5c (reference), tok10a, and, if (b) continues, tok10b and tok10ab. All with 5c, the minimum-jerk override and the same plans.
+- Gates (the original 5b gates, per protocol, against enc-s0 none on the same masks):
+  - STG(given) − STG(none) ≥ +0.10 on the dense plan, with the shuffle follow check (bootstrap CI reported);
+  - finger hit ≥ 0.9 (for (a) not evidence, see above);
+  - quality (i) sparse outside ±1 s and (ii) sparse whole clip ≤ C + δ;
+  - executability after CBF 100 %.
+- Report-only: the inside / outside / swap split of (ii) (scripts/ex002/diag/ii_split.py); liveliness guards; finger ramp jerk; the
+  independent shape check.
+- Adoption: a row that passes every gate becomes the token path for 9c and later modules; otherwise a negatives row.
+Module 10 setup (before any module-10 run):
+- Library: tokens/HAND_LIBRARY_TRAIN.npz (sha256 2e73ca18…), 2000 entries per (h, n).
+- Independent joint-angle check over the library: agreement 0.62 / 0.61 / 0.56 / 1.00 (left, n = 0..3) and 0.67 / 0.52 / 0.60 / 1.00
+  (right).
+- Over the sampled dense-plan events (1072 hand-commands): 0.72 overall, 1.00 for n = 3, 0.55–0.69 for n = 0..2.
+- Reading: the detector counts a finger as extended only if it is fully straight (curl fraction < 0.15). The nearest-template angle
+  rule calls partly curled human fingers extended when they are closer to the straight template, so the two rules disagree on graded
+  human shapes.
+- The template override path is bitwise unchanged (clips 0 and 7 vs m5c-enc tok5c).
+- Job script: ctl-port ex002_ctl_m10.sh.
+## Label provenance (audit pass-1 finding, 2026-11-08 ~15:10; applies to every EX002 control section above)
+EX002 pointing commands, the CTL.json 'aim' tokens and the dev plans' targets are HINDSIGHT relabels, not human pointing.
+- How they are built (scripts/ex002/ex002_ctl_tokens.py): random times ≥ 1.5 s apart; hand = the wrist farther from rest; target =
+  wrist + U[1.5, 3] m along the forearm ray at that time.
+- They measure controllability (does the robot follow a commanded direction), not the reproduction of human pointing.
+- The 9c "point" pool (HOLD_POOL_TRAIN.npz) and HOLD_STATS_TRAIN.json are built from these tokens, so they are random-time windows of
+  the more-extended hand, not pointing holds. The 9c point-vs-control contrast is mainly hand choice.
+- Real human pointing in the train split: the 1060 BEAT2 deictic events of EVENTS.json. They have no 3D targets. APEX.json was trained
+  on all of them; none of their stems is a dev item or clip (checked: overlap 0).
+Hold statistics side by side, median [IQR]:
+
+| source | window | push-out A (mm) | perpendicular drift (cm) | wrist speed (m/s) |
+|---|---|---|---|---|
+| hindsight tokens (2947) | [t − 0.3, t + 0.6] | 5 [0, 23] | 4.7 [1.8, 9.5] | 0.161 [0.068, 0.267] |
+| real deictic (1060) | [t − 0.3, t + 0.6] | 4 [0, 19] | 11.0 [4.9, 18.2] | 0.289 [0.173, 0.445] |
+| real deictic (1060) | [t − 0.1, t + 0.6] | 2 [0, 12] | 9.3 [3.7, 16.9] | 0.281 [0.150, 0.438] |
+
+Real-deictic end along-ray value: −37 mm [−105, −1] (onset window), i.e. a retraction.
+## Module 9c' (pre-registered 2026-11-08 ~15:15, before any 9c' run; coordinator decision after the provenance finding)
+9c exactly as 1b19ea9, with one change: the point pool is built from the 1060 real train deictic events.
+- Pool: tokens/HOLD_POOL_DEICTIC_TRAIN.npz (sha256 9761af44…; scripts/ex002/deictic_pool.py). Window [t − 0.1, t + 0.6] s at the
+  annotated time; hand = the larger wrist-path diameter in [t − 1, t + 1] s (the APEX.json rule). Point pool speed 0.281 [0.150, 0.438] m/s.
+- The control pool is unchanged (the m9cctl row of m9c-enc is reused, linked; same inputs, same pool).
+- Run: insertion of the point row only (row name m9c inside m9cp-enc), then the 9c eval stage. Same gates as 9b / 9c, reference tok5c.
+- 9c (registered) finishes as is. Its result will state that "point" means hindsight windows and that the point-vs-control contrast is
+  mainly hand choice.
+9c' quick lane (disclosed; clips 0 and 1, seed 0, offline / psync; all gate metrics on the subset):
+- m9cp: STG gain +0.314 / +0.234 (tok5c +0.205 / +0.222); angle 11.4 / 13.0 deg; apex-in-hold 0.17 / 0.17; hold-window angle 0.9 / 0.8 deg.
+- presenting hand raised 1.00 / 1.00; palm 2 deg; executability 1.0; arm ramp jerk over the limit 0.033 / 0.053 (tok5c 0.256 / 0.289);
+  both liveliness guards PASS.
+- release median 30.0 / 34.3 (> 29.8, predicted FAIL), p95 85 / 87, max 92 / 164.
+- hold wrist speed 0.13 / 0.11 m/s vs pool 0.28 (IK lag).
+Coordinator: full 9c' held until the audit pass; 9c'' changes the release only.
+## Module 9c'' (pre-registered 2026-11-08 ~15:40, before any 9c'' run)
+9c' (deictic point pool) with the release changed; quick lane first (same 2 clips, both protocols, all gates), the full run only after the
+audit pass.
+- T-only (row m9cpT): the release duration is the smallest T in [0.3, 1.0] s (frame grid) whose quintic, matched to the hold-end state
+  (position, velocity, acceleration) and to the generator's state at the end, keeps every arm joint's peak |acceleration| ≤ its train a95
+  (ARM_ACC_P95.json). If none qualifies, T = 1.0 s. (--release-search)
+- T + taper (row m9cpTT): as T-only, and the replayed wrist displacement's velocity fades to zero over the last 0.2 s of the hold with a
+  minimum-jerk weight, so the release starts nearly at rest. (--taper 0.2)
+- Everything else as 9c' (same pool, same IK, same gates). Defaults off; the 9c / 9c' paths stay bitwise.
+## Evaluation audit, B items (2026-11-08 pass 1-2; dev / train only)
+- A5, target leakage. The plan enters inference only through the control tokens:
+  - bench_ex002.py infer loads the plan (lines 77-79) and uses it solely in cond.update(ctl_t / ctl_type / ctl_v / ctl_vm) and
+    ctl_lookahead (lines 89-92 and 101).
+  - The val View is built without ctl_tokens, so no CTL.json label reaches inference, and no dev labels are ever written
+    (ex002_ctl_tokens.py writes train only).
+  - The text / audio / speaker conditions come from the dataset and do not depend on the plan.
+  - The no-token runs are bitwise the base (IDENTITY, 6/6).
+  - Post-processing rows (5b / 5c blend, override, IK insertion) use the command by design.
+- B3, inference-seed SD (3 seeds, offline / psync):
+  - STG gain: tok5c 0.0133 / 0.0111 (per seed 0.095 0.088 0.114 / 0.094 0.094 0.075); m9b 0.0143 / 0.0062.
+  - count hit: SD 0 (1.000 every seed, override).
+  - apex angle: tok5c 0.91 / 0.29 deg; m9b 0.67 / 0.46 deg; none 0.18 / 1.75 deg.
+- C3, human STG reproduction (train BEAT2 deictic events, 1060; IN-SAMPLE for APEX.json):
+  - Score_a vs the rule apex 0.975; vs the annotated time 0.796.
+  - Score_b at the detected apex against a hindsight target on the GT ray at the rule apex 0.982; STG 0.965.
+  - Not comparable with the paper's MM-Conv GT values (Score_b 0.767, Score_a 0.941, STG 0.720): BEAT2 has no real targets, and the
+    detector was trained on these events. Our STG implementation is therefore checked only for internal consistency (detector timing,
+    ray geometry), not against the paper's human level.
+- D3, STG-gain cheating controls (enc-s0 none stream, offline seed 0, plan 1112 dense):
+
+  | control | STG | gain vs none (0.2585) | STG vs shuffled commands | given − shuffled |
+  |---|---|---|---|---|
+  | (i) right arm statically pointing at one random target the whole clip | 0.2988 | +0.040 | 0.2830 | +0.016 |
+  | (ii) fixed high arm pose at every aim command (9b ramps) | 0.2881 | +0.030 | 0.2733 | +0.015 |
+  | (iii) commanded arm pointing at a RANDOM target at every command | 0.3085 | +0.050 | 0.2792 | +0.029 |
+  | m9b (same seed / clips) | 0.3685 | +0.110 | 0.2736 | +0.095 |
+
+  None reaches the +0.10 gate, but the cheats collect 30-50 % of it. The shuffle-follow margin (given − shuffled) separates them
+  (+0.015 to +0.029 vs +0.095), so the STG gain must always be read with the shuffle check.
+- D12, release continuity: ex002_keyframe.py release writes median, p95 and max by default (max added in 366aed0; every table since
+  bd2ad8b reports all three).
+- G2, APEX.json data vs dev: the 1060 train deictic events used to train APEX.json share no stem with any dev item or clip (overlap 0).
+- Label provenance: see "Label provenance" above (hindsight relabels).
+- H2, designs tried for the EX002 control table (to date):
+  - Training lanes: 4 (lanes 1-3 fail quality; lane 4 true freeze fails quality unblended).
+  - Inference / post-processing modules with a verdict: 2 (override, adopted), 5 (fail STG), 5b (PASS on sibag-s2 incl. fresh-plan
+    confirmation), port to czm (fail STG), 7, 8 (czm; fail), 7b, 8b (sibag; fail), 9 (sibag; primary pass, side gates fail),
+    9b (enc; fail), 5c (enc; fails the 5b gates like 5b; fixes the dense cusps), m9b5c (fail, = 9b).
+  - Decoder side line: r3d arms A / B (fail).
+  - Started, no verdict yet: 9c (insert running), 9c' (quick lane; full run held), 9c'' T-only and T + taper (quick lane), 10a and 10b
+    (queued).
+  - Registered, never run: module 6 (conditional on 5b failing).
+  - Total: 24 designs / variants tried or started (18 with a verdict). Passing every gate on its base: module 5b (+ module 2) on
+    sibag-s2 only.
+9c'' quick lane (disclosed; clips 0 and 1, seed 0; same subset as 9c'; offline / psync). The default 9c' path is bitwise unchanged
+(clip 0 vs the 9c' quick-lane output).
+
+| row | STG gain | angle (deg) | apex-in-hold | release dense med / p95 / max | release sparse med / p95 / max | arm ramp |
+|---|---|---|---|---|---|---|
+| m9cp | +0.314 / +0.234 | 11.4 / 13.0 | 0.17 / 0.17 | 30.0 / 85 / 92; 34.3 / 87 / 164 | 31.3 / 79 / 103; 29.4 / 50 / 58 | 0.033 / 0.053 |
+| m9cpT | +0.332 / +0.268 | 11.0 / 8.6 | 0.26 / 0.30 | 15.2 / 42 / 43; 13.0 / 46 / 57 | 18.8 / 38 / 47; 11.9 / 25 / 36 | 0.019 / 0.020 |
+| m9cpTT | +0.344 / +0.255 | 10.8 / 11.0 | 0.26 / 0.26 | 12.7 / 42 / 43; 12.9 / 46 / 57 | 17.5 / 38 / 47; 13.4 / 27 / 36 | 0.016 / 0.020 |
+
+- Release T, median Tout: m9cp 0.69 s; T-only 0.84 s (23 % at the 1.0 s cap); T + taper 0.84 s (15 % at the cap).
+- Unchanged across the three rows: presenting hand raised 1.00, palm 2 deg, finger hit 1.0, executability 1.0, finger ramp 0.013,
+  both liveliness guards PASS, (i) and (ii) unchanged within 1 (2-clip FGD is not meaningful in absolute terms).
+- Hold wrist speed: 0.13 / 0.11 m/s (T-only); 0.105 / 0.098 m/s (T + taper); pool 0.28.
+## Render check of the 9b videos (coordinator, frame by frame; 2026-11-08 ~16:40)
+1. present0 (clip 10, t = 10.30 s, right hand presents). BUG FOUND: the palm direction is sign-agnostic.
+   - The wrist is on the same side: right wrist y −0.184 vs right shoulder −0.193 (MuJoCo FK agrees). Across all 536 present events
+     (offline s0) the median outward offset is +0.007 m and no wrist crosses the midline.
+   - But the hand points inward: hand direction (wrist → index base) is +y (0.86), the index base sits at y −0.005 (the midline), and the
+     palm faces the chest.
+   - The palm normal n = cross(index_base − wrist, third_base − wrist) has no fixed palm side. The palm is −n for the left hand and +n
+     for the right (curling moves the index tip toward it; at rest both palms face the midline).
+   - The IK term n − sgn·x took sgn from the generator's current pose, and the metric used |n_x|. Both accept a palm facing the chest.
+   - Signed re-score (offline s0): m9b palm angle 178° median, palm-forward share 0.16 (the sign-agnostic metric reported 2°); tok5b
+     104°, 0.00.
+   - So every reported palm PASS (modules 8, 8b, 9, 9b, m9b5c and the 9c' / 9c'' quick lanes) is invalid: those palms mostly face the
+     body.
+   - Fix (ctl-port, test_palm.py ALL_OK): ex002_present.py reports the signed palm angle (present_hand_palm_angle_signed_median,
+     palm-forward share); IK --palm-fix uses the signed palm forward (+x) and fingers up (+z) for present.
+2. aim0 (clip 32, t = 20.56 s, left hand). NOT a bug.
+   - A second command follows on the same hand: a present at t + 1.53 s (fingers L2 R1 → the left hand presents). Its ramp-in starts at
+     t + 0.46 s (before the aim release ends at t + 1.0 s), and its hold [t + 1.12, t + 1.92] has forearm elevation about 60°.
+   - That is the "forearm up" seen from t + 1.0 to t + 2.0 s. tok5b only overrides the fingers for that command.
+   - Before the second command, m9b equals tok up to the aim release by construction. The joint path is moderate (joint3 1.08 → 1.50,
+     joint7 0.22 → −0.44).
+9c'' quick lane with the palm fix (disclosed; same 2 clips, seed 0, offline / psync; signed palm metric).
+
+| row | palm (signed) | palm-forward share | STG gain | angle | release dense med / p95 / max |
+|---|---|---|---|---|---|
+| m9cp (9c', no fix) | 177.7 / 177.8 | 0.17 / 0.21 | | | |
+| m9cpTf (T + palm fix) | 3.0 / 3.0 | 1.00 / 1.00 | +0.220 / +0.113 | 11.2 / 17.2 | 15.4 / 43 / 53; 16.1 / 41 / 57 |
+| m9cpTTf (T + taper + palm fix) | 3.0 / 3.0 | 1.00 / 1.00 | +0.190 / +0.095 | 11.3 / 16.8 | 15.4 / 43 / 53; 15.4 / 41 / 57 |
+| tok5c | 97 / 104 | | | | |
+
+- Unchanged: presenting hand raised 1.00; finger hit 1.0; executability 1.0; arm ramp 0.015-0.020; both liveliness guards PASS.
+- STG gain / angle without the fix were +0.314 / +0.234 and 11.4 / 13.0. The fix costs STG on these 2 clips; the dense plan alternates aim and
+  present commands about 1.5 s apart, so the raised palm-forward present pose sits inside the next / previous aim's ±1 s apex window
+  (2 clips only, to be confirmed at full scale).
+Render check (qual-1108/ex002-9cpp-check; selection ctl-port 6adf911, the coordinator's two events; panels tok5c / 9c' / 9c'' T + palm
+fix; frames present0_5.0.png and aim0_6.5.png):
+- present0: with the fix the right hand is raised on its own side beside the head, fingers up, palm toward the camera. Without the fix
+  (9c') the hand lies across the chest with the palm toward the body, as in 9b.
+- aim0 at t + 1.5 s: in 9c' and 9c'' the left hand is up for the next command (a left-hand present at t + 1.53 s), as diagnosed; tok5c
+  only changes the fingers there.
+## Palm verdicts voided (root cause row 51); signed re-score of every affected module (median over present events, 3 seeds)
+Signed palm angle to forward (+x) and palm-forward share (≤ 45 deg), offline / psync; the "reported" column is the sign-agnostic number in
+the original result:
+
+| module | reported | signed palm | forward share | verdict |
+|---|---|---|---|---|
+| 8 (czm, m8) | 78 / 77 | 101.0 / 103.2 | 0.00 / 0.00 | FAIL (unchanged) |
+| 8b (sibag, m8b) | 72 / 71 | 71.6 / 71.4 | 0.00 / 0.00 | FAIL (unchanged) |
+| 9 (sibag, m9) | 1.0 / 1.0 | 179.0 / 179.0 | 0.03 / 0.02 | PASS → FAIL |
+| 9 ik row | 1.8 / 1.7 | 178.2 / 178.3 | 0.03 / 0.04 | PASS → FAIL |
+| 9b (enc, m9b) | 2.0 / 2.0 | 178.0 / 178.0 | 0.17 / 0.18 | PASS → FAIL |
+| m9b5c | 2.0 / 2.0 | 178.0 / 178.0 | 0.17 / 0.18 | PASS → FAIL |
+| 9c' quick lane (m9cp) | 2.3 / 2.1 | 177.7 / 177.8 | 0.17 / 0.21 | PASS → FAIL |
+| 9c'' pre-fix quick lane (m9cpT, m9cpTT) | 2.3 / 2.1 | 177.7 / 177.8 | 0.17 / 0.21 | PASS → FAIL |
+| 9c'' with palm fix (m9cpTf) | 3.0 / 3.0 | 3.0 / 3.0 | 1.00 / 1.00 | PASS |
+
+Hand height of the fixed present (quick lane, 53 present events per protocol; IK record wz_minus_sz):
+- Wrist z − shoulder z median: −0.070 / −0.066 m (IQR −0.083 to −0.061 / −0.080 to −0.058) with the fix, vs −0.145 / −0.150 m without it.
+  The registered target is −0.12 m, so the fixed wrist sits 5.0 / 5.4 cm above it, at the 5 cm boundary.
+- IK residual median 0.405 / 0.416 with the fix vs 0.249 / 0.245 without.
+- Cause: the two added unit-vector terms (signed palm forward, fingers up; weight 1, dimensionless) compete with the wrist-position
+  residual (weight 1, metres). Turning the palm forward with the fingers up at a low wrist would need the elbow lower than the
+  collision-free poses allow, so the solver trades about 5 cm of wrist height for orientation.
+- With the fingers up (about 0.2 m of hand), the fingertips reach about shoulder + 0.13 m, near chin / head height, which is what the
+  render shows.
+Coordinator decision (11-08 ~17:30): weights unchanged. The full 9c'' (T-only + palm fix, INSFLAGS9C='--release-search --palm-fix') runs
+after the audit pass. Its result reports, as report-only numbers, the wrist z − shoulder z of present events (quick lane: −0.070 / −0.066 m,
+5.0 / 5.4 cm above the registered −0.12 m) and the IK residual (0.41 vs 0.25 without the fix). The raised gate (wrist ≥ shoulder − 0.20 m)
+is not affected.
+## Design round after the audit (Fable memo refine-logs/FABLE_DESIGN_1108.md, main-agent review 20:10). Pre-registrations below are
+## committed before any of their runs; each runs a ≤ 5-minute quick lane with its kill rule first; full runs only on the coordinator's go.
+### Module 9d (D4; pre-registered 2026-11-08 ~20:20; quick lane after the full 9c'' eval lands; same 2 clips as 9c'')
+ex002_keyframe.py insert --version 9d (default off; the 9c / 9c'' paths stay bitwise). Built on 9c'' (T-only release search, palm fix,
+real-deictic pool). Three mechanics:
+1. Differential-IK hold replay: per hold frame one damped Gauss-Newton step (λ = 0.02), warm-started, on the task w_k + dw[τ] − FK(q)
+   with the forearm-ray rows weighted by the target distance (metres); joint limits and penetration residuals as now.
+   Expected hold speed ≈ the pool's 0.28 m/s.
+2. Unit-consistent present IK: orientation residuals (signed palm forward, fingers up) × r = 0.08 m/rad; the wrist-height target becomes
+   the box [−0.14, −0.10] m relative to the shoulder (hinges, weight 100); collision residual 100.
+3. Same-hand arbitration: when a present on hand h starts within ±1.0 s of an aim hold on hand h and the other hand's commanded count is
+   ≥ 1, the other hand presents (the finger override still sets both hands' counts). Scheduler rule only; the plan is unchanged.
+- Report-only: STG for aim events with / without a same-hand command inside ±1 s.
+- Gates: 9b / 9c gates unchanged (3 seeds, offline + psync, plans 1112): apex angle ≤ 25°; |elevation| ≤ 5°; STG gain ≥ +0.10 with
+  shuffle follow, and the method's shuffle margin above the D3 cheat controls (+0.016 / +0.015 / +0.029); count hit ≥ 0.9; raised ≥ 0.80;
+  signed palm median ≤ 45° (forward share reported); side bundle as 9c''; release median ≤ 29.8 with p95 and max reported; hold-window
+  angle, hold speed vs the deictic pool, wrist z − shoulder z (median, IQR), IK residual and rejected share reported.
+- Rows / controls: 9c'' (reference); 9d (1); 9d (1)+(2); 9d (1)+(2)+(3); arbitration only on 9c'' keys (isolates 3); IK insertion on the
+  no-token stream (none + 9d (1)+(2)+(3)).
+- Quick lane (≤ 5 min, CPU, clips 0 and 1, seed 0, offline / psync, all rows): hold speed, wrist height, signed palm, STG gain, angle,
+  release median / p95 / max. Kill if: hold speed < 0.2 m/s with (1); or wrist height outside −0.12 ± 0.02 m with (2); or any gate
+  metric worse than 9c'' on both clips.
+### Module 6 revived on enc-s0 (D5; pre-registered 2026-11-08 ~20:20; quick lane after module 10 reports; one local 5090, checked with A)
+Reopen condition of module 6 met (5b / 5c fail on enc-s0). Each control token's contribution (planner text-stream entry `ctl` and the
+`ctl_flow` term) is multiplied by w_k(t) = 1 on [t_k − 0.3, t_k + 0.9] s with 0.3 s raised-cosine ramps, composed by the 5c rule, in
+training and inference; frames outside every window get exactly zero from the control routes. Additions: (a) a ctl_flow-only variant
+(--ctl-route flow); (b) the window is applied to the ctl_ray / ctl_finger loss masks. Training: lane-4 recipe on enc-s0 (true freeze
+--train-only ctl_, lr 1e-4, 2000 steps, self_force_p 0, counterfactual targets); no inference blend; finger override as before.
+- Gates (module 10 gates): STG gain ≥ +0.10 on the dense plan with the shuffle follow and the bootstrap CI stated (a point estimate within
+  the seed SD of the gate is "at the gate", not a pass); finger hit ≥ 0.9; (i) and (ii) ≤ C + δ on the sparse plan, with (ii)_H (M2)
+  reported beside (ii); executability 100 %. Side: inside / outside / swap split of (ii); ramp jerk; dense report-only; no-token output
+  bitwise = enc-s0.
+- Controls: ctlenc (ungated, exists); gated both routes; gated ctl_flow-only; gated + the 5c inference blend (consistency check).
+- Quick lane (≤ 5 min, one local 5090): 2000-step true-freeze training, offline seed 0 on 10 dev clips (dense plan): raw STG gain,
+  outside-window max |y_given − y_none| (must be exactly 0), ctl_ray curve vs ctlenc. Kill if: the outside-window difference ≠ 0, or the
+  raw STG gain on the 10 clips < ctlenc's raw gain on the same clips − 0.02.
+### M2: human-splice control (ii)_H — REPORT-ONLY (pre-registered 2026-11-08 ~20:20; the registered (ii) gate does not change)
+- H = the dev GT motion of each clip with, at every command of the plan, a train-split human window spliced in joint space with the 9c
+  insertion machinery (insert9c: adaptive quintic ramps matched to the window's own velocity / acceleration):
+  - aim: a real train deictic window (EVENTS.json, 1060; arm joints of the APEX-rule hand over [t − 0.1, t + 0.6] s), drawn among events
+    of the same hand as the command by sha1("<clip>:<t:.3f>:M2:<seed>");
+  - finger: a train window of the presenting hand (plan rule) centred on a frame whose detector count equals the commanded count and
+    whose wrist is raised (wrist z ≥ shoulder z − 0.20 m), arm joints over [t − 0.4, t + 0.4] s; both hands' finger joints from the
+    module-10a library (same sha1 rule).
+- (ii)_H = FGD v2 of H vs GT on the sparse plan, whole clip, 3 window-sampling seeds (mean ± SD). Reported beside (ii) in every control
+  table; label: "human motion spliced", not "human obeying".
+- Validity checks: (a) H with zero insertions scores 0; (b) H built from hindsight-token windows (CTL 'aim' random-time windows of the
+  more-extended hand) scores ≤ (ii)_H; (c) (ii)_H on the dense plan ≫ the sparse value.
+M2 result (REPORT-ONLY; scripts/ex002/human_splice.py, ctl-port 815847e; diag/M2_HUMAN_SPLICE_1108.json). Pools (train): deictic 486 / 574
+(left / right), hindsight 1246 / 1697, raised presenting windows 1175–10478 per (hand, count).
+- (ii)_H, sparse plan, FGD v2 of the human-spliced GT vs GT: 3.47 ± 0.27 (3 window seeds: 3.46 / 3.21 / 3.75).
+- Validity:
+  - (a) zero insertions: 0.000 → PASS.
+  - (b) hindsight windows: 4.29 ± 0.03, NOT ≤ 3.47 → FAIL. The hindsight random-time windows raise FGD more than the real deictic
+    windows, so the memo's assumption that "less marked windows raise FGD less" does not hold.
+  - (c) dense 39.2 ± 2.3 ≫ sparse 3.47 → PASS.
+- Reading:
+  - (ii)_H is on the GT scale, while (ii) compares a generator with GT. The comparable quantity is the excess an obedient insertion adds:
+    human splices add +3.5 on the sparse plan, against the token path's +5.96 / +9.25 over the none row (ii_split). About 40-60 % of
+    the token excess is the size of a human-spliced obedience cost.
+  - With check (b) failed, (ii)_H is reported with that caveat and is not used as a floor. The registered (ii) gate is unchanged.
+Module 9d amendment (2026-11-08 ~21:00, made BEFORE any 9d run; no 9d result exists). Coordinator decision on arbitration: the present
+gates (presenting hand raised ≥ 0.80, signed palm median ≤ 45°) score the hand the system actually presents, read from the run's
+KEYFRAMES (ex002_present.py actual_hand_* fields). The plan-rule-hand numbers (present_hand_*) are reported beside them. Count hit stays
+per hand as before. Applies to every 9d row; for rows without arbitration the actual and rule hands coincide.
+## Module 9c result (registered 1b19ea9; insertion dlc1gf8zyj80q1r6 + dlc1h97s3vroqtwz, eval on speech_server GPU1 because the 4-GPU eval
+## pod could not be scheduled; LANE_DONE 19:12; enc-s0 + ctlenc, 5c input, plans 1112, seeds 0-2)
+Pools: "point" = hindsight random-time windows of the more-extended hand (NOT human pointing; see Label provenance); "control" = random
+speech windows ≥ 1 s from those tokens. The point-vs-control contrast is mainly hand choice and is not read as pointing vs non-pointing.
+Rows: tok5c (reference) / m9c (point pool) / m9cctl (control pool). Offline / psync.
+PRIMARY:
+- angle: m9c 26.5 / 25.3 deg (gate 25): FAIL; m9cctl 23.8 / 22.8 (passes); tok5c 32.7 / 34.4; none 45.6 / 46.4.
+- elevation above shoulder: m9c +1.8 / 0.0; m9cctl +1.1 / +0.2: PASS.
+- STG gain with bootstrap CI:
+  - m9c +0.150 [+0.126, +0.176] / +0.151 [+0.125, +0.179];
+  - m9cctl +0.185 [+0.162, +0.210] / +0.194 [+0.167, +0.222];
+  - tok5c +0.099 / +0.088.
+  - Shuffle follows (m9c 0.409 vs 0.281 and 0.421 vs 0.273); shuffle margins +0.128 / +0.148 (m9c) are above the D3 cheat controls: PASS.
+- count hit 1.0: PASS. Presenting hand raised 0.997 / 0.998: PASS.
+- SIGNED palm 178.0 / 178.0 deg, forward share 0.18 / 0.17 (the unfixed present IK): FAIL. The sign-agnostic metric would have read 2.0.
+SIDE:
+- (i) 86.97 / 107.04: PASS.
+- (ii) 92.45 / 116.07 (gates 90.15 / 114.34; tok5c 92.25 / 118.27): FAIL. m9cctl 92.33 / 115.74 also FAIL.
+- executability 100 %; finger ramp 0.037 / 0.045 (= tok5c): PASS.
+- arm ramps 0.031 / 0.029 (tok5c 0.225): PASS.
+- liveliness (sparse, both guards): PASS; dense report-only FAIL.
+- release median / p95 / max (dense): m9c 26.9 / 91 / 199 and 27.6 / 89 / 229 (median PASS); sparse 23.8 / 67 / 166 and 23.7 / 63 / 158.
+Report-only:
+- hold-window angle 0.64 / 0.67 deg; apex-in-hold 0.065 / 0.073 (m9cctl 0.096 / 0.117);
+- hold wrist speed 0.086 / 0.082 m/s (hindsight pool 0.160; m9cctl 0.114 / 0.113, pool 0.260).
+VERDICT: 9c FAILS (angle 26.5 / 25.3, signed palm, (ii)). Its control row passes the angle (23.8 / 22.8).
+## Module 9c'' result (registered 0e7edc4 + palm fix 2ebb4d1, decision 13e04fb; insertion dlcleb3ezgwlewt4, eval on speech_server GPU1;
+## LANE_DONE 20:49; real-deictic pool, T-only release search, palm fix; enc-s0 + ctlenc, 5c input, plans 1112, seeds 0-2)
+Rows: tok5c (reference) / m9c = 9c''. The linked m9cctl row is the unfixed 9c control (reference only). Offline / psync.
+PRIMARY:
+- angle 28.7 / 27.5 deg (gate 25): FAIL (9c 26.5 / 25.3; tok5c 32.7 / 34.4).
+- elevation above shoulder +4.4 / +3.5 (gate ±5): PASS.
+- STG gain +0.109 [+0.080, +0.140] / +0.102 [+0.071, +0.136] (gate +0.10): PASS on the mean, AT the gate (CI includes values below).
+  Shuffle follows: 0.358 vs 0.250 and 0.369 vs 0.248; margin +0.108 / +0.122, above the D3 cheat controls (+0.015 to +0.029).
+- count hit 1.0; presenting hand raised 0.999 / 0.998; signed palm 3.5 / 3.6 deg, forward share 0.998 / 0.994: PASS.
+SIDE:
+- (i) 86.95 / 107.00: PASS.
+- (ii) 80.94 / 101.21 (gates 90.15 / 114.34): PASS. ii_split: inside-window FGD 85.6 / 105.8 vs none 89.2 / 115.7 and tok5c 112.0 / 148.1;
+  outside = none.
+- executability 100 %; finger ramp 0.037 / 0.045 (= tok5c); arm ramps 0.013 / 0.012 (tok5c 0.225): PASS.
+- liveliness, sparse, both guards: PASS (protocol still 0.019 / 0.024, speed 0.323 / 0.327, amplitude 0.098 / 0.098). Dense report-only
+  FAIL.
+- release median / p95 / max: dense 14.4 / 47 / 178 and 14.7 / 47 / 211; sparse 14.9 / 31 / 147 and 15.7 / 32 / 174 (median PASS).
+  Tout median 0.78 s, 20 / 19 % at the 1.0 s cap.
+Report-only:
+- present wrist z − shoulder z −0.055 / −0.053 m (IQR −0.071 to −0.039 / −0.067 to −0.039), i.e. 6.5 / 6.7 cm above the registered −0.12;
+  IK residual 0.44 / 0.46.
+- rejected aim 2.0 / 2.4 %, present 0.4 / 0.3 %.
+- hold-window angle 0.77 / 0.80 deg; apex-in-hold 0.090 / 0.092; hold speed 0.128 / 0.122 m/s (deictic pool 0.28).
+STG split (the coordinator's hypothesis):
+- No aim on the dense plan has a present HOLD within ±1 s (commands ≥ 1.5 s apart, hold ±0.4 s), and every aim overlaps some present
+  insertion span, so those splits are degenerate.
+- Split used instead: a present performed by the SAME hand within 2 s (9c'' KEYFRAMES; 1152 of 1668 aim events):
+
+  | row | dense, same-hand present near (STG) | dense, other | sparse (isolated aims) |
+  |---|---|---|---|
+  | none | 0.253 / 0.258 | 0.265 / 0.264 | 0.253 / 0.245 |
+  | tok5c | 0.362 / 0.350 | 0.341 / 0.340 | 0.323 / 0.305 |
+  | 9c | 0.383 / 0.375 | 0.460 / 0.492 | 0.493 / 0.503 |
+  | 9c'' | 0.305 / 0.287 | 0.502 / 0.529 | 0.530 / 0.543 |
+
+- Hypothesis confirmed: next to a same-hand present, 9c'' keeps only +0.05 / +0.03 of STG gain over none. Elsewhere, and on the sparse
+  plan, it reaches +0.24 to +0.30 (the highest of all rows).
+VERDICT: 9c'' FAILS the pointing-angle gate (28.7 / 27.5) and passes every other primary and side gate, including (ii) and the signed
+palm. The angle and STG shortfall concentrates on aims next to a same-hand present (dense plan), which is what 9d's arbitration targets.
+9c'' renders (qual-1108/ex002-9cpp-full; rule ctl-port 1e09ed1, file-name-only fixes after it; offline seed 0; panels tok5c / 9c / 9c''; frames at the
+command time *_5.0.png):
+- present0 and present1 (right hand presents): in 9c'' the right hand is raised on its own side beside the head, fingers up, palm to
+  the camera. In 9c the hand is lower and across or out to the side with the palm not forward. In tok5c both hands stay low.
+- aim0 (left hand, target up and left): hold-window angle 0.4 deg in 9c'' (9c 0.6, tok5c 23.2). The apex detector picks t + 0.98 s in
+  9c'' (13.5 deg there) vs t + 0.62 s in 9c (1.6 deg).
+- aim2 (left hand, target on the robot's RIGHT, y −1.36 m, i.e. a cross-body point): hold angle 1.8 / 1.9 deg (9c'' / 9c), but the
+  detector picks the window start t − 1.0 s in both (53.4 deg); tok5c 63.6 deg at its apex (t + 0.48).
+Module 9d quick lane (disclosed; clips 0 and 1, seed 0, offline / psync; all gate metrics; speech_server CPU). Rule-hand / actual-hand
+present numbers both shown.
+
+| row | STG gain | angle | signed palm (actual) | raised (rule / actual) | hold speed (m/s) | apex-in-hold | present wrist z − shoulder z | release med / p95 / max (dense) |
+|---|---|---|---|---|---|---|---|---|
+| 9c'' (m9cpTf) | +0.220 / +0.113 | 11.2 / 17.2 | 3.0 / 3.0 | 1.00 / 1.00 | 0.131 / 0.112 | 0.13 / 0.17 | −0.070 / −0.066 | 15.4/43/53; 16.1/41/57 |
+| 9d (1) diff-IK | +0.231 / +0.152 | 10.8 / 15.8 | 3.0 / 3.0 | 1.00 / 1.00 | 0.104 / 0.116 | 0.17 / 0.22 | −0.070 / −0.066 | 14.8/43/53; 15.9/41/57 |
+| 9d (1)+(2) | +0.339 / +0.274 | 9.9 / 10.7 | 96.0 / 101.0 | 1.00 / 1.00 | 0.104 / 0.116 | 0.35 / 0.39 | −0.140 / −0.140 | 15.8/49/95; 15.8/60/109 |
+| 9d (1)+(2)+(3) | +0.318 / +0.269 | 9.9 / 12.2 | 90.4 / 98.3 | 0.73 / 0.96; 0.78 / 1.00 | 0.104 / 0.116 | 0.30 / 0.35 | −0.140 / −0.140 | 15.8/50/95; 16.5/60/98 |
+| arbitration only on 9c'' | +0.222 / +0.149 | 13.7 / 19.2 | 3.0 / 3.0 | 0.73 / 0.96; 0.78 / 1.00 | 0.128 / 0.112 | 0.13 / 0.17 | −0.073 / −0.071 | 15.4/44/53; 19.5/55/72 |
+| none + 9d (1)+(2)+(3) | +0.384 / +0.225 | 4.5 / 12.8 | 92.7 / 100.6 | 0.74 / 1.00; 0.71 / 0.96 | 0.242 / 0.192 | 0.48 / 0.35 | −0.140 / −0.140 | 15.7/59/119; 13.8/39/63 |
+
+Arbitration switched 29 % of present events; rejects 2-4 %. Liveliness (protocol guard) PASS for every 9d row.
+KILL (rule written before the run):
+- (1) hold speed 0.104 / 0.116 m/s < 0.2 m/s.
+- (2) the present wrist sits at the box's lower edge (−0.140 m, the edge of −0.12 ± 0.02), and the signed palm goes to 96-101° (palm
+  not forward): worse than 9c'' on both clips and both protocols. With orientation × 0.08 m/rad the palm terms lose to the box and
+  the collision term.
+- (3) arbitration alone does not raise the STG gain (+0.222 / +0.149 vs +0.220 / +0.113) and costs angle (13.7 / 19.2 vs 11.2 / 17.2).
+- 9d is not taken to a full run.
+- Report-only observation: IK insertion on the NO-TOKEN stream (none + 9d) has the largest STG gain on these 2 clips (+0.384 / +0.225)
+  and the smallest offline angle (4.5 deg). That control row inherits the (2) palm failure.
+## Module 10 arm (a) result (dlc1fv9t6zie9kdx started 22:12 after queueing ~7.5 h; A_SCORED 22:14; arm (b) continues in the same job)
+tok10a = 5c + override with human-library shapes. Offline / psync:
+- STG gain +0.099 [+0.080, +0.118] / +0.088 [+0.071, +0.105]: identical to tok5c (fingers do not touch the arm): FAIL (< +0.10).
+- finger hit 1.000 (left 1.0, right 1.0); shuffle follows 1.000 vs 0.077. Not evidence (circular, stated before the run).
+- Independent joint-angle agreement of the sampled shapes: 0.72 overall (0.55-0.69 for n = 0..2, 1.00 for n = 3), as disclosed.
+- (i) 86.96 / 107.04: PASS.
+- (ii) 88.02 (seeds 89.89 / 84.85 / 89.34) ≤ 90.15 and 114.26 (113.63 / 113.19 / 115.96) ≤ 114.34: PASS. psync passes by 0.08, i.e. at the
+  gate. tok5c (template override) was 92.25 / 118.27.
+- executability 100 %: PASS.
+- Report-only: finger ramp frames over the jerk limit 0.046 / 0.057 (tok5c 0.037 / 0.045); protocol liveliness guard PASS.
+VERDICT (a): the library shapes remove the override's (ii) cost (92.25 → 88.02; 118.27 → 114.26) but leave the STG gain unchanged, so
+tok10a fails the 5b gate set on STG. Arm (b) (longer ctl training) is running.
+Module 10 (b) quick check: raw (unblended) STG gain, offline seed 0, dense plan 1112, 43 clips: step 2000 +0.106 [+0.078, +0.135], step 3000
++0.141 [+0.107, +0.176]. The rise is +0.034 ≥ +0.005, so (b) continues to 4000 (trained 22:24) and regenerates.
+## Module 10 result (dlc1fv9t6zie9kdx, LANE_DONE 23:34; enc-s0, r3, 5c, plans 1112, seeds 0-2; ctl modules trained to 4000 steps for (b))
+Offline / psync, against enc-s0 none on the same masks:
+
+| row | STG gain [CI] | shuffle follows | finger hit | (i) | (ii) | exec | verdict |
+|---|---|---|---|---|---|---|---|
+| tok5c (ref) | +0.099 / +0.088 | yes | 1.0 | 86.96 / 107.04 | 92.25 / 118.27 | 100 % | FAIL (STG, ii) |
+| tok10a (library shapes) | +0.099 / +0.088 | yes | 1.0 | 86.96 / 107.04 | 88.02 / 114.26 | 100 % | FAIL (STG) |
+| tok10b (4000-step ctl) | +0.151 [+0.126, +0.176] / +0.148 [+0.125, +0.172] | 0.412 vs 0.313; 0.399 vs 0.309 | 1.0 | 86.96 / 107.04 | 88.90 / 115.72 | 100 % | FAIL ((ii) psync) |
+| tok10ab (both) | +0.151 [+0.126, +0.176] / +0.148 [+0.125, +0.172] | as tok10b | 1.0 | 86.96 / 107.04 | 85.29 / 112.25 | 100 % | PASS |
+
+Gates (ii): 90.15 / 114.34; (i): 92.16 / 112.74. tok10ab (ii) seeds: 86.81 / 82.42 / 86.64 and 111.86 / 111.04 / 113.87.
+Report-only: finger ramp over-limit 0.051 / 0.057 (tok10ab; tok5c 0.037 / 0.045); liveliness both guards PASS (protocol still 0.018 /
+0.023, wrist speed 0.334 / 0.334, amplitude 0.095 / 0.093). For the library arm the finger-hit gate is circular (disclosed);
+independent joint-angle agreement 0.72.
+VERDICT: tok10ab (4000-step ctl modules + human-library override shapes, 5c blend) PASSES every module-10 gate on enc-s0, with STG CIs
+excluding +0.10. By the adoption rule it becomes the EX002 token path for 9c-line and later modules.
+Module 6-revived (D5) amendment (2026-11-08 ~23:45, BEFORE any D5 run; coordinator-approved):
+- Construction check: kill if the given and none outputs differ (max |y_given − y_none| ≠ 0) on any frame before each clip's first
+  window start (t₁ − 0.6 s). After a window the causal generator conditions on the changed history, so frames outside later windows
+  are not required to match. Report-only: the decay of max |y_given − y_none| at 1 / 2 / 3 s after each window end, next to ctlenc
+  (ungated) on the same clips.
+- Planner (`ctl` text-stream) gating is per chunk: a control token is visible to chunk k only if chunk k's frames overlap the token's
+  [t − 0.6, t + 1.2] s window. ctl_flow gating is per frame by w_k(t).
+- The ungated control stays ctlenc (2000 steps, the same recipe length as D5). The 4000-step ctl modules of module 10 are reported
+  beside it as report-only.
+D5 amendment 2 (2026-11-09 ~00:00, before any D5 run; coordinator): the ungated baseline is the 4000-step ctl modules of module 10 (b)
+(m10-enc/b4k), replacing ctlenc (2000 steps) from the first amendment. The construction check stays as in amendment 1.
+## Module 9c'' on the adopted token path tok10ab (pre-registered 2026-11-09 ~00:00, before any run of this port)
+Same module, new base for the token path; settings and gates unchanged from 9c'' (0e7edc4 + palm fix 2ebb4d1).
+- Input: the 4000-step ctl generations (m10-enc/{offline,psync}/gen4k: d_given / s_given / d_shuffle, seeds 0-2) blended with 5c,
+  without override (tok10ab plain). The insertion's finger override uses the human library shapes (module 10a), so the finger
+  commands match tok10ab. Pool: HOLD_POOL_DEICTIC_TRAIN.npz; flags --release-search --palm-fix.
+- Reference row: tok10ab (m10-enc). Registered control row: "none + 9c''" = the same insertion (same flags, same library override) on
+  the enc-s0 no-token stream.
+- Gates as 9c'': angle ≤ 25° (apex) with the hold-window angle beside it; elevation ±5; STG gain ≥ +0.10 with shuffle follow (and the
+  shuffle margin vs the D3 controls); count ≥ 0.9; raised ≥ 0.80 and signed palm ≤ 45° (actual hand = rule hand here); (i) / (ii) ≤ C + δ;
+  executability 100 %; ramp jerk ≤ reference + 2 pts; both liveliness guards; release median ≤ 29.8 with p95 / max. Report-only: wrist
+  height, IK residual, rejects, hold speed, apex-in-hold, STG split by a same-hand present within 2 s.
+- Quick lane first (clips 0 and 1, seed 0, both protocols, all gates), then the full run on the coordinator's go.
+9c'' port onto tok10ab, quick lane (disclosed; clips 0 and 1, seed 0, offline / psync; diag/quick_port):
+
+| row | STG gain | shuffle given / original | angle | raised | signed palm | release med / p95 / max (dense) |
+|---|---|---|---|---|---|---|
+| tok10ab (reference) | +0.327 / +0.335 | 0.442 / 0.420; 0.288 / 0.407 | 14.9 / 16.2 | 0.06 / 0.06 | 97 / 99 | 21.7/85/113; 25.7/92/117 |
+| tok10ab + 9c'' | +0.271 / +0.196 | 0.441 / 0.325; 0.454 / 0.367 | 9.2 / 12.6 | 0.96 / 1.00 | 3 / 3 | 15.8/45/56; 13.5/43/79 |
+| none + 9c'' (control) | +0.258 / +0.138 | 0.448 / 0.220; 0.438 / 0.242 | 8.0 / 17.6 | 1.00 / 0.96 | 3 / 3 | 16.2/38/135; 14.9/59/97 |
+
+- Executability 1.0; both liveliness guards PASS; arm ramp 0.016-0.026 (tok10ab 0.31-0.32); hold speed 0.14 / 0.12 m/s (control 0.22 / 0.19);
+  apex-in-hold 0.17 (control 0.22); present wrist z − shoulder z −0.078 m; rejects 0-4 %.
+- The tok10ab reference's shuffle check fails on these 2 psync clips (0.288 < 0.407) — 2-clip noise; the full module-10 run follows
+  (0.399 vs 0.309).
