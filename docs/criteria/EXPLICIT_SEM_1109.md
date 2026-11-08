@@ -188,3 +188,9 @@ Verdict: the canonical explicit-gesture row passes every gated category on TTS-s
   <= none + delta, liveliness guard, executability 100 %); the other categories' success is re-reported (must not drop).
 - Renders, for the check: one "three" event (count 3; the first by sha1("<clip>:<onset:.3f>:explrender") among NUMBER commands
   with count 3) and the "first" event. Panels GT / none / given (before) / given (amendment 5); front + hands close-up.
+
+## Amendment 5 RESULT (11-09 06:46; 43 recordings, seed 0, TTS-sync, 18 NUMBER commands; release 20261109-064207-expl-a5-1109)
+NUMBER gates: count hit 1.00 (>= 0.90); presenting-hand palm signed angle median 2.96 deg (<= 45; palm-forward share 0.89); presenting
+hand raised share 1.00 (>= 0.80) -> PASS. Before amendment 5: raised 0.14, palm 99.6 deg. The other categories are unchanged (SELF 0.98,
+YOU 0.98, POINT 0.90, BIG 0.67, SMALL 0.33 on this seed, identical to before). Side gates: FGD v2 103.27 (before 105.51, none
+106.98, s0); FKD 1.468; liveliness guard PASS; executability after CBF 100 % (finger-ramp frames over the jerk limit 0.0 %).
