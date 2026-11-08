@@ -749,3 +749,10 @@ m9b5c with the 9b gates (dense rows change, sparse rows = m9b):
 - executability: PASS; liveliness sparse: PASS;
 - release median 27.1 / 27.5: PASS.
 Same verdict as 9b.
+Qualitative (qual-1108/ex002-m9b; rule ctl-port d5fcb52: plan 1112 dense, offline seed 0, sha1-ranked aim0 / present0 / aim1; panels
+tok5b / m9b / m9b5c; front + 45 deg; frames at the command time in aim0.f.png / present0.f.png):
+- present0 (fingers L2 R2, right hand presents): in the m9b and m9b5c panels the right hand is raised in front of the right side of the
+  chest with the palm forward. It does not cross to the face (m9 did). In tok5b the hands stay low at the hips.
+- aim0 (left hand): the red forearm ray runs close to the yellow command direction in the m9b / m9b5c panels and further from it in
+  tok5b.
+- At the command time m9b and m9b5c look the same.
