@@ -97,3 +97,6 @@ ISC RESULT 2026-11-08 11:4x (eval-enc-s0/EVAL_isc.json; 1428 streams, 0 fallback
 Rule (09:1x addendum): both R0causal and Funnel qualify (yield3d >= 90 %, v3 <= 10 %, unsafe <= 1 %); lower RKD-post -> Funnel (0.519
 vs 0.551). Selected post-hoc method on the deployed chain with ISC: Funnel. (Base enc-s0 on the vae-r3 decodes; not frozen until
 the r3d decoder decision.)
+Check (11-08 11:5x): the safe and the ISC rows use the same v3 pairing: the counterfactual reference is the same no-interruption
+stream, enc-s0 psync s0 through the same 3c-4b layer (runs/ex002-proj4b-enc/psync/s0, passed as B3:<dir>:<ref> in both evals);
+only the interrupted streams differ, so 10.3 % -> 0.4 % (R0causal) is not a reference change.
