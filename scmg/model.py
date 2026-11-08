@@ -38,6 +38,13 @@ INF = 10 ** 6
 
 
 @dataclass
+
+def ctl_window(dt):
+    """D5 gate: 1 on [-0.3, 0.9] s, raised-cosine ramps of 0.3 s, 0 outside [-0.6, 1.2] s."""
+    x = torch.clamp(torch.minimum((dt + 0.6) / 0.3, (1.2 - dt) / 0.3), 0., 1.)
+    return 0.5 - 0.5 * torch.cos(torch.pi * x)
+
+
 class Config:
     n_source: int = 7          # preserve legacy init/RNG exactly; BAgger explicitly expands to N_SOURCE
     z: int = 16                    # VAE latent dim
@@ -104,6 +111,12 @@ class Config:
     ctl: bool = False
     ctl_flow: bool = False
     ctl_freqs: int = 6
+    # 11-08 module 6 revived (D5; default off = the exact old model): ctl_gate multiplies each control token's ctl_flow term by its
+    # time window w(dt) (1 on [-0.3, 0.9] s around the token time, 0.3 s raised-cosine ramps, 0 outside [-0.6, 1.2]); untimed tokens give
+    # nothing; the planner text-stream copy is visible to chunk k only if chunk k overlaps [t - 0.6, t + 1.2]. ctl_route 'flow' keeps the
+    # tokens out of the planner text stream entirely.
+    ctl_gate: bool = False
+    ctl_route: str = 'both'
     # 11-06 causal retrieval route (scripts/semantic/g1_ret_bank.py; default off): a retrieved exemplar = frozen-VAE latents of a
     # bank gesture, aligned at the token time (snippet starts ret_pre s earlier); every Local Flow position inside the snippet adds
     # MLP([latent at its time, Fourier(position - token time)]) (zero-init output) to its AdaLN condition
@@ -546,14 +559,29 @@ class SCMG(nn.Module):
         from .ctl import fourier, WIN_PAST, WIN_FUTURE
         dt = qsec[None, :, :, None].float() - torch.nan_to_num(ct, 0.)[:, None, None, :].float()            # [B, K, L, Kc]
         tm = timed[:, :, None, :] & (dt >= -WIN_PAST) & (dt <= WIN_FUTURE)
-        use = tm | (keep & ~timed)[:, :, None, :]
+        gate = getattr(self.cfg, 'ctl_gate', False)
+        use = tm if gate else tm | (keep & ~timed)[:, :, None, :]
         cols = use.flatten(0, 2).any(0).nonzero().squeeze(1)
         out = torch.zeros(*dt.shape[:3], self.cfg.d, device=u.device, dtype=u.dtype)
         if cols.numel() == 0: return out
         dt, tm, use, u = dt.index_select(3, cols), tm.index_select(3, cols), use.index_select(3, cols), u.index_select(1, cols)
         e_dt = self.ctl_dt(fourier(dt / 4., self.cfg.ctl_freqs).to(self.ctl_dt.weight.dtype))
         e = torch.where(tm[..., None], e_dt, self.ctl_dt_unk.to(e_dt.dtype)) + u[:, None, None].to(e_dt.dtype)
-        return (self.ctl_fmlp(e) * use[..., None].to(e.dtype)).sum(-2).to(u.dtype)
+        wv = use.to(e.dtype)
+        if gate: wv = wv * ctl_window(dt).to(e.dtype)
+        return (self.ctl_fmlp(e) * wv[..., None]).sum(-2).to(u.dtype)
+
+    def ctl_text_vis(self, cm, ct, keep, timed, chunk_start):
+        """Planner text-stream visibility of the control-token copies -> (cm_text [B, Kc], timed_vis, untimed_vis [B, K, Kc]).
+        Default: unchanged (cm, timed, keep & ~timed). ctl_gate: timed copies only for chunks overlapping [t - 0.6, t + 1.2] s, no
+        untimed copies; ctl_route 'flow': no copies at all. chunk_start [K] s, same origin as ct."""
+        if not getattr(self.cfg, 'ctl_gate', False) and getattr(self.cfg, 'ctl_route', 'both') == 'both': return cm, timed, keep & ~timed
+        if getattr(self.cfg, 'ctl_route', 'both') == 'flow':
+            z = torch.zeros_like(timed); return torch.zeros_like(cm), z, z
+        from .common import CHUNK_FRAMES
+        t = torch.nan_to_num(ct, -1e9).float()[:, None, :]; c0 = chunk_start.float()[None, :, None]
+        ov = (c0 < t + 1.2) & (c0 + CHUNK_FRAMES / 50. > t - 0.6)
+        return cm, timed & ov, torch.zeros_like(timed)
 
     def sem_time_cond(self, text, tmask, tvis, tsec, K):
         """-> (flow add [B, K, L, d], planner add [B, K, d]) or (None, None) without cfg.sem_time."""

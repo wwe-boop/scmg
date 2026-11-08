@@ -572,9 +572,11 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         tt_c, tu_c = model.ctl_text_tokens(u, ct)
         ctn = torch.where(cm, ct, torch.full_like(ct, float('nan')))
         if tvis is not None:
-            text = torch.cat([text, tt_c.to(text.dtype), tu_c.to(text.dtype)], 1); tmask = torch.cat([tmask, cm, cm], 1)
-            tvis = torch.cat([tvis, timed, keep & ~timed], -1); tsec = torch.cat([tsec, ctn, torch.full_like(ctn, float('nan'))], 1)
+            cm_t, tv_t, tv_u = model.ctl_text_vis(cm, ct, keep, timed, nowk)          # D5 gate (default: cm, timed, keep & ~timed)
+            text = torch.cat([text, tt_c.to(text.dtype), tu_c.to(text.dtype)], 1); tmask = torch.cat([tmask, cm_t, cm_t], 1)
+            tvis = torch.cat([tvis, tv_t, tv_u], -1); tsec = torch.cat([tsec, ctn, torch.full_like(ctn, float('nan'))], 1)
         else:
+            if getattr(cfg, 'ctl_gate', False) or getattr(cfg, 'ctl_route', 'both') != 'both': raise ValueError('ctl_gate / ctl_route need the ADSC tvis path')
             text = torch.cat([text, tt_c.to(text.dtype)], 1); tmask = torch.cat([tmask, cm], 1); tsec = torch.cat([tsec, ctn], 1)
         qsec = model.flow_seconds(torch.arange(K, device=dev), cfg.ctx + CHUNK, cfg.ctx)
         cc = model.ctl_flow_cond(u, ct, keep, timed, qsec)

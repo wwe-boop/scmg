@@ -305,12 +305,20 @@ class Streamer:
                 ctimed = torch.where(g0[:, None, :], ctimed | (ckeep & early), ctimed)
             tt_c, tu_c = m.ctl_text_tokens(ctl_u, ctl_tt)
             ctn = torch.where(cm, ctl_tt, torch.full_like(ctl_tt, float('nan'))); n0 = text.shape[1]
+            gate_ = getattr(cfg, 'ctl_gate', False) or getattr(cfg, 'ctl_route', 'both') != 'both'     # D5 (default off)
             if dual:
-                text = torch.cat([text, tt_c.to(text.dtype), tu_c.to(text.dtype)], 1); tmask = torch.cat([tmask, cm, cm], 1)
-                tvis = torch.cat([tvis, ctimed, ckeep & ~ctimed], -1); tsec = torch.cat([tsec, ctn, torch.full_like(ctn, float('nan'))], 1)
+                cm_t, tv_t, tv_u = m.ctl_text_vis(cm, ctl_tt, ckeep, ctimed, nowc)
+                text = torch.cat([text, tt_c.to(text.dtype), tu_c.to(text.dtype)], 1); tmask = torch.cat([tmask, cm_t, cm_t], 1)
+                tvis = torch.cat([tvis, tv_t, tv_u], -1); tsec = torch.cat([tsec, ctn, torch.full_like(ctn, float('nan'))], 1)
             else:
-                text = torch.cat([text, tt_c.to(text.dtype)], 1); tmask = torch.cat([tmask, cm], 1); tsec = torch.cat([tsec, ctn], 1)
-                if tvis is not None: tvis = torch.cat([tvis, ckeep], -1)
+                if gate_:
+                    if tvis is None: raise ValueError('ctl_gate / ctl_route need chunk visibility (tvis)')
+                    cm_t, tv_t, _ = m.ctl_text_vis(cm, ctl_tt, ckeep, ctimed, nowc)
+                    text = torch.cat([text, tt_c.to(text.dtype)], 1); tmask = torch.cat([tmask, cm_t], 1); tsec = torch.cat([tsec, ctn], 1)
+                    tvis = torch.cat([tvis, tv_t], -1)
+                else:
+                    text = torch.cat([text, tt_c.to(text.dtype)], 1); tmask = torch.cat([tmask, cm], 1); tsec = torch.cat([tsec, ctn], 1)
+                    if tvis is not None: tvis = torch.cat([tvis, ckeep], -1)
             tm_noctl = tmask.clone(); tm_noctl[:, n0:] = False
         if self.has_ret:                                             # retrieved exemplars: same arrival / voicing rules as their word
             from .ctl import anchor_arrival, visibility
