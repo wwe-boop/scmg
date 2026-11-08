@@ -145,8 +145,17 @@ Status legend: PASS = verified with evidence (commit or number given); FAIL = sh
 | G2 | APEX.json training data excludes dev | PASS (B, 8077f40): 0 overlap |
 | G3 | STG comparable to the 2610.03105 human values | NO: we have no real 3D targets; only an in-sample Score_a check is possible |
 
+## Pass 5 (11-09 03:4x, A) — frozen-arm EX002 post-speech tails (retarget fallback), found while building the P1b-SW bank
+| # | Question | Status |
+|---|---|---|
+| P5a | Are there EX002 human references whose arms do not move? | YES, in the tail set only. 108 of the 757 retargeted BEAT2 post-speech tails (ex002-interrupt-1107/tails/seg) have arm joints q[:, 4:18] exactly constant over the whole file, including the speech before the offset. They come from 12 whole recordings; no recording has both frozen and moving tails: 9_miranda_1_{2,3,5,8,11}, 4_lawrence_1_{3,4,5}, 22_luqi_1_2_2, 22_luqi_3_11_11, 11_nidal_1_5_5, 27_yingqing_1_3_3. Inside the reference windows: half A 45 / 154 (29 %), half B 24 / 151 (16 %). |
+| P5b | Clamp at the joint limits? | NO. All 108 have the same arm vector, equal to the EX002 runtime reset_pose (reset37 arms, max diff 0). The nearest joint limit is 0.467 rad away. The BEAT2 SMPL-X source of the same windows moves (4_lawrence_1_3_3 @ 261.7 s: arm axis-angle max per-frame change 0.28 rad, no NaN). Visual check: Isaac front + 3/4 views of the robot next to a stick figure of the SMPL-X source joints (selection rule committed first, exp/duplex 6447b94; /mnt/bulk/zehan/renders/armfreeze-1109/, ARM_VS_LIMITS.json). The robot holds the reset pose while the human gestures. This is a retarget fallback in the tail route (scripts/ex002/ex002_retarget_tails.py, release06, near=False), not human behaviour. Root cause not yet traced; no fix yet. |
+| P5c | Training data (data-v36_1) affected? | NO at scale. Arms (both) constant for >= 1 s: train 0.01 % of frames, 0.05 % of items; dev (val_ids, 380 items) 0. None of these runs equals the reset pose: they are short holds, the largest share in RGJ597 with 33 items. None of the 12 frozen recordings appears in data-v36_1. The L1 tail view (data-v36_1-tail) only appends tails that match a view item bitwise, so it cannot contain them. (~/bulk/causal-train-1105/audit-1108/armfreeze/ARMFREEZE_v36_1.json) |
+| P5d | EX002 dev GT for FGD v2 / liveliness | PASS: the dev GT is data-v36_1 val, which has 0 frozen runs. |
+| P5e | What is affected | Everything calibrated or referenced on the tails: v4 it2 parameters (v75 / v95 / E_A / D90, half A); SETTLE_A (P1 v_q / tau, half A; tau median 0 is consistent with 29 % frozen arms); the half-B human reference (RKD-post windows, R_sil rest pose, T_r); GT-tail rows. Registered results stay as registered. Sensitivity rows that exclude the frozen tails are reported from P1b onward. The P1b-SW bank excludes them by its pre-registered rule (arm motion in the 2 s before the offset: 109 / 154). |
+
 ## Pass log
 - Pass 1 (15:00): new issues D5, D12, E3, F1, F2, A3 (single assert script), B3, C3, D1–D3, D8–D10 OPEN. Next pass after these are closed.
 - Pass 2 (17:05): H1–H4. Pass 3 (18:10): video check found V1 (palm sign bug, fixed) and E1b (prefix, resolved). Pass 4 (19:30): no new issue, audit passed.
 - 11-09 02:35 addendum: pair_win on a 100-clip G1 dev subset FAILS its sanity check (mismatched-GT 0.583 vs 0.5 ± 0.03; GT 0.714). New reading rule: pair_win is read only on the full dev set, and only with its sanity rows passing; never on quick-lane subsets.
-
+- 11-09 03:4x pass 5 (A): frozen-arm tails = retarget reset-pose fallback in the tail route (108 / 757 tails, 12 recordings); training and dev GT clean; tail-based references affected (P5e).
