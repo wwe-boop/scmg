@@ -154,3 +154,26 @@ priority) with a report-only "realisation ratio" (realised / commanded amp_h and
   c3 late: token time = keyword onset + 0.2 s (t_tok + 0.4 s).
   Reading (reported, not gated): the mechanism needs the counterfactual + outcome terms iff c1's E(given) reduction is below the
   main model's by more than its CI; the lead matters iff the main reduction exceeds both c2's and c3's.
+
+## Full run + controls RESULT (dlc1jp4hsbbv4hir, LANE_DONE 07:06; 43 recordings x seeds 0-2, 247 oracle events -> 741 scored)
+Gates (offline, pooled over seeds, recording bootstrap):
+- G1: E none 2.264 -> given 1.350, reduction 40.4 % [34.8, 45.6] -> PASS.
+- G2: swapped run E vs swapped d 1.379 vs vs oracle d 1.996, diff -0.617 [-1.288, -0.031] -> PASS.
+- G3: FGD v2 given 91.12 (seeds 92.22 / 87.82 / 93.32) vs none 86.29 (87.65 / 84.08 / 87.13); delta = max(2.59, 3.86) = 3.86,
+  bar 90.15 -> FAIL by 0.97.
+- G4: liveliness guard on given PASS on all 3 seeds (wrist 0.35 m/s, amp 0.095).
+- G5: none path bitwise = stored enc-s0 offline on 129 / 129 files -> PASS.
+-> 4 of 5 gates pass. G3 fails narrowly: the descriptor token costs about 5 FGD v2 points on the whole clip.
+Reported:
+- psync given 1.663 vs psync none 2.191: -24.1 % [20.3, 28.1]. TTS-sync given 1.442: -34.2 % [30.1, 38.3].
+- Retrieval: E 2.108 vs oracle d (-6.9 % [1.1, 14.1] vs none); E vs its own retrieved d 1.020; FGD v2 156.67; FKD 2.20;
+  liveliness FAILS on all 3 seeds (wrist 0.276, amp 0.073).
+- Realisation ratio (realised / commanded, median [IQR]): given amp 0.65 [0.45, 0.94], vpk 0.70 [0.48, 0.96]; swapped-to-swapped
+  amp 0.67, vpk 0.71; none-vs-oracle amp 0.52, vpk 0.57. The model realises about two thirds of the commanded amplitude / peak
+  speed.
+Controls (offline given, reduction vs none, CI):
+- main 40.4 % [34.8, 45.6]
+- c1 plain (no counterfactual, no outcome loss) 27.9 % [24.6, 31.8]. Below main by more than the CIs (main lower 34.8 > c1
+  upper 31.8) -> the counterfactual + outcome terms matter. c1 still follows the swap (1.650 vs 2.254).
+- c2 onset 37.0 % [31.4, 42.3]; c3 late 36.3 % [31.8, 41.0]. The main reduction exceeds both point-wise (the registered reading:
+  "the lead matters"), but the CIs overlap: the -0.2 s lead is a small effect.
