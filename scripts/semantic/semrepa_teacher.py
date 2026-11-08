@@ -5,7 +5,7 @@
           AdamW 5e-4 / wd 0.05, batch 512, 6000 steps, OneCycle 5 %, amplitude x U(0.85, 1.15) + 0.01 noise; final checkpoint.
   sanity: dev 400 items, data-sem-hos dev events: S1 GT vs mismatched-motion pair accuracy (gate >= 0.60), S2 semantic AUC
           (gate >= 0.60); reported: 5-class balanced patch accuracy, S1 with the e5 target swapped instead.
-    python scripts/semantic/semrepa_teacher.py train --out T.pt [--win 80]
+    python scripts/semantic/semrepa_teacher.py train --out T.pt [--win 80] [--e5-loss nce]   (nce = v2, amendment 2)
     python scripts/semantic/semrepa_teacher.py sanity --ckpt T.pt --out SANITY.json
 """
 import argparse, json, sys, time
@@ -54,10 +54,19 @@ def build(items):
     return dict(Q=np.concatenate(Q), Y=np.concatenate(Y), off=np.array(off), L=np.array(L), tok=tok, nosem=nosem, ids=[x['id'] for x in items])
 
 
+MU = None                                            # v2 (amendment 2): mean train e5 token feature, subtracted before normalising
+
+
 def e5_target(tok, t):
     f, tm = tok; m = np.abs(tm - t) <= HALF_E5
     if not m.any(): return None
-    v = f[m].mean(0); return v / max(np.linalg.norm(v), 1e-6)
+    v = f[m].mean(0)
+    if MU is not None: v = v - MU
+    return v / max(np.linalg.norm(v), 1e-6)
+
+
+def train_mu():
+    D = build(load_items('train')); f = np.concatenate([t[0] for t in D['tok']]); return f.mean(0).astype(np.float32), D
 
 
 def windows(D, ii, cc, win):
@@ -66,8 +75,11 @@ def windows(D, ii, cc, win):
 
 
 def train(a):
+    global MU
     torch.manual_seed(a.seed); rng = np.random.default_rng(a.seed); dev = 'cuda'
-    D = build(load_items('train')); win = a.win; n = win // PATCH
+    if a.e5_loss == 'nce': MU, D = train_mu()
+    else: D = build(load_items('train'))
+    win = a.win; n = win // PATCH
     lab = D['Y'][D['Y'] >= 0]; cnt = np.bincount(lab, minlength=NCLS).astype(np.float64)
     cw = (cnt.max() / np.maximum(cnt, 1)) ** 0.5; cw = cw / (cw * cnt).sum() * cnt.sum()
     std = D['Q'].std(0) + 1e-3                      # the window-mean-removed scale is close to the raw per-channel std
@@ -87,12 +99,16 @@ def train(a):
         te = torch.tensor(np.stack([t if t is not None else np.zeros(768, np.float32) for t in tg]), device=dev)
         out = model(x)
         lc = crit(out['logits'].reshape(-1, NCLS), y.reshape(-1))
-        le = ((1 - F.cosine_similarity(out['e5'], te, dim=-1)) * em).sum() / em.sum().clamp(min=1)
+        if a.e5_loss == 'nce':                     # v2: symmetric in-batch InfoNCE, temperature 0.07
+            zi = F.normalize(out['e5'][em], dim=-1); zt = te[em]; lg = zi @ zt.T / 0.07; lab_ = torch.arange(len(zi), device=dev)
+            le = 0.5 * (F.cross_entropy(lg, lab_) + F.cross_entropy(lg.T, lab_))
+        else: le = ((1 - F.cosine_similarity(out['e5'], te, dim=-1)) * em).sum() / em.sum().clamp(min=1)
         loss = lc + le
         opt.zero_grad(set_to_none=True); loss.backward(); torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0); opt.step(); sch.step()
         if step % 250 == 0 or step == a.steps - 1:
             log.append(dict(step=step, cls=round(lc.item(), 4), e5=round(le.item(), 4), s=round(time.time() - t0, 1))); print(json.dumps(log[-1]), flush=True)
-    torch.save(dict(model=model.state_dict(), std=std.tolist(), arch=dict(win=win), seed=a.seed, steps=a.steps, class_weights=cw.tolist(),
+    torch.save(dict(model=model.state_dict(), std=std.tolist(), arch=dict(win=win), seed=a.seed, e5_loss=a.e5_loss,
+                    e5_mu=None if MU is None else MU.tolist(), steps=a.steps, class_weights=cw.tolist(),
                     train_counts=cnt.tolist(), n_items=len(D['L']), n_nosem=D['nosem'], rule=__doc__.split('\n')[1]), a.out)
     Path(a.out).with_suffix('.log.json').write_text(json.dumps(dict(log=log, args=vars(a)), indent=1))
 
@@ -104,7 +120,9 @@ def auc(pos, neg):
 
 @torch.no_grad()
 def sanity(a):
+    global MU
     dev = 'cuda'; s = torch.load(a.ckpt, map_location='cpu', weights_only=False)
+    if s.get('e5_mu') is not None: MU = np.asarray(s['e5_mu'], np.float32)
     model = Teacher(s['std'], **s['arch']).to(dev); model.load_state_dict(s['model']); model.eval(); win = model.win
     items = load_items('dev'); D = build(items); pos = {k: i for i, k in enumerate(D['ids'])}
     E = [e for e in json.loads(Path(EVENTS).read_text())['events'] if e['split'] == 'dev' and e['stem'] in pos]
@@ -152,6 +170,6 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser(); sub = ap.add_subparsers(dest='cmd', required=True)
     t = sub.add_parser('train'); t.add_argument('--out', required=True); t.add_argument('--win', type=int, default=80)
     t.add_argument('--steps', type=int, default=6000); t.add_argument('--bs', type=int, default=512); t.add_argument('--lr', type=float, default=5e-4)
-    t.add_argument('--seed', type=int, default=7)
+    t.add_argument('--seed', type=int, default=7); t.add_argument('--e5-loss', default='cos', choices=('cos', 'nce'))
     s = sub.add_parser('sanity'); s.add_argument('--ckpt', required=True); s.add_argument('--out', required=True)
     a = ap.parse_args(); train(a) if a.cmd == 'train' else sanity(a)
