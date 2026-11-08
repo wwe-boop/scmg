@@ -106,7 +106,7 @@ def safety():
         if name.startswith('3c-1'):           # registered 3c-1 gates: clear, dFGD within 1 raw SD, p99 <= 100 (no zero-fallback / jerk gate)
             dfgd_ok = all(abs(x[1]) <= x[2] for x in parts); v = 'PASS (registered 3 gates) / not adopted' if (g1 and dfgd_ok and g4) else 'FAIL'
             say('safety', name, v, f'g1 clear {g1}; dFGD within SD {dfgd_ok}; {p4}; BUT fallback frames {min(fbf)}-{max(fbf)} per run and jerk-over-table '
-                f'{jk:.0f} % -> coordinator rule (fallback / jerk material): not the layer', exp[name][0]); continue
+                f'{jk:.0f} % -> rejected by a main-agent judgement beyond the registered gates; the later modules registered zero fallback and jerk as gates', exp[name][0]); continue
         fails = [g for g, ok in (('g1', g1), ('g2', g2), ('g3', g3_), ('g4', g4)) if not ok]
         say('safety', name, 'PASS' if not fails else 'FAIL', f'fails {",".join(fails) or "none"} | g1 clear {g1}; g2 fallback frames {fbf}; g3 dFGD/dFKD within raw SD '
             + ', '.join(f'{P} {dF:+.2f}/{sF:.2f} {dK:+.3f}/{sK:.3f}' for P, dF, sF, dK, sK, _ in parts) + f', jerk-over-table {jk:.1f} %; g4 {p4}',
