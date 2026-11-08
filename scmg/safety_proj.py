@@ -643,8 +643,11 @@ class ProjectionLayer(_Base):
         if qp is None:
             qp = ChunkQP(self.lim, H, N, terminal=True, pos_margin=self.pm, shrink=self.shrink)
             lin = np.concatenate([lin_k, np.repeat(lin_k[-1:], self.B, 0)], 0)
-            for t in range(N):
-                rows, ql = lin_rows(self.coll, lin[t], ref[t], self.act)
+            memo = {}                  # 11-08: identical (pose, reference) pairs (the held braking tail) are linearised once;
+            for t in range(N):         # lin_rows is a deterministic function of its inputs, so the rows are bit-identical
+                key = (lin[t].tobytes(), ref[t].tobytes())
+                if key not in memo: memo[key] = lin_rows(self.coll, lin[t], ref[t], self.act)
+                rows, ql = memo[key]
                 if rows: qp.add_collision(t, rows, ql, self.ds)
         tgt = np.full((N, self.n), np.nan); tgt[:k] = target_k
         W = np.tile(self.w, (N, 1))
