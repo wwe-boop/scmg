@@ -76,3 +76,18 @@ the canonical path below. Both are reported.
   row primary for the canonical path, psync reported). Side gates: FGD v2 (i) / (ii) and the liveliness guard.
 - Renders: 4 events ("me", "you", "three", "big"; the first by sha1("<clip>:<onset:.3f>:explrender") among the scored
   occurrences of each word), panels GT / none / given, front + 3/4 view.
+
+## Amendment 2 (11-09 04:0x): one metric / positive revision, triggered by the synthetic validation (registered allowance)
+Before any canonical generation number. A 2-recording validation run (28 commands) gave: SELF tp 0.00 (the aim-style IK positive
+never brought the wrist near the chest: wpos_err 0.44 m); YOU tp 0.875 / fp 0.625 (acc 0.625: GT forearm rays often point forward
+within 23.5 deg of the forward box); SMALL tp 0 (IK fell 0.2 m short: the orientation residual and the q0 regulariser).
+Revisions (this is the one allowed revision per metric):
+- Keyframe IK (BIG / SMALL and the SELF chest keyframe): present-style wrist position, orientation term off (palm_fix with
+  or_scale 0), 3 chained IK rounds x 30 iterations (the regulariser re-centred each round). Checked on 3 recordings: BIG reaches
+  (0.42-0.45, +-0.44, 1.145); SMALL separation 0.17-0.19 m; SELF chest wrist 0.12-0.14 m from the sternum reference.
+- SELF gets two canonical variants, both reported: (a) the aim command at the sternum target (as registered); (b) a chest keyframe:
+  the commanded hand's wrist to (0.25, 0.05 toward the midline, 1.10) m, held 0.4 s. The SELF validation positive is (b).
+- YOU / POINT success (revised): forearm-ray angle to the target box <= 15 deg AND |wrist - shoulder| >= 0.40 m (arm extended),
+  both at the apex-detector frame within t +- 1 s.
+SELF, BIG, SMALL and NUMBER metrics are unchanged. Validation is re-run on all 10 recordings; a metric still below 90 % is
+reported as failed and its category is not gated.
