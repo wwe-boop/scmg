@@ -10,14 +10,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 FPS = 50
 
 
-def weight(T, ts, inner, outer, pre=None, post=None):
+def weight(T, ts, inner, outer, pre=None, post=None, compose='max'):
     # symmetric (module 5): 1 for |t - t_cmd| <= inner, cosine to 0 at outer; asymmetric (5b): 1 on [t - pre, t + post], same ramp width
-    fr = np.arange(T) / FPS; w = np.zeros(T); r = outer - inner
+    # compose='max' (modules 5 / 5b, default): w = max_i w_i -- has a derivative jump where a ramp-out crosses the next ramp-in.
+    # compose='smooth' (module 5c): w = 1 - prod_i (1 - w_i) on frames where >= 2 windows are non-zero (C1); elsewhere the single window
+    # as in 5b, so plans without overlapping windows give 5b bitwise.
+    fr = np.arange(T) / FPS; w = np.zeros(T); r = outer - inner; q = np.ones(T); n = np.zeros(T, int)
     for t in ts:
         if pre is None: d = np.abs(fr - t) - inner
         else: d = np.where(fr < t - pre, (t - pre) - fr, np.where(fr > t + post, fr - (t + post), 0.))
         x = np.clip(1 - np.maximum(d, 0) / r, 0, 1) if pre is not None else np.clip((outer - np.abs(fr - t)) / r, 0, 1)
-        w = np.maximum(w, 0.5 - 0.5 * np.cos(np.pi * x))
+        wi = 0.5 - 0.5 * np.cos(np.pi * x); w = np.maximum(w, wi)
+        if compose == 'smooth': q = q * (1 - wi); n += wi > 0
+    if compose == 'smooth': w = np.where(n >= 2, 1 - q, w)
+    elif compose != 'max': raise ValueError(compose)
     return w
 
 
@@ -26,6 +32,7 @@ def main():
     ap.add_argument('--plan', required=True); ap.add_argument('--out', required=True); ap.add_argument('--inner', type=float, default=.6)
     ap.add_argument('--outer', type=float, default=.9); ap.add_argument('--finger-override'); ap.add_argument('--mode', default='given')
     ap.add_argument('--pre', type=float); ap.add_argument('--post', type=float)
+    ap.add_argument('--compose', default='max', choices=['max', 'smooth'])   # smooth = module 5c
     ap.add_argument('--wrist-pose', default=None, help='11-08 module 8b: PRESENT_WRIST.json -> presenting-hand wrist joints blended to the library pose at finger commands (minjerk, hold 0.4 s, ramp 0.3 s)'); ap.add_argument('--fo-ramp', type=float, default=0.15); ap.add_argument('--fo-profile', default='cos', choices=['cos', 'minjerk'])
     a = ap.parse_args()
     from ex002_ctl_run import finger_override, tokens_for
@@ -35,7 +42,7 @@ def main():
     shapes = json.loads(Path(a.finger_override).read_text())['shapes'] if a.finger_override else None
     for f in sorted(n1.glob('*.npy'), key=lambda p: int(p.stem)):
         ci = int(f.stem); y1 = np.load(f); y0 = np.load(n0 / f.name); T = min(len(y0), len(y1)); y0, y1 = y0[:T], y1[:T]
-        w = weight(T, [e['t'] for e in by.get(ci, [])], a.inner, a.outer, a.pre, a.post)[:, None]
+        w = weight(T, [e['t'] for e in by.get(ci, [])], a.inner, a.outer, a.pre, a.post, a.compose)[:, None]
         y = ((1 - w) * y0 + w * y1).astype(np.float32)
         if a.wrist_pose:
             wp = json.loads(Path(a.wrist_pose).read_text())['hands']; fr = np.arange(T) / FPS
