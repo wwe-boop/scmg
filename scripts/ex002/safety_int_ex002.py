@@ -1,5 +1,6 @@
 """11-08 EX002 interruption benchmark, deployed chain: generator -> (R0causal / Funnel post) -> streaming safety projection.
-For every interruption r the EXECUTED stream z = U[:f_i] (the method's own uninterrupted psync output) + y[f_i:] (its continuation),
+For every interruption r the EXECUTED stream z = U up to the first chunk boundary >= f_i (the layer commits 16-frame chunks; U = the
+method's own uninterrupted psync output) + y after it (its continuation),
 truncated to f_i + WIN, is streamed from the recording start through the EX002 safety layer (proj_l2, the 3c-4 settings: B 13,
 d_safe 1 mm, qdldl, tail_smooth 1e-3, recursive feasibility, cutting-plane cap 8 = 3c-4b) in 16-frame chunks; the output keeps the input file name, so
 eval_interrupt_ex002.py scores it as B3:<out>:<projected U> (the projected prefix is identical: the layer is causal and deterministic).
@@ -29,7 +30,10 @@ def main():
         name = f"{r['ci']}@{r['item']}@{r['frac']:.1f}.npy"; f = r['f_i']
         if (out / name).exists() or not (Path(a.in_dir) / name).exists(): continue
         y = np.load(Path(a.in_dir) / name).astype(np.float64); U = np.load(Path(a.prefix_from) / f"{r['ci']}.npy").astype(np.float64)
-        z = np.concatenate([U[:f], y[f:]])[:f + I.WIN]
+        # 11-08 fix: the safety layer commits whole 16-frame chunks, so the chunk holding f_i was already projected from U when the
+        # interruption arrives; the continuation enters the layer at the next chunk boundary (frames f_i .. boundary-1 = U's)
+        fb_ = -(-f // K_3F) * K_3F
+        z = np.concatenate([U[:fb_], y[fb_:]])[:f + I.WIN]
         ys, st = S.run_stream(L, z, K_3F); fb += st['fallback_frames']
         np.save(out / name, ys.astype(np.float32)); n += 1
     print('SAFETY_INT_DONE', n, 'fallback_frames', fb, f'{time.time() - t0:.0f}s')

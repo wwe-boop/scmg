@@ -67,3 +67,9 @@ the retargeter WBC column after the safety layer. A method qualifies iff it pass
 RKD-post wins; if neither qualifies, both rows are reported and none is selected. Raw (pre-safety) rows are reported next to them.
 Disclosure: the sibag-s2 rows (eval-final-sibag, raw chain) were seen before this addendum (R0causal yield3d 97.3 % / v3 6.7 % /
 RKD 0.593 / raw unsafe 42.7 %; Funnel 93.9 % / 41.6 % / 0.616 / 36.3 %); no enc-s0 number has been read.
+Addendum 11-08 10:0x (protocol fix of the deployed-chain rows, found in the first enc-s0 run, before the R0causal / Funnel choice):
+the first run fed the safety layer z = U[:f_i] + continuation, so the layer's chunk holding f_i used continuation frames while the
+eval splices the executed prefix (projected U) up to f_i: every post-safety velocity violation (B3 7, R0causal 17, Funnel 5 of
+476) sits exactly at f_i (offset 0), and the layer's own stream stays <= 0.995 x vmax. The layer commits whole 16-frame chunks, so the
+chunk holding f_i was projected from U before the interruption: rule = the continuation enters the safety layer at the first chunk
+boundary >= f_i (safety_int_ex002.py). The raw rows are unchanged; the safe rows are re-run.
