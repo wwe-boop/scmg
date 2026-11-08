@@ -1122,7 +1122,7 @@ STG split (the coordinator's hypothesis):
   plan, it reaches +0.24 to +0.30 (the highest of all rows).
 VERDICT: 9c'' FAILS the pointing-angle gate (28.7 / 27.5) and passes every other primary and side gate, including (ii) and the signed
 palm. The angle and STG shortfall concentrates on aims next to a same-hand present (dense plan), which is what 9d's arbitration targets.
-9c'' renders (qual-1108/ex002-9cpp-full; rule ctl-port 1e09ed1, file-name fixes 5f..; offline seed 0; panels tok5c / 9c / 9c''; frames at the
+9c'' renders (qual-1108/ex002-9cpp-full; rule ctl-port 1e09ed1, file-name-only fixes after it; offline seed 0; panels tok5c / 9c / 9c''; frames at the
 command time *_5.0.png):
 - present0 and present1 (right hand presents): in 9c'' the right hand is raised on its own side beside the head, fingers up, palm to
   the camera. In 9c the hand is lower and across or out to the side with the palm not forward. In tok5c both hands stay low.
