@@ -78,7 +78,9 @@ def infer(a):
         sys.path.insert(0, str(Path(__file__).resolve().parent)); from ex002_ctl_run import tokens_for; from scmg.ctl import token_value
         for e in json.loads(Path(a.plan).read_text())['events']: by.setdefault(e['ci'], []).append(e)
     si, sn = (int(x) for x in a.shard.split('/')); t0 = time.time(); log = []
+    only = set(int(x) for x in a.cis.split(',')) if a.cis else None             # 11-09 (default all): recording subset
     for ci in range(len(view.clips))[si::sn]:
+        if only is not None and ci not in only: continue
         o = out / f'{ci}.npy'
         if o.exists(): continue
         c = view.clips[ci]; L = c['frames']; nch = L // CHUNK_FRAMES
@@ -170,6 +172,7 @@ def main():
     p.add_argument('--spk-refresh', default='grades', choices=['tick', 'grades']); p.add_argument('--causal-feat', default='inc', choices=['prefix', 'inc'])
     p.add_argument('--plan', default=None, help='11-08 (default off): ex002_ctl_run plan; with --mode given / shuffle its commands become control tokens')
     p.add_argument('--mode', default='none', choices=['none', 'given', 'shuffle'])
+    p.add_argument('--cis', default=None, help='11-09 (default all): comma list of recording indices to generate')
     p.add_argument('--inpaint-dir', default=None, help='11-08 module 9 (default off): <ci>.npz of ex002_keyframe.py insert -> latent inpainting of the insertion spans')
     p.add_argument('--ctl-lookahead', type=float, default=0., help='streaming: commands visible this many s before their time (0 = generate default)')
     p = sub.add_parser('eval'); p.add_argument('--out', required=True); p.add_argument('--gt-as-gen', action='store_true', help='sanity: GT scored as the generation (FGD v2 = 0)')
