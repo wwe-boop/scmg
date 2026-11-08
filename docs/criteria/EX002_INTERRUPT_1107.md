@@ -90,3 +90,10 @@ boundary - 1 are projected again with the post method's continuation as targets 
 cut cap 8, qdldl, tail_smooth 1e-3, predictive rows / carry off = 3c-4b), then normal chunks resume on the 16-frame grid. The
 feasibility argument of 3c-4 holds (the candidate admits every relaxed row), so no fallback is introduced. Rows: B3 / R0causal /
 Funnel safe with ISC; the same rule (yield3d >= 90 %, v3 <= 10 %, unsafe <= 1 %, then RKD-post); disclosure: the numbers above.
+ISC RESULT 2026-11-08 11:4x (eval-enc-s0/EVAL_isc.json; 1428 streams, 0 fallback; the executed prefix equals the projected U):
+  B3 + ISC       yield3d 31.6 % v3 3.2 % RKD-post 0.475 unsafe 0.0 %
+  R0causal + ISC yield3d 98.2 % (latency 0.59 s) v3 0.4 % RKD-post 0.551 unsafe 0.0 %
+  Funnel + ISC   yield3d 91.1 % (latency 1.19 s) v3 4.4 % RKD-post 0.519 unsafe 0.0 %
+Rule (09:1x addendum): both R0causal and Funnel qualify (yield3d >= 90 %, v3 <= 10 %, unsafe <= 1 %); lower RKD-post -> Funnel (0.519
+vs 0.551). Selected post-hoc method on the deployed chain with ISC: Funnel. (Base enc-s0 on the vae-r3 decodes; not frozen until
+the r3d decoder decision.)
