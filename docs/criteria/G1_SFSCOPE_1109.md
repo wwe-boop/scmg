@@ -27,3 +27,15 @@ Stutter max / min, offline / psync: sf0 1.26 / 1.30, full 1.57 / 1.72, enc 1.30 
 Read against the registered kills: Ka is not hit (enc's psync wrist ratio 1.29 x GT, above full's 1.13 x). Kb is not hit either:
 enc is inside the range on both protocols. Enc keeps the sf0-level stutter (full SF's is 1.57 / 1.72), but its psync FGD is
 worse than full's. No verdict and no follow-up (descoped).
+
+## Verdict against the registered kills (11-09, user: "备选的G1可以推进"; scored from the filed numbers above, nothing re-run)
+- Ka (enc wrist-speed ratio vs GT, psync, not above full's): enc 0.306 / 0.236 = 1.29x, full 0.267 / 0.236 = 1.13x -> NOT hit.
+- Kb (enc FGD above the upper end of the range): offline 1.594 <= 1.712 and psync 1.751 <= 1.900 -> NOT hit.
+-> QUICK LANE PASS (seed 0, QUICK100).
+Caveats, stated with the verdict:
+- enc is above GT on psync liveliness: wrist speed 1.29x GT, still share 0.015 vs GT 0.036. Offline it is below GT (0.210 = 0.89x).
+- full SF has the best psync FGD (1.589 vs enc 1.751, sf0 1.763), but the worst chunk stutter (1.57 / 1.72 vs GT 1.21). enc keeps
+  sf0's stutter (1.30 / 1.30).
+- One training seed and one inference seed on 100 clips; the psync czm2kws range is wide (1.733-1.900).
+- History-source ablation (§1.2 iii) not run: the inference has no teacher-forced-history mode, so it is not cheap.
+- pair_win not read (invalid on 100 clips).
