@@ -166,6 +166,7 @@ class StageCfg:
     sem_bank: str = ''             # SEM_BANK.json (descriptor mu / sd of the train bank) for w_sem_desc
     sem_rollout_steps: int = 0     # 11-09 Design B: >0 = sem outcome on a decoded k-step CFG rollout (self-generated context with self_force_p)
     sem_rollout_cfg: float = 2.0   # CFG weight of that rollout (the inference value)
+    sem_w_low: bool = False        # 11-09 W-low (docs/criteria/P2W_LOWT_1109.md): sem outcome frame weight (1 - t) instead of t
     ctl_cf_p: float = 0.0          # 11-06 counterfactual control: P(sample's kept POINT tokens get ANOTHER token's target, rolled over
                                    # the batch); their segment [a - 0.3, b + 0.3] is removed from the flow loss and only the ray loss
                                    # (w_ctl_aux, toward the swapped target) supervises it -> following the token is the only way down
@@ -1030,6 +1031,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             out.update(sf); loss = loss + sc.w_safe * (sf['safe_lim'] + sf['safe_lr'] + sc.safe_torso_w * sf['safe_torso'])
         if sc.w_sem_desc > 0 and ctl is not None and ctl.get('cdesc') is not None:     # 11-09 P2 outcome loss
             fw_sem = fv * w_inst[:, None] if sc.sem_rollout_steps == 0 else (fv > 0).float()   # rollout: no noise-level trust weight
+            if sc.sem_w_low and sc.sem_rollout_steps == 0: fw_sem = fv * (1 - w_inst)[:, None]    # 11-09 W-low: weight the steps x_hat can change
             out.update(sem_desc_loss(y_sem.float() * qs + qm, batch, ctl, fw_sem, B, K, sc.sem_bank))
             loss = loss + sc.w_sem_desc * out['sem_desc']
         if sc.w_ctl_aux > 0 and ctl is not None:

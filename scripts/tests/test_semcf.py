@@ -121,6 +121,9 @@ def rest():
     gd5 = sum(0. if g is None else float(g.abs().sum()) for g in g5)
     r = bool(torch.isfinite(l5['sem_desc'])) and gd5 > 0 and torch.equal(l5['flow'].detach(), l0['flow'].detach()) and float(l5['sem_desc']) != float(l0['sem_desc'])
     print(f"5 rollout-scored sem_desc {float(l5['sem_desc']):.3f} (one-step {float(l0['sem_desc']):.3f}), grad ctl_desc_in {gd5:.3g}, flow unchanged:", r); ok &= r
+    l6 = step(m, vae, b, dataclasses.replace(StageCfg(), sem_cf_p=0.5, w_sem_desc=1.0, sem_bank=bank, ctl_drop=0.0, sem_w_low=True))
+    r = bool(torch.isfinite(l6['sem_desc'])) and torch.equal(l6['flow'].detach(), l0['flow'].detach()) and float(l6['sem_desc']) != float(l0['sem_desc'])
+    print(f"6 W-low sem_desc {float(l6['sem_desc']):.3f} (t-weighted {float(l0['sem_desc']):.3f}), flow unchanged:", r); ok &= r
     return ok
 
 
