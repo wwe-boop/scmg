@@ -286,6 +286,8 @@ class ChunkQP:
         self.l0 = np.concatenate(L); self.u0 = np.concatenate(U)
         self.N, self.H = N, H
         self.crow, self.cl = [], []                 # collision rows (accumulated cutting planes)
+        self.xref = None                            # 11-08 (EX002 3c-4): a known feasible candidate [N, J]; collision rows admit it
+        self.n_relaxed = 0
 
     def add_collision(self, t, rows, qlin, d_safe):
         J = self.J
@@ -304,8 +306,11 @@ class ChunkQP:
 
     def matrices(self):
         if self.crow:
-            A = sp.vstack([self.A0, sp.csc_matrix(np.array(self.crow))], format='csc')
-            l = np.concatenate([self.l0, np.array(self.cl)]); u = np.concatenate([self.u0, np.full(len(self.cl), INF)])
+            C = np.array(self.crow); cl = np.array(self.cl)
+            if self.xref is not None:               # recursive feasibility: relax each collision row just enough for xref
+                v = C @ self.xref.reshape(-1); self.n_relaxed = int((v < cl).sum()); cl = np.minimum(cl, v)
+            A = sp.vstack([self.A0, sp.csc_matrix(C)], format='csc')
+            l = np.concatenate([self.l0, cl]); u = np.concatenate([self.u0, np.full(len(cl), INF)])
         else:
             A, l, u = self.A0, self.l0, self.u0
         return A, l, u
@@ -613,7 +618,7 @@ class RuckigLayer(_Base):
 class ProjectionLayer(_Base):
     def __init__(self, lim, coll, objective='l2', K=10, B=10, w=None, d_safe=2e-3, act=0.01, max_iter=4,
                  pos_margin=1e-5, shrink=0.995, encoder=None, window=64, steps=15, lr=None, lam=1.0, mu=1e3, smooth=0.0,
-                 tail_smooth=1e-6):
+                 tail_smooth=1e-6, recursive=False):
         assert objective in ('l2', 'perceptual')
         self.lim, self.coll, self.obj, self.n = lim, coll, objective, lim.n
         J = lim.n
@@ -623,6 +628,7 @@ class ProjectionLayer(_Base):
         self.enc, self.window, self.steps, self.lr, self.lam, self.mu = encoder, window, steps, lr, lam, mu
         self.smooth = smooth
         self.tail_smooth = tail_smooth            # 11-08: weight of the braking-tail velocity term (1e-6 = the original; EX002 1e-3)
+        self.recursive = recursive                # 11-08 (EX002 3c-4): collision rows admit the shifted verified plan + hold
         if objective == 'perceptual' and encoder is None:
             raise ValueError('perceptual objective needs an FGDEncoder')
         self.name = 'proj_l2' if objective == 'l2' else ('proj_perc_s' if smooth else 'proj_perc')
@@ -642,6 +648,8 @@ class ProjectionLayer(_Base):
         k = len(target_k); N = k + self.B
         if qp is None:
             qp = ChunkQP(self.lim, H, N, terminal=True, pos_margin=self.pm, shrink=self.shrink)
+            if self.recursive and self.plan is not None:
+                qp.xref = ref                       # = the previous verified plan (braking tail to rest) + hold, aligned to this chunk
             lin = np.concatenate([lin_k, np.repeat(lin_k[-1:], self.B, 0)], 0)
             memo = {}                  # 11-08: identical (pose, reference) pairs (the held braking tail) are linearised once;
             for t in range(N):         # lin_rows is a deterministic function of its inputs, so the rows are bit-identical
