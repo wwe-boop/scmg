@@ -542,3 +542,32 @@ the m9b-enc job ends.
 - Identity checks: on the sparse plan, 5c vs 5b, and m9b5c vs m9b (expected bitwise).
 - sibag-s2: m9-sibag tok with 5c on both plans (the (ii) check above, and the dense whole-clip FGD v2); release median / p95 / max
   re-scored for the m9-sibag tok / ik / m9 rows.
+Generator acceleration-spike diagnosis (read-only, numbers only; coordinator 11-08; scripts/ex002/diag/spikes_where.py on speech_server;
+JSON control-token-1105/ex002/diag/SPIKES_WHERE_1108.json).
+- Correction: the "enc-s0 none random 0.2 s window p95 147" quoted earlier came from 6 clips of seed 0. Over all 43 dev clips × 3 seeds it is
+  50.3 offline / 57.1 psync (GT 27.5).
+- Magnitude (arm, max over arms of the joint-norm acceleration, 0.2 s windows with stride 0.1 s):
+
+  | stream | window p95 | ratio to GT | frames > 100 | p99 | max |
+  |---|---|---|---|---|---|
+  | EX002 GT | 27.5 | 1.0x | 0.10 % | 28.2 | 5762 (a GT glitch frame) |
+  | enc-s0 none offline | 50.3 | 1.8x | 0.66 % | 84.3 | 331 |
+  | enc-s0 none psync | 57.1 | 2.1x | 0.69 % | 86.8 | 314 |
+  | sibag-s2 none offline | 46.7 | 1.7x | 0.54 % | 79.0 | 337 |
+  | sibag-s2 none psync | 64.4 | 2.3x | 0.82 % | 93.4 | 449 |
+
+  Frames above the GT p99: 6.3 / 7.9 % (enc-s0) and 6.0 / 9.5 % (sibag-s2), against 1 % in GT. Resampled to 30 fps the ratios stay
+  (enc-s0 45.7 / 51.9 vs GT 26.5).
+- Location:
+  - Phase: a 4-frame (one latent) pattern. Relative spike rate by frame within the latent is about 1.14–1.19 / 1.05 / 0.69–0.75 / 1.05–1.07
+    (frame 0 / 1 / 2 / 3; GT is flat, 1.00 ± 0.01). No extra rate at the 320 ms chunk boundary (phase 0 of 16) or at the streamer's emission
+    boundary (phase 12): phases 0 / 4 / 8 / 12 are equal within ±0.06.
+  - Joints: the spikes sit on arm joints 4 and 5 (enc-s0: L 14 / 17 %, R 11–13 / 21–22 %) and joint 3 (7–9 %). GT's few spikes sit on the
+    wrist joints 5–7.
+  - Fingers and head/waist: per-joint p99 is fingers 60–65 vs GT 45, head/waist 10–12 vs GT 4.5.
+  - Speech vs silence: rate of frames above the GT p99 is 5.4 % in speech vs 14.1 % in silence offline, and 7.2 % vs 14.2 % psync
+    (GT 0.9 % vs 1.5 %). Silence is 2.0–2.6x spikier, against 1.6x in GT. Speech covers 90 % of frames.
+- G1 (joint space, arms 25:39 of robot_repr, 30 fps, same window rule): G1 GT dev window p95 130 (frames above 100: 3.0 %). czm6kws dev 114
+  offline / 105 psync (0.88x / 0.81x GT). The czmws test predictions (read-only, predictions only, no GT; logged in TEST_USAGE.jsonl) are
+  110 / 119 (0.85x / 0.91x). Frames above the G1 GT p99: 0.5–1.2 %. So on G1 the generator is not spikier than its human data; the
+  excess is EX002-relative: EX002 GT is about 5x smoother than G1 GT (27.5 vs 130), and the generator does not reach that smoothness.
