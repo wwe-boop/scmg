@@ -1166,3 +1166,19 @@ VERDICT (a): the library shapes remove the override's (ii) cost (92.25 → 88.02
 tok10a fails the 5b gate set on STG. Arm (b) (longer ctl training) is running.
 Module 10 (b) quick check: raw (unblended) STG gain, offline seed 0, dense plan 1112, 43 clips: step 2000 +0.106 [+0.078, +0.135], step 3000
 +0.141 [+0.107, +0.176]. The rise is +0.034 ≥ +0.005, so (b) continues to 4000 (trained 22:24) and regenerates.
+## Module 10 result (dlc1fv9t6zie9kdx, LANE_DONE 23:34; enc-s0, r3, 5c, plans 1112, seeds 0-2; ctl modules trained to 4000 steps for (b))
+Offline / psync, against enc-s0 none on the same masks:
+
+| row | STG gain [CI] | shuffle follows | finger hit | (i) | (ii) | exec | verdict |
+|---|---|---|---|---|---|---|---|
+| tok5c (ref) | +0.099 / +0.088 | yes | 1.0 | 86.96 / 107.04 | 92.25 / 118.27 | 100 % | FAIL (STG, ii) |
+| tok10a (library shapes) | +0.099 / +0.088 | yes | 1.0 | 86.96 / 107.04 | 88.02 / 114.26 | 100 % | FAIL (STG) |
+| tok10b (4000-step ctl) | +0.151 [+0.126, +0.176] / +0.148 [+0.125, +0.172] | 0.412 vs 0.313; 0.399 vs 0.309 | 1.0 | 86.96 / 107.04 | 88.90 / 115.72 | 100 % | FAIL ((ii) psync) |
+| tok10ab (both) | +0.151 [+0.126, +0.176] / +0.148 [+0.125, +0.172] | as tok10b | 1.0 | 86.96 / 107.04 | 85.29 / 112.25 | 100 % | PASS |
+
+Gates (ii): 90.15 / 114.34; (i): 92.16 / 112.74. tok10ab (ii) seeds: 86.81 / 82.42 / 86.64 and 111.86 / 111.04 / 113.87.
+Report-only: finger ramp over-limit 0.051 / 0.057 (tok10ab; tok5c 0.037 / 0.045); liveliness both guards PASS (protocol still 0.018 /
+0.023, wrist speed 0.334 / 0.334, amplitude 0.095 / 0.093). For the library arm the finger-hit gate is circular (disclosed);
+independent joint-angle agreement 0.72.
+VERDICT: tok10ab (4000-step ctl modules + human-library override shapes, 5c blend) PASSES every module-10 gate on enc-s0, with STG CIs
+excluding +0.10. By the adoption rule it becomes the EX002 token path for 9c-line and later modules.
