@@ -48,12 +48,17 @@ def plan(a):
     items = json.loads((Path(V) / 'train.json').read_text()); sp = json.loads((Path(V) / 'SPLIT.json').read_text()); recs = recordings(items, set(sp['val_ids']))
     ev = []
     for ci in cis:
-        stem = inv[ci]; y = np.load(Path(a.none) / f'{ci}.npy'); last = -1e9
-        for w, c, on, off, iid, f0 in sorted(rec_words(recs[stem]), key=lambda x: x[2]):
+        stem = inv[ci]; y = np.load(Path(a.none) / f'{ci}.npy'); last = -1e9; used = set()
+        ws = sorted(rec_words(recs[stem]), key=lambda x: x[2])
+        for wi, (w, c, on, off, iid, f0) in enumerate(ws):
             k = category(w, c)
             if k is None: continue
+            if k == 'SELF':                       # amendment 3: object / possessive emphasis only
+                nxt = ws[wi + 1][0] if wi + 1 < len(ws) and ws[wi + 1][4] == iid else ''
+                if not (w in ('me', 'my', 'myself', 'mine', '自己') or (w == '我' and nxt == '的')): continue
             t = on - 0.2 if a.proto == 'tts' else on
-            if t - last < 1.2 or t < 1.0 or t > len(y) / FPS - 1.0: continue
+            if iid in used or t - last < 3.0 or t < 1.0 or t > len(y) / FPS - 1.0: continue     # amendment 3: 1 per sentence, 3 s
+            used.add(iid)
             h = free_hand(y, t); e = dict(ci=ci, clip=stem, cat=k, word=w, onset=float(on), t=float(t), hand=h)
             if k in ('SELF', 'YOU', 'POINT'):
                 tgt = STERNUM.tolist() if k == 'SELF' else YOU if k == 'YOU' else HERE if w in ('this', 'here', 'these', '这') else [1.5, 0.8 if h == 0 else -0.8, 1.2]
