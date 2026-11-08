@@ -151,3 +151,9 @@ M1 amendment 11-08 21:2x (found in the half-A calibration, before any validity n
 registered rho_min = p10 = 0 leaves PSS undefined when the reference window has no stroke. rho_min is set instead to one stroke per
 post window (1 / 1.84 s = 0.543 / s), i.e. a reference without strokes counts as one stroke: an event then passes iff its post window
 has no stroke. Everything else (v_s rule, windows, gates 1-3, iteration rule) unchanged.
+M1 iteration log. it0 (v_s pct 50, skip 0.3 s; half-A pass 0.792): half-B tails 64.2 %, fresh 27.3 % (13_lu 61.5 %, 2_scott 5.0 %) ->
+gate 1 FAIL; GT in speech 26.5 % -> gate 2 FAIL; mismatched reference +2.0 pp -> gate 3 pass. Half-A grid (pass rate): pct 30: 0.55 /
+0.56 / 0.57 (skip 0.2 / 0.3 / 0.5); 40: 0.68 / 0.69 / 0.72; 50: 0.77 / 0.79 / 0.83; 60: 0.87 / 0.87 / 0.88; 70: 0.85 / 0.86 / 0.88.
+No grid point reaches the registered 0.90, so the rule picks nothing; deviation (logged before the it1 validation): it1 takes the
+highest half-A pass rate, pct 70 / skip 0.5 (0.883; tie with 60 / 0.5 within 0.006 broken toward the higher percentile as the rule
+orders). Since no grid point can do better on half A, it1 is the last iteration: if gates 1-3 fail, PSS is recorded as invalid.
