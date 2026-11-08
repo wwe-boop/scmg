@@ -42,6 +42,8 @@ SIL = np.concatenate([np.full(80, np.log(1e-6)), np.zeros(f.shape[1] - 80)]).ast
 idx = [json.loads(l) for fn in sorted(glob.glob(str(Path(a.tails) / 'index.*of28.jsonl'))) for l in open(fn)]
 why = Counter(); ext = {}                                  # item index -> (extra q rows, t_off item s)
 dev_clips = {r['clip'] for r in json.loads(Path(a.interrupts).read_text())['interrupts']}
+idx = [r for r in idx if 'id' in r]                       # rows without an id = whole recordings rejected by the retargeter (counted)
+why['recording_rejected_by_retargeter_rows'] = sum(1 for fn in sorted(glob.glob(str(Path(a.tails) / 'index.*of28.jsonl'))) for l in open(fn) if '"id"' not in l)
 for r in idx:
     if zlib.crc32(r['recording'].encode()) % 2 != 0: why['half_B'] += 1; continue
     fn = Path(a.tails) / 'seg' / f"{r['id']}.npz"
