@@ -111,3 +111,19 @@ The first canonical run was stopped during its metric validation (no generation 
 - YOU, POINT, NUMBER, BIG and SMALL keep their words.
 Command counts per category are reported after the rule; categories with fewer than 5 commands are reported but not gated.
 Everything else (amendments 1-2: targets, metrics, synthetic validation, gates, renders) is unchanged.
+
+## Canonical quick-lane RESULT (11-09 04:4x; expl-canon3-1109, release 20261109-040558-expl-canon3-1109 = exp/ctl-port ed55fca)
+10 recordings, seed 0, amendment 3 rates (35 commands). Metric validation (synthetic positives / negatives, all 10 recordings): SELF
+acc 0.95, YOU 0.94, NUMBER 1.00, POINT 1.00 (n 1), SMALL 1.00 (n 2) pass; BIG 0.50 (n 1) fails -> BIG not gated (it also has < 5
+commands).
+TTS-sync row (primary), success none -> given (delta, bootstrap CI):
+- SELF (n 10): aim-token variant 0.00 -> 0.00 (FAIL); chest-keyframe variant 0.00 -> 1.00 (+1.00 [1.00, 1.00], PASS).
+- YOU (n 16): 0.19 -> 0.06 (-0.125 [-0.29, 0.00], FAIL). The tok10ab point token does not produce an extended arm aimed within
+  15 deg of the listener box.
+- NUMBER (n 5): 0.00 -> 1.00 (+1.00 [1.00, 1.00], PASS; module-10 finger override).
+- not gated (< 5 commands): POINT 0/1, BIG 1/1, SMALL 1/2.
+psync row: the same pattern (SELF chest 1.00, NUMBER 1.00, YOU 0.07 -> 0.07, POINT 1/2, BIG 1/1, SMALL 1/2).
+Side gates (10 recordings): FGD v2 none 114.83 / TTS-sync 115.64 / TTS-sync + chest 115.36 / psync 113.27; outside +-1 s of the
+commands: none 122.73, TTS-sync 122.73 (identical: the edits are local). FKD 1.83 / 1.83 / 1.82 / 1.80. Liveliness guard PASS on
+all rows (still 0.019, wrist 0.30-0.31 m/s, amp 0.093-0.095).
+Verdict per category: SELF PASS (chest keyframe only), NUMBER PASS, YOU FAIL. POINT / BIG / SMALL are reported, not gated.
