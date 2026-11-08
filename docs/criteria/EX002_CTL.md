@@ -1152,3 +1152,15 @@ KILL (rule written before the run):
 - 9d is not taken to a full run.
 - Report-only observation: IK insertion on the NO-TOKEN stream (none + 9d) has the largest STG gain on these 2 clips (+0.384 / +0.225)
   and the smallest offline angle (4.5 deg). That control row inherits the (2) palm failure.
+## Module 10 arm (a) result (dlc1fv9t6zie9kdx started 22:12 after queueing ~7.5 h; A_SCORED 22:14; arm (b) continues in the same job)
+tok10a = 5c + override with human-library shapes. Offline / psync:
+- STG gain +0.099 [+0.080, +0.118] / +0.088 [+0.071, +0.105]: identical to tok5c (fingers do not touch the arm): FAIL (< +0.10).
+- finger hit 1.000 (left 1.0, right 1.0); shuffle follows 1.000 vs 0.077. Not evidence (circular, stated before the run).
+- Independent joint-angle agreement of the sampled shapes: 0.72 overall (0.55-0.69 for n = 0..2, 1.00 for n = 3), as disclosed.
+- (i) 86.96 / 107.04: PASS.
+- (ii) 88.02 (seeds 89.89 / 84.85 / 89.34) ≤ 90.15 and 114.26 (113.63 / 113.19 / 115.96) ≤ 114.34: PASS. psync passes by 0.08, i.e. at the
+  gate. tok5c (template override) was 92.25 / 118.27.
+- executability 100 %: PASS.
+- Report-only: finger ramp frames over the jerk limit 0.046 / 0.057 (tok5c 0.037 / 0.045); protocol liveliness guard PASS.
+VERDICT (a): the library shapes remove the override's (ii) cost (92.25 → 88.02; 118.27 → 114.26) but leave the STG gain unchanged, so
+tok10a fails the 5b gate set on STG. Arm (b) (longer ctl training) is running.
