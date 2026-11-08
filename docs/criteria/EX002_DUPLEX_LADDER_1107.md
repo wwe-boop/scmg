@@ -55,3 +55,11 @@ Token-use check (coordinator 12:4x, before any L1 run; G1 negatives row 13: the 
   interruptions that yield in both runs. Otherwise L1 is logged "token ignored" (negatives) and L2 / L3 carry the result.
   Pause-alone check: yield3d(OFF) is reported next to the base enc-s0 B3 (same chain); if OFF alone reaches the yield gate, the
   pause input (not the token) explains the yield, stated as such.
+Comparison rows on the half-B reference (13:3x; eval-enc-s0-halfB/EVAL_isc.json; ref-halfB = 375 tails, 151 post-speech windows,
+RKD half-split floor 0.179; R0causal / Funnel re-run with the half-B rest pose; enc-s0, vae-r3, 3c-4b + ISC):
+  sanity  GT yield3d 6.8 % | B2 100 % | FRONT 0 % (height 98 %) | B1 0 %
+  B3 + ISC        yield3d 27.8 % v3 3.2 % RKD-post 0.440 unsafe 0.0 %
+  R0causal + ISC  yield3d 97.9 % (0.59 s) v3 0.4 % RKD-post 0.518 unsafe 0.0 %   -> qualifies
+  Funnel + ISC    yield3d 89.2 % (1.22 s) v3 4.4 % RKD-post 0.484 unsafe 0.0 %   -> fails yield (< 90 %)
+On half B the rule selects R0causal + ISC (Funnel + ISC qualified on the full 757-tail reference with yield3d 91.1 %): the post-hoc
+choice depends on the rest reference; the ladder table uses half B for every row as registered.
