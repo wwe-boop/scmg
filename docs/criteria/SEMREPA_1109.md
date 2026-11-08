@@ -105,3 +105,16 @@ or the sealed sets.
 ## Result of teacher v2 (11-09 02:0x)
 S1 0.581 (1.6 s) / 0.576 (2.4 s) < 0.60, so the gate FAILED; S2 0.745 / 0.699. As registered, SemREPA stops at the teacher
 (negatives row 60). Sanity files: CKPT/zehan/gesture-scmg/semrepa-1109/SANITY{,2}_w{80,120}.json.
+
+## Amendment 3 (main 11-09, written before any number of this variant): class-only teacher, SemREPA-C
+- Finding kept as a result: on held-out speakers, GT arm motion picks its own words over another clip's words only 54-58 % of the
+  time (S1, four teachers above).
+- Teacher T3 = the v1 recipe (1.6 s, seed 7, 6000 steps) trained on the 5 frame classes only (e5 weight 0). Its REPA target is
+  T3's window embedding e, the "semantic vs beat" representation. Own gate: S2 >= 0.60 on dev; S1 is not gated (no word head).
+  If T3 fails S2, the pre-stated fallback is the v2 1.6 s teacher's embedding (T2_w80_s7, S2 0.745 already measured).
+- Planner lane = amendment 1 (QUICK100 = g1-quick-1109/QUICK100.txt, sha256 f48ad687...; per_clip seed 0; offline + offline
+  no-text; 2000 steps; same arms ctrl / semrepa; lambda 0.5, block 2). Kills K1 / K2 / K3 unchanged.
+- Goodhart risk, stated in advance: the pair_win recognisers are trained on the same BEAT2 class labels as T3. A pair_win gain
+  is therefore not sufficient on its own. A pass needs K1 together with the class-agnostic metrics: FGD within the range (K2),
+  text use up (K3), and a liveliness wrist speed no more than 10 % below ctrl (here a gate, not only a flag). A pair_win-only
+  gain is reported as "insufficient".
