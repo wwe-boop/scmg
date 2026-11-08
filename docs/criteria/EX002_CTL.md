@@ -992,3 +992,51 @@ Coordinator decision (11-08 ~17:30): weights unchanged. The full 9c'' (T-only + 
 after the audit pass. Its result reports, as report-only numbers, the wrist z − shoulder z of present events (quick lane: −0.070 / −0.066 m,
 5.0 / 5.4 cm above the registered −0.12 m) and the IK residual (0.41 vs 0.25 without the fix). The raised gate (wrist ≥ shoulder − 0.20 m)
 is not affected.
+## Design round after the audit (Fable memo refine-logs/FABLE_DESIGN_1108.md, main-agent review 20:10). Pre-registrations below are
+## committed before any of their runs; each runs a ≤ 5-minute quick lane with its kill rule first; full runs only on the coordinator's go.
+### Module 9d (D4; pre-registered 2026-11-08 ~20:20; quick lane after the full 9c'' eval lands; same 2 clips as 9c'')
+ex002_keyframe.py insert --version 9d (default off; the 9c / 9c'' paths stay bitwise). Built on 9c'' (T-only release search, palm fix,
+real-deictic pool). Three mechanics:
+1. Differential-IK hold replay: per hold frame one damped Gauss-Newton step (λ = 0.02), warm-started, on the task w_k + dw[τ] − FK(q)
+   with the forearm-ray rows weighted by the target distance (metres); joint limits and penetration residuals as now.
+   Expected hold speed ≈ the pool's 0.28 m/s.
+2. Unit-consistent present IK: orientation residuals (signed palm forward, fingers up) × r = 0.08 m/rad; the wrist-height target becomes
+   the box [−0.14, −0.10] m relative to the shoulder (hinges, weight 100); collision residual 100.
+3. Same-hand arbitration: when a present on hand h starts within ±1.0 s of an aim hold on hand h and the other hand's commanded count is
+   ≥ 1, the other hand presents (the finger override still sets both hands' counts). Scheduler rule only; the plan is unchanged.
+- Report-only: STG for aim events with / without a same-hand command inside ±1 s.
+- Gates: 9b / 9c gates unchanged (3 seeds, offline + psync, plans 1112): apex angle ≤ 25°; |elevation| ≤ 5°; STG gain ≥ +0.10 with
+  shuffle follow, and the method's shuffle margin above the D3 cheat controls (+0.016 / +0.015 / +0.029); count hit ≥ 0.9; raised ≥ 0.80;
+  signed palm median ≤ 45° (forward share reported); side bundle as 9c''; release median ≤ 29.8 with p95 and max reported; hold-window
+  angle, hold speed vs the deictic pool, wrist z − shoulder z (median, IQR), IK residual and rejected share reported.
+- Rows / controls: 9c'' (reference); 9d (1); 9d (1)+(2); 9d (1)+(2)+(3); arbitration only on 9c'' keys (isolates 3); IK insertion on the
+  no-token stream (none + 9d (1)+(2)+(3)).
+- Quick lane (≤ 5 min, CPU, clips 0 and 1, seed 0, offline / psync, all rows): hold speed, wrist height, signed palm, STG gain, angle,
+  release median / p95 / max. Kill if: hold speed < 0.2 m/s with (1); or wrist height outside −0.12 ± 0.02 m with (2); or any gate
+  metric worse than 9c'' on both clips.
+### Module 6 revived on enc-s0 (D5; pre-registered 2026-11-08 ~20:20; quick lane after module 10 reports; one local 5090, checked with A)
+Reopen condition of module 6 met (5b / 5c fail on enc-s0). Each control token's contribution (planner text-stream entry `ctl` and the
+`ctl_flow` term) is multiplied by w_k(t) = 1 on [t_k − 0.3, t_k + 0.9] s with 0.3 s raised-cosine ramps, composed by the 5c rule, in
+training and inference; frames outside every window get exactly zero from the control routes. Additions: (a) a ctl_flow-only variant
+(--ctl-route flow); (b) the window is applied to the ctl_ray / ctl_finger loss masks. Training: lane-4 recipe on enc-s0 (true freeze
+--train-only ctl_, lr 1e-4, 2000 steps, self_force_p 0, counterfactual targets); no inference blend; finger override as before.
+- Gates (module 10 gates): STG gain ≥ +0.10 on the dense plan with the shuffle follow and the bootstrap CI stated (a point estimate within
+  the seed SD of the gate is "at the gate", not a pass); finger hit ≥ 0.9; (i) and (ii) ≤ C + δ on the sparse plan, with (ii)_H (M2)
+  reported beside (ii); executability 100 %. Side: inside / outside / swap split of (ii); ramp jerk; dense report-only; no-token output
+  bitwise = enc-s0.
+- Controls: ctlenc (ungated, exists); gated both routes; gated ctl_flow-only; gated + the 5c inference blend (consistency check).
+- Quick lane (≤ 5 min, one local 5090): 2000-step true-freeze training, offline seed 0 on 10 dev clips (dense plan): raw STG gain,
+  outside-window max |y_given − y_none| (must be exactly 0), ctl_ray curve vs ctlenc. Kill if: the outside-window difference ≠ 0, or the
+  raw STG gain on the 10 clips < ctlenc's raw gain on the same clips − 0.02.
+### M2: human-splice control (ii)_H — REPORT-ONLY (pre-registered 2026-11-08 ~20:20; the registered (ii) gate does not change)
+- H = the dev GT motion of each clip with, at every command of the plan, a train-split human window spliced in joint space with the 9c
+  insertion machinery (insert9c: adaptive quintic ramps matched to the window's own velocity / acceleration):
+  - aim: a real train deictic window (EVENTS.json, 1060; arm joints of the APEX-rule hand over [t − 0.1, t + 0.6] s), drawn among events
+    of the same hand as the command by sha1("<clip>:<t:.3f>:M2:<seed>");
+  - finger: a train window of the presenting hand (plan rule) centred on a frame whose detector count equals the commanded count and
+    whose wrist is raised (wrist z ≥ shoulder z − 0.20 m), arm joints over [t − 0.4, t + 0.4] s; both hands' finger joints from the
+    module-10a library (same sha1 rule).
+- (ii)_H = FGD v2 of H vs GT on the sparse plan, whole clip, 3 window-sampling seeds (mean ± SD). Reported beside (ii) in every control
+  table; label: "human motion spliced", not "human obeying".
+- Validity checks: (a) H with zero insertions scores 0; (b) H built from hindsight-token windows (CTL 'aim' random-time windows of the
+  more-extended hand) scores ≤ (ii)_H; (c) (ii)_H on the dense plan ≫ the sparse value.
