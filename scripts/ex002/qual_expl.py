@@ -19,13 +19,14 @@ def main():
     from scmg import ex002_ctl as E
     import soundfile as sf
     import expl_canon as C
-    ap = argparse.ArgumentParser(); ap.add_argument('--run', required=True); ap.add_argument('--out', required=True); a = ap.parse_args()
+    ap = argparse.ArgumentParser(); ap.add_argument('--run', required=True); ap.add_argument('--out', required=True)
+    ap.add_argument('--a4', action='store_true', help='amendment 4: only the "you" event, + the point-keyframe panel'); a = ap.parse_args()
     R = Path(a.run); O = Path(a.out)
     for d in ('traj', 'draw', 'audio', 'video'): (O / d).mkdir(parents=True, exist_ok=True)
     P = json.loads((R / 'plans' / 'PLAN_tts.json').read_text())['events']; det = C.detector()
     rank = lambda xs: sorted(xs, key=lambda e: h(f"{e['clip']}:{e['onset']:.3f}:explrender"))
     pick = []
-    for w, cat in (('me', 'SELF'), ('you', 'YOU'), ('three', 'NUMBER'), ('big', 'BIG')):
+    for w, cat in ((('you', 'YOU'),) if a.a4 else (('me', 'SELF'), ('you', 'YOU'), ('three', 'NUMBER'), ('big', 'BIG'))):
         xs = rank([e for e in P if e['word'] == w]); sub = False
         if not xs: xs = rank([e for e in P if e['cat'] == cat]); sub = True
         if xs: pick.append((w, sub, xs[0]))
@@ -34,6 +35,7 @@ def main():
         ci = e['ci']; f0 = max(0, int(round((e['t'] - 5) * FPS))); f1 = f0 + 10 * FPS; t = e['t'] - f0 / FPS
         rows = [('GT', f'{P2}/psync/gt_{ci}.npy'), ('none', f'{P2}/psync/none_s0/{ci}.npy'), ('given (canonical)', f'{R}/final/tts/{ci}.npy')]
         if e['cat'] == 'SELF': rows.append(('given (chest keyframe)', f'{R}/final/tts_chest/{ci}.npy'))
+        if a.a4: rows.append(('given (point keyframe, amendment 4)', f'{R}/final/tts_point/{ci}.npy'))
         ynone = np.load(f'{P2}/psync/none_s0/{ci}.npy')
         panels, draws, info = [], [], []
         for lab, path in rows:
