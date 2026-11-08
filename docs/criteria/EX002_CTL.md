@@ -506,3 +506,32 @@ same right: the retargeted data sits at its own acceleration limits); 3-clip pos
 (point), 0.77 / 0.77 s (present); release peak acceleration median 27.1 (tok 27.8; human p95 29.8), p95 254 (tail); arm ramp jerk over-limit 0.033
 (tok 0.294). Plans for the run: PLAN_dev_m9b_dense.json (1092 events, 556 aim; sha256 a0336b83…12b2), PLAN_dev_m9b_sparse.json (302 events,
 163 aim; sha256 2ad29827…5eed).
+## Module 5c (pre-registered 2026-11-08 ~11:20, before any 5c gate number; coordinator after the 9b release-tail diagnosis)
+Bug fixed: 5b composes the per-command windows by max(); on the dense plans (about 72 % of command gaps in 1.2–1.8 s) a ramp-out crossing
+the next ramp-in gives w a corner (derivative jump), and the blended pose gets a cusp (see the 9b release-tail diagnosis above).
+- 5c: w = 1 − Π_i (1 − w_i) on frames where ≥ 2 windows are non-zero; elsewhere the single window, as in 5b. This is C1, keeps every
+  command's own window [t − 0.3, t + 0.9] s with 0.3 s raised-cosine ramps, and does not fill gaps. ex002_local_blend.py --compose smooth;
+  the default (max) is unchanged.
+- Unit test scripts/ex002/test_blend5c.py, ALL_OK before any run:
+  (A) the default equals the 5b weight at 366aed0 bitwise on every dev plan;
+  (B) on 349 clip-plans without overlapping windows (every sparse plan) 5c equals 5b bitwise;
+  (C) on 167 overlapping clip-plans, max |w''| is 107.5 ≤ the two-window bound 1.5 π²/r² = 164.5 (+5 % margin: 172.7), while 5b reaches 521.7.
+  Disclosed before the gates: on smoke clip 0, arm frames over 100 rad/s² are 2.6 % with 5b, 0.77 % with 5c, 1.2 % in the none stream.
+- Validation (post-processing only): on the enc-s0 generations of the m9b-enc job (dlc127d7nvk060w9: ctlenc control modules,
+  plans 1112 dense / sparse, seeds 0–2, offline AND psync).
+- Gates: the original 5b gates, per protocol, against enc-s0 none on the same plan masks:
+  - STG(given) − STG(none) ≥ +0.10 on the dense plan, with the shuffle follow check (recording bootstrap CI reported);
+  - finger hit ≥ 0.9 with the override;
+  - quality (i) sparse FGD v2 outside ±1 s, and (ii) sparse whole clip, both ≤ C + δ (δ = max(0.03 C, 2 SD) of the none seeds);
+    on the sparse plans 5c is 5b bitwise (test B), and they are recomputed as a check;
+  - executability after CBF 100 %.
+- Report-only, both plans, 5b vs 5c vs none vs GT:
+  - share of arm frames over 100 rad/s², p99, and the p95 of the peak over random 0.2 s windows;
+  - release continuity (median / p95 / max);
+  - arm ramp jerk;
+  - dense-plan whole-clip FGD v2.
+- Hypothesis "the 5b blend caused tok's psync (ii) failure on sibag-s2": (ii) is scored on the sparse plan, where no windows overlap
+  (0 of 261 gaps on PLAN_dev_m9_sparse are < 1.8 s), so 5c equals 5b there and the prediction is NO change (105.8 stays). This refutes
+  my earlier suggestion before any run. Checked anyway by recomputing tok psync (ii) with 5c on m9-sibag (expected bitwise 105.8). The
+  dense-plan whole-clip FGD v2 of tok psync, 5b vs 5c, is reported as the place where the bug can act.
+- Downstream: after the m9b-enc run, every tok / ik / 9b row moves to 5c.
