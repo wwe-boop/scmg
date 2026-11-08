@@ -36,6 +36,37 @@ def compute_stats(view, n=400000, seed=0, rows=None, std_floor=STD_FLOOR):
                 f_mean=fmean.tolist(), f_std=np.maximum(fstd, 1e-3).tolist())
 
 
+def train_rows(view):
+    """Row indices of the view outside its SPLIT val items (11-08 audit: STATS_v36_1 was computed over every row incl. the val rows)."""
+    v = Path(view); items = json.loads((v / 'train.json').read_text()); val = set(json.loads((v / 'SPLIT.json').read_text())['val_ids'])
+    n = len(np.load(v / 'train_q.npy', mmap_mode='r')); vm = np.zeros(n, bool)
+    for it in items:
+        if it['id'] in val: vm[it['offset']:it['offset'] + it['frames']] = True
+    return np.nonzero(~vm)[0]
+
+
+def stats_train_only(view, n=400000, seed=0):
+    """compute_stats on train rows only (same rule, n, seed) + provenance (rows, SPLIT.json sha256) so a reader can verify it."""
+    import hashlib
+    r = train_rows(view); st = compute_stats(view, n=n, seed=seed, rows=r)
+    st.update(rows='train_only', n_pool_rows=int(len(r)), n=n, seed=seed, view=str(view),
+              split_sha256=hashlib.sha256((Path(view) / 'SPLIT.json').read_bytes()).hexdigest())
+    return st
+
+
+def load_train_only_stats(path, view):
+    """--stats-train-only: read PATH if it exists (must carry rows = train_only and this view's SPLIT sha256), else compute and return
+    (stats, created)."""
+    import hashlib
+    p = Path(path)
+    if p.exists():
+        st = json.loads(p.read_text()); sha = hashlib.sha256((Path(view) / 'SPLIT.json').read_bytes()).hexdigest()
+        if st.get('rows') != 'train_only' or st.get('split_sha256') != sha:
+            raise ValueError(f'{p}: not train-only stats of {view} (rows={st.get("rows")}, split_sha256 match={st.get("split_sha256") == sha})')
+        return st, False
+    return stats_train_only(view), True
+
+
 TTS_DIM = 2048              # Qwen3-TTS Talker hidden size (scmg/tts-hidden-v36_1)
 
 

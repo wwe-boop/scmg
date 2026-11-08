@@ -176,6 +176,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--stage', required=True, choices=['vae'] + list(STAGES))
     ap.add_argument('--out', required=True); ap.add_argument('--view', default=VIEW)
+    ap.add_argument('--stats-train-only', action='store_true', help='11-08 audit (default off): --stats names a train-rows-only stats file '
+                    '(data.stats_train_only; computed and written there if missing, else verified: rows train_only + this view\'s SPLIT sha256). '
+                    'Inference must then use the same file')
     ap.add_argument('--stats', required=True); ap.add_argument('--text-cache', default=None)
     ap.add_argument('--vae', default=None); ap.add_argument('--init', default=None, help='previous stage checkpoint')
     ap.add_argument('--steps', type=int, default=100000); ap.add_argument('--batch', type=int, default=64)
@@ -234,7 +237,13 @@ def main():
         torch.cuda.set_per_process_memory_fraction(float(os.environ['BAGGER_MEMORY_FRACTION']))
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     torch.manual_seed(a.seed + rank); np.random.seed(a.seed + rank)
-    stats = json.loads(Path(a.stats).read_text())
+    if a.stats_train_only:                      # 11-08 audit (default off): normalisation stats from train rows only
+        from .data import load_train_only_stats
+        stats, made = load_train_only_stats(a.stats, a.view)
+        if made and rank == 0: Path(a.stats).parent.mkdir(parents=True, exist_ok=True); Path(a.stats).write_text(json.dumps(stats))
+        if rank == 0: print(f'stats: train rows only ({"computed -> " if made else "read "}{a.stats}, pool {stats["n_pool_rows"]} rows)', flush=True)
+    else:
+        stats = json.loads(Path(a.stats).read_text())
     view = View(a.view, 'train', a.text_cache, stats, mmap=a.mmap, tok_cache=a.tok_cache, tts_hidden=a.tts_hidden,
                 intent_frames=a.intent_frames, holdout=a.holdout, tok_intent=a.tok_intent, bagger_dir=a.bagger_dir,
                 gest_frames=a.gest_frames, floor_frames=a.floor_frames, **({} if not a.ctl_tokens else dict(ctl_tokens=a.ctl_tokens)), **({} if not a.ret else dict(ret=a.ret)))
