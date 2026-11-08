@@ -207,6 +207,7 @@ def insert(a):
         if not e.get('present'): by.setdefault(e['ci'], []).append(e)
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True); ik = IK(); shapes = json.loads(Path(HS).read_text())['shapes']; log = []
     a95 = json.loads(Path(A95).read_text())['a95'] if a.version in ('9b', '9c') else None
+    lib = dict(np.load(a.fo_library)) if a.fo_library else None   # module 10a human shapes (default off)
     if a.version == '9c':
         PL = np.load(a.hold_pool); pdw, ph = PL[f'{a.pool}_dw'], PL[f'{a.pool}_hand']
     fs = sorted(Path(a.given).glob('*.npy'), key=lambda p: int(p.stem)); si, sn = (int(x) for x in a.shard.split('/'))
@@ -261,7 +262,7 @@ def insert(a):
                 continue
             w, sp = window(T, e['t'], 'aim' if kind == 'aim' else 'finger'); w = w[:, None]; jj = ARM[h]
             yi[:, jj] = (1 - w) * yi[:, jj] + w * qk[jj][None]; spans.append(sp)
-        yi = finger_override(yi, tokens_for(by.get(ci, []), a.mode), shapes, ramp=0.3, profile='minjerk').astype(np.float32)
+        yi = finger_override(yi, tokens_for(by.get(ci, []), a.mode), shapes, ramp=0.3, profile='minjerk', library=lib).astype(np.float32)
         np.save(out / f.name, yi); np.savez(out / f'{ci}.npz', frames=yi, spans=np.asarray(spans, np.float32).reshape(-1, 2))
         g = Path(a.given).parent / f'gt_{ci}.npy'
         if g.exists() and not (out.parent / g.name).exists(): __import__('shutil').copy(g, out.parent / g.name)
@@ -332,6 +333,7 @@ def main():
     i.add_argument('--release-search', action='store_true', help="9c'': release T = smallest in [0.3, 1.0] s with peak arm acc <= a95")
     i.add_argument('--taper', type=float, default=0.0, help="9c'': fade the replayed hold velocity to zero over the last TAPER s")
     i.add_argument('--palm-fix', action='store_true', help='11-08 fix: present IK with the SIGNED palm forward and fingers up (9c only)')
+    i.add_argument('--fo-library', default=None, help='module 10a: HAND_LIBRARY_TRAIN.npz for the finger override (tok10ab path)')
     i.add_argument('--diffik', action='store_true', help='9d (1): per-frame differential-IK hold replay')
     i.add_argument('--unit-present', action='store_true', help='9d (2): unit-consistent present IK (orientation x 0.08 m/rad, wrist box)')
     i.add_argument('--arbitrate', action='store_true', help='9d (3): same-hand arbitration of present commands')
