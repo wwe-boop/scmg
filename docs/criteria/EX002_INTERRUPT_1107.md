@@ -112,3 +112,9 @@ section 6. Iterations of the definition (A half only) are listed here as they ha
   outside the A-half end-pose support (3-NN distance > D90); v4 is reported on the needed events (primary) and on all; (ii) the quiet /
   stroke speed thresholds are A-half percentiles chosen as the smallest pair on the grid {75..95} x {95..100} whose activity pass on the
   A-half needed events is >= 90 %. Gates unchanged, applied to the needed events.
+  v4 iteration 2 audit (A-picked quiet / stroke percentiles 90 / 100 -> 0.397 / 1.608 m/s; D90 0.131 m): needed events only (primary):
+  A 62.1 % (29 needed), B 38.1 % (42 needed), GT in speech 7.6 %, FRONT 0 %, B1 0 %; all events: A 86.4 %, B 75.5 %, GT in speech 8.8 %,
+  FRONT 0 %, B1 36.1 %. -> the human gate (>= 85 %) fails on B under either reading: v4 is NOT validated. Per the coordinator's cap no
+  v3 unless calibrated on A and confirmed on a fresh set: a fresh confirmation set is being built (dev-speaker 2_scott / 13_lu post-
+  speech tails with gap >= 2.6 s from the G1 candidate list, never among the 757; 101 candidates, 28 recordings; tails_fresh).
+  Until a definition passes on B and on the fresh set, yield3d and the v4 components (activity, withdrawal) are reported numbers only.
