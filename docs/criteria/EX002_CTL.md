@@ -670,3 +670,32 @@ Gates 1-2 on the quick-lane checkpoints (encoder identical to r3 in both arms, a
 VERDICT: both arms FAIL gate 1 (reconstruction) and the flat-phase part of gate 2. Both lower the spike magnitude below GT (smoother than
 the human data). The 4-frame pattern weakens but stays (frame 2 at 0.73 / 0.76). By the adoption rule, r3 stays the EX002 decoder; no
 10k run and no gate 3. Module 9c runs on r3.
+## Module 9c (pre-registered 2026-11-08 ~13:20, before any 9c run; coordinator after the 9b result and the train-statistics check)
+Base: enc-s0 + ctlenc, decoder r3 (r3d not adopted). Input: the m9b-enc generations blended with 5c (tok5c = 5c + override is the
+reference row). 9c changes exactly two things relative to 9b; everything else (keyframe IK for aim, ramps, timing, gates) is as 12f8351.
+1. Pointing hold motion replayed from human data:
+   - Pool: tokens/HOLD_POOL_TRAIN.npz (sha256 c35f2424…; scripts/ex002/hold_pool.py), TRAIN split only.
+   - point pool: 2947 entries from 3000 sampled pointing tokens (of 89,514; seed 1114). Each entry is the wrist displacement of the token's
+     hand over [t − 0.1, t + 0.6] s (36 frames, the aim-hold window).
+   - control pool: 2947 windows of the same length from train speech spans, at least 1.0 s from any pointing token, random hand.
+   - Pool statistics, written before any run (mean wrist speed over the window, median [IQR]): point 0.160 [0.066, 0.271] m/s,
+     end displacement 5.7 cm; control 0.260 [0.117, 0.423] m/s, 9.6 cm. (Source check, window [t − 0.3, t + 0.6]: along-ray push-out
+     5 mm [0, 23], perpendicular drift 4.7 cm [1.8, 9.5]; HOLD_STATS_TRAIN.json a5f96b11.)
+   - Sampling rule: pool index = sha1("<clip>:<t:.3f>:9c") mod pool size, the same rule for both pools. If the pool entry's hand differs
+     from the command hand, the lateral (y) axis is mirrored.
+   - Per-frame IK during the hold: the wrist target is w_k + dw[τ] (w_k = the 9b keyframe wrist), and the forearm ray is kept on the
+     command target (residual as 9b + wrist-position residual). IK at every 3rd hold frame plus the last one, warm-started from the
+     previous key, 5 iterations, pen_w 100; a key with self-penetration is replaced by the previous key; cubic interpolation between keys.
+     The ramps match the hold's own velocity / acceleration at both ends (quintic, as 9b).
+   - Rows: m9c uses the point pool; m9cctl, the control, uses the control pool through the same pipeline.
+2. Present reachability: a hard-weighted lower bound on wrist height (wrist z ≥ shoulder z − 0.15 m, hinge weight 100) inside the IK,
+   alongside self-collision. A grid point is accepted only if collision-free and within the bound (1 mm tolerance); the fallback grid is
+   as 9b. The event is rejected (counted as a failure everywhere) only if every grid point fails. Present holds stay static.
+- No anticipation change (point and present timing as 9b).
+- Gates: identical to 9b, per protocol, rejected events scored from their actual output. Reference = tok5c. Primary: apex-based
+  angle ≤ 25 deg; elevation ±5; STG ≥ +0.10 with shuffle follow; count ≥ 0.9; presenting hand raised ≥ 0.80; palm ≤ 45. Side: (i) / (ii)
+  ≤ C + δ; ramp jerk ≤ tok5c + 2 pts; executability 100 %; protocol + my liveliness guard (sparse given); release median ≤ 29.8.
+- Report-only: hold-window forearm angle (median over hold frames), apex-in-hold share, hold wrist speed vs the pool statistics
+  (scripts/ex002/ex002_hold_report.py); release p95 / max; held-key share; the 5c effect on (ii) via tok5c vs the 5b tok row of m9b-enc.
+- Quick check first: a disclosed 3-clip smoke (timing and pipeline only). Then the DLC run (scripts/ex002/ex002_ctl_m9c.sh). Renders follow
+  with a selection rule committed before rendering.
