@@ -500,3 +500,9 @@ release continuity: median peak arm acceleration around the release <= the dev-G
 Note: on sibag-s2 the tok row itself failed (ii) on psync (105.8 > 101.07); the enc-s0 tok numbers are reported first.
 Quick check before the DLC run: 3-clip post-processing smoke on existing sibag-s2 m9 tok outputs (disclosed). Renders after: aim + present,
 front + 45 deg, selection rule committed before rendering.
+Module 9b quick check (disclosed, before the DLC run): ARM_ACC_P95.json (train a95 per arm joint 9 / 9 / 9 / 12 / 15 / 4.9 / 7.4 rad/s^2 left,
+same right: the retargeted data sits at its own acceleration limits); 3-clip post-processing smoke on the sibag-s2 m9 tok5bplain outputs (plan
+1111, offline seed 0): rejected keyframes 2.5 % point / 2.6 % present (2.6 % used a fallback grid point); median ramp Tin / Tout 0.39 / 0.45 s
+(point), 0.77 / 0.77 s (present); release peak acceleration median 27.1 (tok 27.8; human p95 29.8), p95 254 (tail); arm ramp jerk over-limit 0.033
+(tok 0.294). Plans for the run: PLAN_dev_m9b_dense.json (1092 events, 556 aim; sha256 a0336b83…12b2), PLAN_dev_m9b_sparse.json (302 events,
+163 aim; sha256 2ad29827…5eed).
