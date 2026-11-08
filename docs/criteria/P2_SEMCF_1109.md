@@ -68,3 +68,18 @@ Bank 5316 train events, 247 dev events. Descriptor mu / sd in sem-1109/SEM_BANK.
 (derangement across recordings) E = 2.556; GT window moved +-1 s vs own = 1.768, between 0 and E_mis as registered -> metric
 valid. The keyword had no aligned occurrence within t +- 1 s for 2231 / 5316 train and 103 / 247 dev events; for those the token
 time falls back to t - 0.2 s (as registered).
+
+## Quick-lane result (11-09 03:08; speech_server GPU1, release 20261109-022226-p2-quick-1109 = exp/ctl-port cab4b18)
+Output: CKPT/zehan/gesture-scmg/control-token-1105/ex002/p2-quick-1109 (SEM_EVAL_offline.json, SEM_EVAL_psync.json,
+BENCH_EVAL.json, NONE_BITWISE.json). Training 2000 steps, frozen enc-s0, 1.11 M trainable (ctl_). The train-batch sem_desc
+fell from 1.39 to about 1.2. 10 recordings, 62 oracle events. GT sanity on these events: own 0.000, mismatched 2.023.
+- offline: E none 1.868, given 1.042 (reduction 44.2 %: K1 not hit, needs >= 30 %); swapped run vs swapped d 1.086 vs vs
+  oracle d 1.642 (K2 not hit, it follows). VERDICT PASS.
+- none path bitwise == the stored enc-s0 offline s0 outputs on all 10 recordings (max abs diff 0).
+- reported rows: psync given 1.329 vs psync none 1.737 (-23.5 %). TTS-sync (look-ahead 0.5 s) 1.104 (-36.4 % vs psync none).
+  Deployable retrieval (151 tokens: 114 by keyword, 37 by category, 0 by class): vs its own retrieved descriptors 0.968 (149
+  windows); vs the oracle descriptors 1.740 (none 1.868).
+- side (10 recordings, noisy): FGD v2 none 124.2, given 138.7, retrieval 171.5; FKD 2.03 / 2.03 / 2.38. Liveliness guard: given
+  passes; none fails wrist amplitude (0.082 vs 0.75 x GT 0.083); retrieval fails wrist speed and amplitude (0.253 / 0.069).
+- note: the bank median lag from (keyword onset) to the segment midpoint is 0.0 s, because 42 % of the bank tokens use the
+  t - 0.2 fallback. The retrieval "own" windows are therefore centred on the word onset.
