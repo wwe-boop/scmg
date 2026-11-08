@@ -32,3 +32,15 @@ estimate).
 - Kills (main): (K1) R's realisation ratio not above P2's full-run 0.65 (amp) / 0.70 (vpk) by >= 0.10, i.e. R needs amp >= 0.75 AND
   vpk >= 0.80; (K2) R's FGD v2 (given, 10 recordings) worse than P2's quick-lane given row (138.72). Reported: the same for arm O
   (the cause-1 isolation is R vs O at matched compute), E reduction, swap follow, liveliness.
+
+## RESULT (11-09 07:45; speech_server GPU1, release 20261109-071304-p2b-1109)
+Matched compute: R 600 steps at 0.540 s/step; O 995 steps at 0.325 s/step. 10 recordings, 62 events, offline seed 0.
+| row | E none -> given (reduction) | swap follow (E_sw vs E_oracle) | realisation amp / vpk (median) | FGD v2 | liveliness |
+| R (rollout) | 1.868 -> 2.035 (-9 % [-26, +8]) | 2.033 vs 2.108 (not followed, G2 fail) | 0.22 / 0.19 | 149.53 | FAIL |
+| O (one-step, matched) | 1.868 -> 1.956 (-5 % [-25, +15]) | 1.959 vs 2.153 (not followed) | 0.22 / 0.16 | 165.69 | FAIL |
+| P2 (reference) | 1.868 -> 1.042 (+44 %) | 1.086 vs 1.642 (followed) | 0.54 / 0.58 | 138.72 | pass |
+Kills: K1 (R needs amp >= 0.75 AND vpk >= 0.80) HIT, at 0.22 / 0.19; K2 (FGD v2 <= 138.72) HIT, at 149.53 -> KILLED.
+Reading: both self-forced arms (R and its matched one-step control O) are far worse than P2. The common change is self_force_p 1
+(self-generated history), together with the shorter training (600 / 995 vs 2000 steps). Rollout scoring does not rescue it:
+R is only marginally above O (vpk 0.19 vs 0.16, FGD 149.5 vs 165.7). Cause (1) is not the bottleneck, consistent with A's Step 0.
+Negatives row 65.
