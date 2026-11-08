@@ -33,6 +33,7 @@ def main():
     ap.add_argument('--outer', type=float, default=.9); ap.add_argument('--finger-override'); ap.add_argument('--mode', default='given')
     ap.add_argument('--pre', type=float); ap.add_argument('--post', type=float)
     ap.add_argument('--compose', default='max', choices=['max', 'smooth'])   # smooth = module 5c
+    ap.add_argument('--fo-library', default=None, help='11-08 module 10 (a): HAND_LIBRARY_TRAIN.npz (human shapes instead of the templates)')
     ap.add_argument('--wrist-pose', default=None, help='11-08 module 8b: PRESENT_WRIST.json -> presenting-hand wrist joints blended to the library pose at finger commands (minjerk, hold 0.4 s, ramp 0.3 s)'); ap.add_argument('--fo-ramp', type=float, default=0.15); ap.add_argument('--fo-profile', default='cos', choices=['cos', 'minjerk'])
     a = ap.parse_args()
     from ex002_ctl_run import finger_override, tokens_for
@@ -40,6 +41,7 @@ def main():
     for e in P['events']: by.setdefault(e['ci'], []).append(e)
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True); n0, n1 = Path(a.none), Path(a.given)
     shapes = json.loads(Path(a.finger_override).read_text())['shapes'] if a.finger_override else None
+    lib = dict(np.load(a.fo_library)) if a.fo_library else None
     for f in sorted(n1.glob('*.npy'), key=lambda p: int(p.stem)):
         ci = int(f.stem); y1 = np.load(f); y0 = np.load(n0 / f.name); T = min(len(y0), len(y1)); y0, y1 = y0[:T], y1[:T]
         w = weight(T, [e['t'] for e in by.get(ci, [])], a.inner, a.outer, a.pre, a.post, a.compose)[:, None]
@@ -52,7 +54,7 @@ def main():
                 x = np.clip((0.7 - np.abs(fr - e['t'])) / 0.3, 0, 1); wv = (x ** 3 * (10 - 15 * x + 6 * x * x))[:, None]
                 jj = wp[str(hh)]['joints']; y[:, jj] = (1 - wv) * y[:, jj] + wv * np.asarray(wp[str(hh)]['angles'], np.float32)[None]
             y = y.astype(np.float32)
-        if shapes is not None: y = finger_override(y, tokens_for(by.get(ci, []), a.mode), shapes, ramp=a.fo_ramp, profile=a.fo_profile)
+        if shapes is not None: y = finger_override(y, tokens_for(by.get(ci, []), a.mode), shapes, ramp=a.fo_ramp, profile=a.fo_profile, library=lib)
         np.save(out / f.name, y)
         g = n1.parent / f'gt_{ci}.npy'
         if g.exists() and not (out.parent / g.name).exists(): shutil.copy(g, out.parent / g.name)

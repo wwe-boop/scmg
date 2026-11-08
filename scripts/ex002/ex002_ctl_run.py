@@ -55,21 +55,26 @@ def tokens_for(evs, mode):
     for e in evs:
         val = e if mode == 'given' else dict(e, **e['shuffle'])
         if e['kind'] == 'aim': toks.append(dict(type=ctl.POINT, t=e['t'], target=val['target'], hand=val['hand']))
-        else: toks.append(dict(type=ctl.TYPE_ID['beat'], t=e['t'], fingers=val['fingers']))
+        else: toks.append(dict(type=ctl.TYPE_ID['beat'], t=e['t'], fingers=val['fingers'], **({'clip': e['clip']} if 'clip' in e else {})))
     return toks
 
 
-def finger_override(y, toks, shapes, hold=0.4, ramp=0.15, profile='cos'):
+def finger_override(y, toks, shapes, hold=0.4, ramp=0.15, profile='cos', library=None):
     """y [T, 34] 50 Hz: at every finger command the 8 finger joints of each hand are blended to the canonical hand shape of the
     commanded count (HAND_SHAPES.json: median of train frames with exactly that count) over [t - hold, t + hold], cosine ramps of
-    `ramp` s outside it; arms / torso untouched (CBF-QP runs afterwards)."""
+    `ramp` s outside it; arms / torso untouched (CBF-QP runs afterwards). 11-08 module 10 (a) (library=None = unchanged): library =
+    {'h_n': [N, 8]} human shapes; each command / hand uses entry sha1("<clip>:<t:.3f>:10a:<h>") mod N instead of the template."""
     y = y.copy(); T = len(y); fr = np.arange(T) / FPS
     for t in toks:
         if t.get('fingers') is None: continue
         d = np.abs(fr - t['t']); w = np.clip((hold + ramp - d) / ramp, 0, 1)
         w = 0.5 - 0.5 * np.cos(np.pi * w) if profile == 'cos' else w ** 3 * (10 - 15 * w + 6 * w * w)   # 11-08: 'minjerk' quintic
         for h, (lo, hi) in ((0, (18, 26)), (1, (26, 34))):
-            tgt = np.asarray(shapes[f"{h}_{int(t['fingers'][h])}"], np.float32)
+            key = f"{h}_{int(t['fingers'][h])}"
+            if library is not None and len(library.get(key, ())):
+                import hashlib
+                i_ = int(hashlib.sha1(f"{t['clip']}:{t['t']:.3f}:10a:{h}".encode()).hexdigest()[:12], 16) % len(library[key]); tgt = np.asarray(library[key][i_], np.float32)
+            else: tgt = np.asarray(shapes[key], np.float32)
             y[:, lo:hi] = (1 - w[:, None]) * y[:, lo:hi] + w[:, None] * tgt[None]
     return y
 
