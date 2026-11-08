@@ -59,7 +59,7 @@ def overfit_clips(view, n):
 
 
 ADDABLE = {'vox_prefsq_norm', 'vox_text_xattn', 'vox_slots', 'vox_word_aux', 'sem_head', 'sem_cond', 'intent_aux', 'tts_h', 'adsc',
-           'flow_text_xattn', 'ctl', 'ctl_flow', 'ret', 'sem_time', 'mask_cond', 'floor'}  # ctl / ctl_flow: zero-init control-token routes (11-05); adsc: zero-init stream_emb (11-04); flow_text_xattn: zero-gated flow text cross-attn (11-04)
+           'flow_text_xattn', 'ctl', 'ctl_flow', 'ret', 'sem_time', 'mask_cond', 'floor', 'semrepa'}  # ctl / ctl_flow: zero-init control-token routes (11-05); adsc: zero-init stream_emb (11-04); flow_text_xattn: zero-gated flow text cross-attn (11-04)
 RESIZE_TEXT = {'text_dim'}  # allowed on a fine-tune: ONLY the text input LayerNorm+Linear is re-initialised (see build_model)
 
 

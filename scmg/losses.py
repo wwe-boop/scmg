@@ -48,6 +48,9 @@ class StageCfg:
     sel_audio_max_class: int = 0   # 11-05 G1: >0 = only chunks with 1 <= g_k <= this class are hidden (G1 gest track: 1..3 deictic /
                                    # iconic / metaphoric, 4 beat on ~88 % of chunks); 0 = every gesture chunk (old behaviour)
     w_foot: float = 0.0            # 11-05 G1 only: foot-contact consistency on the decoded [ctx | target] frames (scmg/g1_contact.py:
+    w_semrepa: float = 0.0         # 11-09 SemREPA (cfg.semrepa; docs/criteria/SEMREPA_1109.md): lambda x mean over valid chunks of
+                                   # 1 - cos(repa_proj(planner block h_k), teacher(GT window centred on chunk k)); 0 = off
+    semrepa_teacher: str = ''      # path of the frozen teacher (scripts/semantic/semrepa_teacher.py)
     w_safe: float = 0.0            # 11-05 G1 only: executable-contract loss on the decoded [ctx | target] frames (scmg/g1_safety.py:
                                    # URDF joint limits + calibrated left-right / arm-torso self-collision proxies); 0 = off
     safe_torso_w: float = 0.5      # weight of the weaker arm-torso proxy inside w_safe
@@ -743,7 +746,12 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         out_sf = 1.
     else:
         out_sf = 0.
+    if sc.w_semrepa > 0 and not getattr(cfg, 'semrepa', False): raise ValueError('StageCfg.w_semrepa needs cfg.semrepa (the projector)')
+    _repa = sc.w_semrepa > 0
+    if _repa: model._repa_capture = int(cfg.semrepa_block)
     h = run_planner(hist)
+    if _repa:
+        h_repa = model._repa_h; model._repa_capture = 0; model._repa_h = None
     if cfg.mtc: mtp, mtpm = mt.flatten(0, 1), mt_mask.flatten(0, 1)
     if cfg.style:
         style_tok, kl, _ = model.style_head(sref[:, None].expand(-1, K, -1), h, x_target=lat_k)
@@ -1026,6 +1034,13 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         out['kl'] = (klm * cm).sum() / cm.sum().clamp(min=1)
         out['kl_raw'] = (kl.sum(-1) * cm).sum() / cm.sum().clamp(min=1)
         loss = loss + sc.w_kl * out['kl']
+    if _repa:                                              # 11-09 SemREPA on the main teacher-forced planner pass
+        from .semrepa import load_teacher, teacher_targets
+        tgt = teacher_targets(load_teacher(sc.semrepa_teacher, dev), q * qs + qm, K, CHUNK_FRAMES)       # [B, K, 192]
+        cv = (mask[:, :K * CHUNK_FRAMES].view(B, K, CHUNK_FRAMES) > .5).all(-1).float()
+        cs = F.cosine_similarity(model.repa_proj(h_repa).float(), tgt, dim=-1)
+        out['semrepa'] = ((1 - cs) * cv).sum() / cv.sum().clamp(min=1)
+        loss = loss + sc.w_semrepa * out['semrepa']
     out['loss'] = loss
     return out
 

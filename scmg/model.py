@@ -128,6 +128,12 @@ class Config:
     ret: bool = False
     ret_len: int = 30
     ret_pre: float = 0.8
+    # 11-09 SemREPA (docs/criteria/SEMREPA_1109.md; default off = the exact old model): REPA projector on the output of planner block
+    # semrepa_block (1-based, before p_norm), aligned in training to a frozen semantic motion teacher (scmg/semrepa.py, losses
+    # w_semrepa); inference never uses it. The projector is drawn from a forked RNG (seed 1109).
+    semrepa: bool = False
+    semrepa_dim: int = 192
+    semrepa_block: int = 2
 
     def dict(self):
         return asdict(self)
@@ -490,6 +496,9 @@ class SCMG(nn.Module):
                 self.ctl_enc = nn.Sequential(nn.SiLU(), nn.Linear(d, d))
                 self.ctl_text = nn.Linear(d, d); nn.init.zeros_(self.ctl_text.weight); nn.init.zeros_(self.ctl_text.bias)
             for mod in (self.ctl_type, self.ctl_val, self.ctl_enc, self.ctl_text): mod.to(self.f_in.weight.device)
+        if getattr(cfg, 'semrepa', False) and not hasattr(self, 'repa_proj'):
+            from .semrepa import make_projector
+            self.repa_proj = make_projector(d, cfg.semrepa_dim).to(self.f_in.weight.device)
         if getattr(cfg, 'ctl_flow', False) and not hasattr(self, 'ctl_fmlp'):
             if not getattr(cfg, 'ctl', False): raise ValueError('ctl_flow needs ctl')
             with torch.random.fork_rng(devices=[]):
@@ -700,9 +709,11 @@ class SCMG(nn.Module):
         if padd is not None: x = x + padd.to(x.dtype)          # 11-07 sem_time planner input (zero-init)
         causal = torch.ones(K, K, dtype=torch.bool, device=lat.device).tril()[None]
         tm = self.chunk_text_mask(tmask, tvis, K)                                     # ADSC: text arrived by chunk k
-        for blk in self.planner:
+        cap = getattr(self, '_repa_capture', 0)                                        # 11-09 SemREPA (losses only; 0 = off)
+        for bi, blk in enumerate(self.planner):
             if isinstance(blk, GatedXBlock): x = blk(x, g, causal, text, tm, mt, mt_mask)
             else: x = blk(x, g, causal, text, tm)
+            if cap and bi + 1 == cap: self._repa_h = x
         return self.p_norm(x)
 
     def _plan_as_of(self, lat, a, amask, text, tmask, g, mt, mt_mask, tids, tidm, sref, tvis, lvis, sstate):
@@ -731,9 +742,12 @@ class SCMG(nn.Module):
         tm = self.chunk_text_mask(tmask, tvis, K)                                      # [B, K(pos), Kt]
         tm = tm[:, None].expand(B, K, K, tm.shape[-1]).reshape(B, K * K, tm.shape[-1])
         c = g3[:, :, None].expand(B, K, K, g3.shape[-1]).reshape(B, K * K, g3.shape[-1])
-        for blk in self.planner:
+        cap = getattr(self, '_repa_capture', 0)                                        # 11-09 SemREPA: token (k, k) of block cap
+        for bi, blk in enumerate(self.planner):
             if isinstance(blk, GatedXBlock): x = blk(x, c, mask, text, tm)
             else: x = blk(x, c, mask, text, tm)
+            if cap and bi + 1 == cap:
+                self._repa_h = x.view(B, K, K, d)[:, torch.arange(K, device=dev), torch.arange(K, device=dev)]
         h = self.p_norm(x).view(B, K, K, d)
         return h[:, torch.arange(K, device=dev), torch.arange(K, device=dev)]
 
