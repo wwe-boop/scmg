@@ -40,3 +40,10 @@ range (95.1-109.0).
 Leakage rule (the tails are also the human reference): the 757 retargeted tails (433 recordings) are split by recording
 (crc32(recording) % 2): half A is the training positive set, half B the RKD / rest reference; EVERY row of this ladder and of the
 comparison rows is re-scored against half B only (the earlier full-set numbers stay as they are, labelled).
+L1 addendum (12:3x, before any L1 run): the duplex model = enc-s0 fine-tuned 2000 steps (seed 0, lr 1e-4, warmup 200, the same sc
+incl. self_force_scope encoders, BAgger 0.33, semsynth 0.6) on data-v36_1-tail with cfg + ctl + ctl_flow (zero-init routes) and the
+YIELD-only token set (tokens-duplex), ctl_focus 0.2 (share of windows placed around a token; the tails are ~0.3 % of the items);
+L1 inference = ex002_interrupt.py --yield-token (YIELD at t_i, no look-ahead). Its own uninterrupted psync s0 through 3c-4b is the
+v3 / executed-prefix reference of its rows. L2 = rest_ramp_ex002.py on the L1 continuation (waist + arms; head / fingers keep the
+continuation); L3 = L2 through 3c-4b + ISC. Comparison rows (Funnel / R0causal / B3 on enc-s0, + ISC) are re-run with the half-B
+human reference (rest pose and RKD), so every row of the table uses half B.
