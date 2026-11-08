@@ -63,3 +63,8 @@ RKD half-split floor 0.179; R0causal / Funnel re-run with the half-B rest pose; 
   Funnel + ISC    yield3d 89.2 % (1.22 s) v3 4.4 % RKD-post 0.484 unsafe 0.0 %   -> fails yield (< 90 %)
 On half B the rule selects R0causal + ISC (Funnel + ISC qualified on the full 757-tail reference with yield3d 91.1 %): the post-hoc
 choice depends on the rest reference; the ladder table uses half B for every row as registered.
+L2 diagnostic (not a gate; the rest ramp on the BASE enc-s0 continuation without a YIELD token, half-B reference):
+  L2diag raw   yield3d 100 % (0.34 s) v3 14.3 % RKD-post 1.397 unsafe 81.7 %
+  L2diag + ISC yield3d 100 % (0.36 s) v3 1.1 %  RKD-post 1.368 unsafe 0.0 %
+The 9b duration rule (0.3-0.8 s) gives a retraction far faster than the human tails (half-B median yield 1.22 s): RKD-post 1.37 vs
+R0causal + ISC 0.518; with ISC it passes yield / v3 / unsafe but loses on RKD.
