@@ -1205,3 +1205,15 @@ Same module, new base for the token path; settings and gates unchanged from 9c''
   executability 100 %; ramp jerk ≤ reference + 2 pts; both liveliness guards; release median ≤ 29.8 with p95 / max. Report-only: wrist
   height, IK residual, rejects, hold speed, apex-in-hold, STG split by a same-hand present within 2 s.
 - Quick lane first (clips 0 and 1, seed 0, both protocols, all gates), then the full run on the coordinator's go.
+9c'' port onto tok10ab, quick lane (disclosed; clips 0 and 1, seed 0, offline / psync; diag/quick_port):
+
+| row | STG gain | shuffle given / original | angle | raised | signed palm | release med / p95 / max (dense) |
+|---|---|---|---|---|---|---|
+| tok10ab (reference) | +0.327 / +0.335 | 0.442 / 0.420; 0.288 / 0.407 | 14.9 / 16.2 | 0.06 / 0.06 | 97 / 99 | 21.7/85/113; 25.7/92/117 |
+| tok10ab + 9c'' | +0.271 / +0.196 | 0.441 / 0.325; 0.454 / 0.367 | 9.2 / 12.6 | 0.96 / 1.00 | 3 / 3 | 15.8/45/56; 13.5/43/79 |
+| none + 9c'' (control) | +0.258 / +0.138 | 0.448 / 0.220; 0.438 / 0.242 | 8.0 / 17.6 | 1.00 / 0.96 | 3 / 3 | 16.2/38/135; 14.9/59/97 |
+
+- Executability 1.0; both liveliness guards PASS; arm ramp 0.016-0.026 (tok10ab 0.31-0.32); hold speed 0.14 / 0.12 m/s (control 0.22 / 0.19);
+  apex-in-hold 0.17 (control 0.22); present wrist z − shoulder z −0.078 m; rejects 0-4 %.
+- The tok10ab reference's shuffle check fails on these 2 psync clips (0.288 < 0.407) — 2-clip noise; the full module-10 run follows
+  (0.399 vs 0.309).
