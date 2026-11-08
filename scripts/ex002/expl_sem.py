@@ -73,12 +73,15 @@ def rates(pred, y, K):
 def build(a):
     O = Path(a.out); O.mkdir(parents=True, exist_ok=True)
     st = json.loads((Path(a.sem) / 'SEM_BANK.json').read_text()); mu, sd = np.asarray(st['mu']), np.asarray(st['sd'])
-    items = json.loads((Path(V) / 'train.json').read_text()); sp = json.loads((Path(V) / 'SPLIT.json').read_text())
-    q = np.load(Path(V) / 'train_q.npy', mmap_mode='r')
-    tr_rows, Dtr = occurrences(recordings(items, set(sp['train_ids'])), q, mu, sd)
-    dv_rows, Ddv = occurrences(recordings(items, set(sp['val_ids'])), q, mu, sd)
-    np.savez(O / 'EXPL_EXEMPLARS.npz', Dtr=Dtr, Ddv=Ddv)
-    (O / 'EXPL_ROWS.json').write_text(json.dumps(dict(train=tr_rows, dev=dv_rows)))
+    if a.reuse and (O / 'EXPL_EXEMPLARS.npz').exists():          # 11-09: the exemplars of a previous build (same rule)
+        z = np.load(O / 'EXPL_EXEMPLARS.npz'); Dtr, Ddv = z['Dtr'], z['Ddv']; rr = json.loads((O / 'EXPL_ROWS.json').read_text()); tr_rows, dv_rows = rr['train'], rr['dev']
+    else:
+        items = json.loads((Path(V) / 'train.json').read_text()); sp = json.loads((Path(V) / 'SPLIT.json').read_text())
+        q = np.load(Path(V) / 'train_q.npy', mmap_mode='r')
+        tr_rows, Dtr = occurrences(recordings(items, set(sp['train_ids'])), q, mu, sd)
+        dv_rows, Ddv = occurrences(recordings(items, set(sp['val_ids'])), q, mu, sd)
+        np.savez(O / 'EXPL_EXEMPLARS.npz', Dtr=Dtr, Ddv=Ddv)
+        (O / 'EXPL_ROWS.json').write_text(json.dumps(dict(train=tr_rows, dev=dv_rows)))
     rng = np.random.default_rng(20261109); res = dict(counts=dict(train={c: sum(r['cat'] == c for r in tr_rows) for c in CATS},
                                                                   dev={c: sum(r['cat'] == c for r in dv_rows) for c in CATS}), rounds=[])
     kept = [c for c in CATS if res['counts']['train'][c] > 0 and res['counts']['dev'][c] > 0]
@@ -93,10 +96,13 @@ def build(a):
         chance = 1.0 / K; fail = [c for c in kept if own.get(c, 0) < chance + 0.20]
         res['rounds'].append(dict(round=rnd, kept=list(kept), C=C, cv_bal_acc=cv, chance=chance, own=own, balanced=float(np.mean(list(own.values()))),
                                   shuffled=float(np.mean(sh)), shuffled_ok=bool(abs(np.mean(sh) - chance) <= 0.05), failed=fail))
-        if rnd == 1 and fail: kept = [c for c in kept if c not in fail]; continue
+        if rnd == 1 and fail:
+            kept = [c for c in kept if c not in fail]
+            if len(kept) < 2: break                                     # registered: < 2 categories survive -> metric invalid
+            continue
         break
     last = res['rounds'][-1]
-    valid = len(last['kept']) >= 2 and not last['failed'] and last['shuffled_ok']
+    valid = len(kept) >= 2 and len(last['kept']) >= 2 and not last['failed'] and last['shuffled_ok']
     if len(res['rounds']) == 2 and last['failed']: valid = False
     res['METRIC_VALID'] = bool(valid); res['kept'] = last['kept'] if valid else []
     if valid:
@@ -170,7 +176,7 @@ def evaluate(a):
 
 if __name__ == '__main__':
     ap = argparse.ArgumentParser(); sub = ap.add_subparsers(dest='cmd', required=True)
-    b = sub.add_parser('build'); b.add_argument('--sem', required=True); b.add_argument('--out', required=True)
+    b = sub.add_parser('build'); b.add_argument('--sem', required=True); b.add_argument('--out', required=True); b.add_argument('--reuse', action='store_true')
     p = sub.add_parser('plan'); p.add_argument('--expl', required=True); p.add_argument('--cis', required=True); p.add_argument('--out', required=True)
     e = sub.add_parser('eval'); e.add_argument('--expl', required=True); e.add_argument('--sem', required=True); e.add_argument('--plans', required=True)
     e.add_argument('--gt', required=True); e.add_argument('--out', required=True); e.add_argument('specs', nargs='+')
