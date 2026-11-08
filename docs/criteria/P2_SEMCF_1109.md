@@ -134,3 +134,23 @@ and spread). The realised amplitude / peak speed fall well short of the command 
 Reading: P2 shows a controllable statistic, not a recognisable gesture. The P2 full run stays as mechanism evidence (lower
 priority) with a report-only "realisation ratio" (realised / commanded amp_h and vpeak_h). The explicit-semantics canonical path
 (EXPLICIT_SEM_1109.md amendment 1) is the deliverable for "appropriate gesture".
+
+## Full run + controls (main's go 11-09; registered before running; mechanism evidence)
+- Main model = the quick-lane model (p2-quick-1109/train, training seed 0). All 43 dev recordings x per_clip seeds 0 / 1 / 2.
+  Rows: offline none / given (oracle) / swapped / retrieval; psync given; TTS-sync given (psync + look-ahead 0.5 s). none psync
+  = the stored enc-s0 psync outputs. Oracle plan = all 247 dev events; retrieval plan = the §2 rule on all 43 recordings.
+- Gates (offline, pooled over the 3 seeds, recording-clustered bootstrap 2000):
+  G1 E(given) <= 0.70 E(none), with the CI of the reduction 1 - E(given) / E(none) above 0;
+  G2 swap follow: E(swapped run, swapped d) < E(swapped run, oracle d), with the CI of the difference below 0;
+  G3 FGD v2 given <= none + delta, delta = max(0.03 x none, 2 x SD of none's 3 seeds);
+  G4 liveliness guard on given;
+  G5 the none path is bitwise the stored enc-s0 offline outputs (43 x 3).
+- Reported: psync and TTS-sync E vs psync none; retrieval E vs its own and vs the oracle descriptors; realisation ratio
+  (realised / commanded amp_h and vpeak_h, raw units, per event, median and IQR; given and swapped rows). pair_win is not computed
+  (sanity rows unreliable on these sets; main's reading rule).
+- Controls (same 43 x 3 seeds, offline given + swapped; each trained like the main model, 2000 steps, frozen enc-s0):
+  c1 plain: sem_cf_p 0 and w_sem_desc 0 (descriptor token, flow loss only, imitation kept: the C3 / outcome ablation);
+  c2 onset: token time = keyword onset (t_tok + 0.2 s), in training and in the plan;
+  c3 late: token time = keyword onset + 0.2 s (t_tok + 0.4 s).
+  Reading (reported, not gated): the mechanism needs the counterfactual + outcome terms iff c1's E(given) reduction is below the
+  main model's by more than its CI; the lead matters iff the main reduction exceeds both c2's and c3's.
