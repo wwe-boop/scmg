@@ -47,3 +47,32 @@ The direction part is renormalised to unit length. Hand drawn with the category'
 - Then renders of 4 events, one each for a SELF, YOU, NUMBER and BIG word if they exist among the scored events (the first by
   sha1("<clip>:<onset:.3f>:explrender")). Panels: GT / none / given; front + 3/4; the category, the posterior and the
   descriptor are printed.
+
+## Amendment 1 (main 11-09 03:3x; written BEFORE the sanity result was read): fallback "canonical explicit gestures"
+Per category, the data-driven path (§2-4) is used only if that category passes the §2 sanity check. Otherwise the category uses
+the canonical path below. Both are reported.
+- Mapping onto the command machinery that already passes its validated gates (EX002 tok10ab model: pointing tokens + the
+  module-10 finger override with human-library shapes; keyframe insertion where noted):
+  - SELF: a point command aimed at the robot's own sternum (target = the sternum point of the robot's rest pose in the base
+    frame, offset 0.10 m forward), hand = the free hand (the hand with the lower wrist speed over the previous 1 s of the none
+    run; ties -> right);
+  - YOU: a point command forward to the listener position (base frame (1.5, 0, 1.3) m);
+  - POINT (this / here / these -> down-front (0.8, 0, 0.6) m; there / those -> forward-side (1.5, +-0.8, 1.2) m, the side of the
+    free hand);
+  - NUMBER: the finger-count command (count = the number word; > 3 -> 3, 'both' -> 2, ordinals first / second / third -> 1 / 2 / 3,
+    zh 两 -> 2, ...) with the module-10 override on the free hand, the other hand count 0;
+  - BIG: a bimanual spread keyframe (both wrists to (0.45, +-0.45, 1.15) m, palms in) held 0.4 s; SMALL: a narrow close-hands
+    keyframe (both wrists to (0.40, +-0.08, 1.10) m) held 0.4 s. Both use ex002_keyframe.py IK insertion with the 9c'' release
+    search; this is a new keyframe kind, default off with a bitwise test.
+- Trigger: under TTS-sync at word onset - 0.2 s; under psync at the onset itself; 1.2 s spacing (greedy in time).
+- Geometric success metrics, validated FIRST on synthetic positives / negatives (positives: the commanded keyframe inserted into
+  a GT clip; negatives: the unedited GT clip; each metric must separate them with >= 90 % accuracy, else it is revised once):
+  - SELF: min over [t - 0.3, t + 0.9] of the commanded wrist-to-sternum distance <= 0.15 m;
+  - YOU / POINT: the official STG Score_b (forearm ray vs the target box) at the apex-detector frame, success = Score_b >= 0.5;
+  - NUMBER: the count hit (both hands, the validated finger-count metric);
+  - BIG: max wrist separation in [t - 0.3, t + 0.9] >= none's + 0.15 m; SMALL: min separation <= 0.20 m while both wrists are
+    above 0.9 m.
+- Gate per category: success(given) - success(none) >= +20 pp, with the recording-clustered bootstrap CI excluding 0 (TTS-sync
+  row primary for the canonical path, psync reported). Side gates: FGD v2 (i) / (ii) and the liveliness guard.
+- Renders: 4 events ("me", "you", "three", "big"; the first by sha1("<clip>:<onset:.3f>:explrender") among the scored
+  occurrences of each word), panels GT / none / given, front + 3/4 view.
