@@ -699,3 +699,10 @@ reference row). 9c changes exactly two things relative to 9b; everything else (k
   (scripts/ex002/ex002_hold_report.py); release p95 / max; held-key share; the 5c effect on (ii) via tok5c vs the 5b tok row of m9b-enc.
 - Quick check first: a disclosed 3-clip smoke (timing and pipeline only). Then the DLC run (scripts/ex002/ex002_ctl_m9c.sh). Renders follow
   with a selection rule committed before rendering.
+Module 9c quick check (disclosed, before the DLC run): 3 clips (offline seed 0, dense plan; m9b-enc generations, 5c plain), on speech_server CPU.
+- m9c: aim 38 events, rejected 2.6 %, held (penetrating) keys 0.05 per event, wrist-target error median 1.9 cm.
+- m9cctl: same, held keys 0.24 per event, wrist-target error 3.0 cm.
+- present: 38 events, 0 rejected, 0 height rejects, grid point 0 for all, wrist − shoulder z median −0.129 m.
+- Default-path check: the 9b insertion with the new code reproduces the m9b-enc output of clip 5 bitwise.
+- Cost: about 500 s per clip per row on speech_server, about 3x 9b. The insert stage therefore runs on CPU pods split by NSH / ISH, then
+  the eval stage runs on a 4-GPU pod.
