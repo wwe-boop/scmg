@@ -11,7 +11,8 @@ FPS = 50
 
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument('--plan', required=True); ap.add_argument('--ctl', required=True); ap.add_argument('--ref', required=True, nargs='+')
-    ap.add_argument('--out', required=True); ap.add_argument('specs', nargs='+'); a = ap.parse_args()
+    ap.add_argument('--out', required=True); ap.add_argument('--same-hand', action='store_true', help='9d: flag = another plan command on the same hand within +-1 s')
+    ap.add_argument('specs', nargs='+'); a = ap.parse_args()
     from scmg import ex002_ctl as E, ctl
     from ex002_apex import Detector
     det = Detector(json.loads((Path(a.ctl) / 'APEX.json').read_text()))
@@ -22,6 +23,9 @@ def main():
             for e in json.loads(Path(f).read_text())['events']:
                 if e['kind'] == 'present' and 't_hold' in e: holds.setdefault(e['ci'], []).append(tuple(e['t_hold']))
     flag = {(e['ci'], round(e['t'], 3)): any(h0 <= e['t'] + 1 and h1 >= e['t'] - 1 for h0, h1 in holds.get(e['ci'], [])) for e in aims}
+    if a.same_hand:
+        hand = lambda x: x['hand'] if x['kind'] == 'aim' else (0 if x['fingers'][0] > x['fingers'][1] else 1)
+        flag = {(e['ci'], round(e['t'], 3)): any(o is not e and o['ci'] == e['ci'] and hand(o) == e['hand'] and abs(o['t'] - e['t']) <= 1.0 for o in P['events']) for e in aims}
     R = {}
     for spec in a.specs:
         lab, d = spec.split('=', 1); grp = lab.rsplit('_s', 1)[0]; acc = R.setdefault(grp, {True: [], False: []})
@@ -33,7 +37,7 @@ def main():
                 if fe >= n: continue
                 h = e['hand']; ah = det.apex(geo, h, max(0, fe - FPS), min(n, fe + FPS)); sa = ctl.score_a(ah / FPS, e['t']); rr = E.rays(geo, ah, h)
                 sb, _ = ctl.score_b(rr['forearm'][0], rr['forearm'][1], e['target']); acc[flag[(ci, round(e['t'], 3))]].append(sa * sb)
-    out = {g: {('with_present_hold' if k else 'without'): dict(n=len(v), stg=float(np.mean(v)) if v else None) for k, v in d.items()} for g, d in R.items()}
+    out = {g: {(('with_same_hand_cmd' if a.same_hand else 'with_present_hold') if k else 'without'): dict(n=len(v), stg=float(np.mean(v)) if v else None) for k, v in d.items()} for g, d in R.items()}
     out['_share_with_present_hold'] = float(np.mean(list(flag.values())))
     print(json.dumps(out)); Path(a.out).write_text(json.dumps(out, indent=1))
 

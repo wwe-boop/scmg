@@ -48,7 +48,10 @@ class IK:
     def pen(self, q):
         return self.K.penetration(q[None].float())[0].double()
 
-    def solve(self, q0, h, kind, target=None, it=20, pen_w=10.0, present_off=None, wrist_pos=None, zmin=None, palm_fix=False):
+    def solve(self, q0, h, kind, target=None, it=20, pen_w=10.0, present_off=None, wrist_pos=None, zmin=None, palm_fix=False,
+              ray_dist=False, or_scale=1.0, zbox=None, mu0=1e-2):
+        # 9d (defaults = 9c / 9c'' unchanged): ray_dist scales the ray residual by the wrist-target distance (metres); or_scale scales the
+        # present orientation residuals (m/rad); zbox = (lo, hi) wrist-height box relative to the shoulder (hinges, weight 100); mu0 = damping
         # 9c (default None = 9 / 9b unchanged): wrist_pos [3] adds w - wrist_pos (aim hold replay); zmin (m below the shoulder, e.g. 0.15)
         # adds a hard-weighted hinge on wrist z >= shoulder z - zmin (present)
         q0 = torch.as_tensor(q0, dtype=torch.float64); q = q0.clone(); idx = ARM[h]
@@ -57,7 +60,8 @@ class IK:
             qq = q.clone(); qq[idx] = x; g = self.geo(qq); w, e, s = g['wrist'][h], g['elbow'][h], g['shoulder'][h]
             r = []
             if kind == 'aim':
-                t = torch.as_tensor(target, dtype=torch.float64); r.append((w - e) / (w - e).norm() - (t - w) / (t - w).norm())
+                t = torch.as_tensor(target, dtype=torch.float64); rr_ = (w - e) / (w - e).norm() - (t - w) / (t - w).norm()
+                r.append(rr_ * (t - w).norm() if ray_dist else rr_)
                 if wrist_pos is not None: r.append(w - torch.as_tensor(wrist_pos, dtype=torch.float64))
             else:
                 if present_off is None:                                  # m9: left hand toward -y (midline), right toward +y
@@ -67,15 +71,16 @@ class IK:
                 pt = s + off; r.append(w - pt)
                 n = torch.cross(g['index_base'][h] - w, g['third_base'][h] - w, dim=0); n = n / n.norm().clamp(min=1e-9)
                 if palm_fix:                                             # 11-08 fix: SIGNED palm forward (+x) + fingers up (+z)
-                    pv = (-1. if h == 0 else 1.) * n; r.append(pv - torch.tensor([1., 0., 0.], dtype=torch.float64))
-                    hd = g['index_base'][h] - w; r.append(hd / hd.norm().clamp(min=1e-9) - torch.tensor([0., 0., 1.], dtype=torch.float64))
+                    pv = (-1. if h == 0 else 1.) * n; r.append(or_scale * (pv - torch.tensor([1., 0., 0.], dtype=torch.float64)))
+                    hd = g['index_base'][h] - w; r.append(or_scale * (hd / hd.norm().clamp(min=1e-9) - torch.tensor([0., 0., 1.], dtype=torch.float64)))
                 else: r.append(n - sgn * torch.tensor([1., 0., 0.], dtype=torch.float64))
                 if zmin is not None: r.append(100. * torch.relu((s[2] - zmin) - w[2]).reshape(1))
+                if zbox is not None: r.append(100. * torch.relu((s[2] + zbox[0]) - w[2]).reshape(1)); r.append(100. * torch.relu(w[2] - (s[2] + zbox[1])).reshape(1))
             r.append(np.sqrt(LAM) * (x - q0[idx])); r.append(pen_w * self.pen(qq).square().sum().add(1e-12).sqrt().reshape(1))
             return torch.cat([x_.reshape(-1) for x_ in r])
         if kind != 'aim':
             g = self.geo(q); n = torch.cross(g['index_base'][h] - g['wrist'][h], g['third_base'][h] - g['wrist'][h], dim=0); sgn = 1. if float(n[0]) >= 0 else -1.
-        x = q[idx].clone(); mu = 1e-2
+        x = q[idx].clone(); mu = mu0
         for _ in range(it):
             r = res(x); J = torch.autograd.functional.jacobian(res, x, vectorize=True, strategy='forward-mode')
             dx = torch.linalg.solve(J.T @ J + mu * torch.eye(len(x), dtype=torch.float64), -J.T @ r)
@@ -84,7 +89,7 @@ class IK:
             else: mu = mu * 5
         qf = q.clone(); qf[idx] = x; pen = float(self.pen(qf).max()) if len(self.pen(qf)) else 0.
         info = dict(res=float(res(x).norm()), pen=pen)
-        if zmin is not None or wrist_pos is not None:
+        if zmin is not None or wrist_pos is not None or zbox is not None:
             g = self.geo(qf); info['wz_minus_sz'] = float(g['wrist'][h][2] - g['shoulder'][h][2])
             if wrist_pos is not None: info['wpos_err'] = float((g['wrist'][h] - torch.as_tensor(wrist_pos, dtype=torch.float64)).norm())
         return qf.numpy().astype(np.float32), info
@@ -176,6 +181,16 @@ def hold9c(ik, qk, h, target, dw, it=5, taper=0.0):
     return Q.astype(np.float32), dict(hold_keys=len(keys), hold_bad_keys=bad, hold_wpos_err_median=float(np.nanmedian(perr)) if len(perr) else 0.)
 
 
+def hold9d(ik, qk, h, target, dw):
+    """9d: per-frame differential IK (one damped GN step, lambda 0.02, warm start) on wrist w_k + dw[tau] with the ray rows in metres."""
+    g = ik.geo(torch.as_tensor(qk, dtype=torch.float64)); wk = g['wrist'][h].numpy(); n = len(dw); Q = [np.asarray(qk, np.float32)]; bad = 0; perr = []
+    for k in range(1, n):
+        qn, info = ik.solve(Q[-1], h, 'aim', target, it=1, pen_w=100.0, wrist_pos=wk + dw[k], ray_dist=True, mu0=0.02 ** 2)
+        if info['pen'] > 1e-6: bad += 1; Q.append(Q[-1]); perr.append(float('nan')); continue
+        Q.append(qn); perr.append(info['wpos_err'])
+    return np.stack(Q).astype(np.float32), dict(hold_keys=n, hold_bad_keys=bad, hold_wpos_err_median=float(np.nanmedian(perr)) if perr else 0.)
+
+
 def pool_index(clip, t, n):
     return int(hashlib.sha1(f'{clip}:{t:.3f}:9c'.encode()).hexdigest()[:12], 16) % n
 
@@ -201,13 +216,26 @@ def insert(a):
             v = e if a.mode == 'given' else dict(e, **e['shuffle']); fe = min(int(round(e['t'] * FPS)), T - 1)
             if e['kind'] == 'aim': h, kind, tg = v['hand'], 'aim', v['target']
             else: h, kind, tg = (0 if v['fingers'][0] > v['fingers'][1] else 1), 'present', None
+            arb = False
+            if a.version == '9c' and a.arbitrate and kind == 'present' and v['fingers'][1 - h] >= 1:   # 9d (3): same-hand arbitration
+                for ea in by.get(ci, []):
+                    va = ea if a.mode == 'given' else dict(ea, **ea['shuffle'])
+                    if ea['kind'] == 'aim' and va['hand'] == h and (ea['t'] - 0.1 - 1.0) <= e['t'] - 0.4 <= (ea['t'] + 0.6 + 1.0): arb = True; break
+                if arb: h = 1 - h
             if a.version == '9c':                                     # 9c: present with the wrist-height bound; aim keyframe as 9b
                 if kind == 'aim': qk, info = ik.solve(yi[fe], h, kind, tg, pen_w=100.0); info['grid'] = 0
                 else:
-                    for gi, off in enumerate(GRID9B):
-                        qk, info = ik.solve(yi[fe], h, kind, tg, pen_w=100.0, present_off=off, zmin=0.15, palm_fix=a.palm_fix); info['grid'] = gi
-                        if info['pen'] <= 1e-6 and info['wz_minus_sz'] >= -0.15 - 1e-3: break
-                    if info['wz_minus_sz'] < -0.15 - 1e-3: info['pen'] = max(info['pen'], 1.0); info['height_reject'] = True
+                    if a.unit_present:                                    # 9d (2): orientation x 0.08 m/rad, wrist box [-0.14, -0.10] m
+                        for gi, off in enumerate(GRID9B):
+                            qk, info = ik.solve(yi[fe], h, kind, tg, pen_w=100.0, present_off=off, palm_fix=True, or_scale=0.08, zbox=(-0.14, -0.10)); info['grid'] = gi
+                            if info['pen'] <= 1e-6 and -0.14 - 1e-3 <= info['wz_minus_sz'] <= -0.10 + 1e-3: break
+                        if not -0.14 - 1e-3 <= info['wz_minus_sz'] <= -0.10 + 1e-3: info['pen'] = max(info['pen'], 1.0); info['height_reject'] = True
+                    else:
+                        for gi, off in enumerate(GRID9B):
+                            qk, info = ik.solve(yi[fe], h, kind, tg, pen_w=100.0, present_off=off, zmin=0.15, palm_fix=a.palm_fix); info['grid'] = gi
+                            if info['pen'] <= 1e-6 and info['wz_minus_sz'] >= -0.15 - 1e-3: break
+                        if info['wz_minus_sz'] < -0.15 - 1e-3: info['pen'] = max(info['pen'], 1.0); info['height_reject'] = True
+                info['arbitrated'] = arb
             elif a.version == '9b':
                 if kind == 'aim': qk, info = ik.solve(yi[fe], h, kind, tg, pen_w=100.0); info['grid'] = 0
                 else:
@@ -222,7 +250,7 @@ def insert(a):
                 if kind == 'aim':
                     i_ = pool_index(e['clip'], e['t'], len(pdw)); dw = np.array(pdw[i_][:nh], np.float64)
                     if int(ph[i_]) != h: dw[:, 1] = -dw[:, 1]                 # mirror the lateral axis for the other hand
-                    Q, hi = hold9c(ik, qk, h, tg, dw, taper=a.taper); rec.update(hi, pool_i=i_)
+                    Q, hi = (hold9d(ik, qk, h, tg, dw) if a.diffik else hold9c(ik, qk, h, tg, dw, taper=a.taper)); rec.update(hi, pool_i=i_)
                 else: Q = np.repeat(np.asarray(qk)[None], nh, 0)
                 tm = insert9c(yi, Q, h, e['t'], kd, a95, rsearch=a.release_search)
                 if tm: rec.update(tm); spans.append((tm['t_in0'], tm['t_release']))
@@ -304,6 +332,9 @@ def main():
     i.add_argument('--release-search', action='store_true', help="9c'': release T = smallest in [0.3, 1.0] s with peak arm acc <= a95")
     i.add_argument('--taper', type=float, default=0.0, help="9c'': fade the replayed hold velocity to zero over the last TAPER s")
     i.add_argument('--palm-fix', action='store_true', help='11-08 fix: present IK with the SIGNED palm forward and fingers up (9c only)')
+    i.add_argument('--diffik', action='store_true', help='9d (1): per-frame differential-IK hold replay')
+    i.add_argument('--unit-present', action='store_true', help='9d (2): unit-consistent present IK (orientation x 0.08 m/rad, wrist box)')
+    i.add_argument('--arbitrate', action='store_true', help='9d (3): same-hand arbitration of present commands')
     r = sub.add_parser('release'); r.add_argument('--plan', required=True); r.add_argument('--gt-dir', required=True); r.add_argument('--out', required=True); r.add_argument('specs', nargs='+')
     a = ap.parse_args(); dict(insert=insert, release=release)[a.cmd](a)
 

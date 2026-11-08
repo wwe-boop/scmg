@@ -100,7 +100,8 @@ def evaluate(a):
         if e['kind'] == 'finger' and not e.get('present'): by.setdefault(e['ci'], []).append(e)
     res = {}
     for spec in a.specs:
-        lab, d = spec.split('=', 1); hi, ang, hip, angp, angs, angps = [], [], [], [], [], []
+        lab, d = spec.split('=', 1); hi, ang, hip, angp, angs, angps = [], [], [], [], [], []; hia, angsa = [], []
+        KFH = {(x['ci'], round(x['t'], 3)): x['hand'] for kf in Path(d).glob('KEYFRAMES.*.json') for x in json.loads(kf.read_text())['events'] if x['kind'] == 'present'}
         for f in sorted(Path(d).glob('*.npy'), key=lambda p: int(p.stem)):
             ci = int(f.stem); y = np.load(f); n = len(y)
             if ci not in by: continue
@@ -115,12 +116,15 @@ def evaluate(a):
                     # 11-08 fix: SIGNED palm direction (palm = PALM_SIGN[h] * normal; curling moves the fingertips toward it) vs forward +x
                     cs = PALM_SIGN[h] * nrm[:, 0] / np.maximum(np.linalg.norm(nrm, axis=-1), 1e-9); angs.append(float(np.median(np.degrees(np.arccos(np.clip(cs, -1, 1))))))
                     if h == present_hand(e['fingers']): hip.append(hi[-1]); angp.append(ang[-1]); angps.append(angs[-1])
-        grp = lab.rsplit('_s', 1)[0]; res.setdefault(grp, dict(hi=[], ang=[], hip=[], angp=[], angs=[], angps=[]))
+                    if h == KFH.get((ci, round(e['t'], 3)), present_hand(e['fingers'])): hia.append(hi[-1]); angsa.append(angs[-1])   # 9d: actual hand
+        grp = lab.rsplit('_s', 1)[0]; res.setdefault(grp, dict(hi=[], ang=[], hip=[], angp=[], angs=[], angps=[], hia=[], angsa=[]))
+        res[grp]['hia'] += hia; res[grp]['angsa'] += angsa
         res[grp]['hi'] += hi; res[grp]['ang'] += ang; res[grp]['hip'] += hip; res[grp]['angp'] += angp; res[grp]['angs'] += angs; res[grp]['angps'] += angps
     out = {k: dict(hand_raised_share_mean=float(np.mean(v['hi'])), events_hands=len(v['hi']), events_hands_raised_ge80=float(np.mean(np.array(v['hi']) >= .8)),
                    palm_forward_angle_median=float(np.median(v['ang'])), present_hand_raised_share_mean=float(np.mean(v['hip'])),
                    present_hand_raised_ge80=float(np.mean(np.array(v['hip']) >= .8)), present_hand_palm_angle_median=float(np.median(v['angp'])),
-                   present_hand_palm_angle_signed_median=float(np.median(v['angps'])), present_hand_palm_forward_share=float(np.mean(np.array(v['angps']) <= 45.))) for k, v in res.items()}
+                   present_hand_palm_angle_signed_median=float(np.median(v['angps'])), present_hand_palm_forward_share=float(np.mean(np.array(v['angps']) <= 45.)),
+                   actual_hand_raised_share_mean=float(np.mean(v['hia'])), actual_hand_palm_angle_signed_median=float(np.median(v['angsa']))) for k, v in res.items()}
     for k, v in out.items(): print(k, json.dumps({kk: round(vv, 3) for kk, vv in v.items()}))
     Path(a.out).write_text(json.dumps(out, indent=1))
 
