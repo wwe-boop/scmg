@@ -206,6 +206,14 @@ def evaluate(a):
             h.append(success(y, e, yn, det))
         hits[lab] = np.array(h)
     cats = sorted({e['cat'] for e in P}); recs = np.array([e['clip'] for e in P]); cat = np.array([e['cat'] for e in P]); res = dict(n=len(P))
+    from scmg import ex002_ctl as E_
+    for lab, ds in runs.items():                    # report-only (main 11-09): BIG wrist height relative to the shoulder (max in the window)
+        hz = []
+        for e, i in zip(P, src):
+            if e['cat'] != 'BIG': continue
+            y = np.load(Path(ds[i]) / f"{e['ci']}.npy"); fe = int(round(e['t'] * FPS)); g = E_.points(y[max(0, fe - 15):fe + 46])
+            hz.append(float((g['wrist'][..., 2] - g['shoulder'][..., 2]).max()))
+        if hz: res.setdefault('BIG_wrist_minus_shoulder_max_m', {})[lab] = dict(mean=float(np.mean(hz)), max=float(np.max(hz)), n=len(hz))
     for lab, h in hits.items(): res[lab] = {c: dict(rate=float(h[cat == c].mean()), n=int((cat == c).sum())) for c in cats}
     rng = np.random.default_rng(0); ur = np.unique(recs)
     for lab in runs:
