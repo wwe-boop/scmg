@@ -23,7 +23,13 @@ Addendum 11-07 23:0x (before any EX002 interruption metric; found while checking
 frames before t_i are only bitwise equal to the uninterrupted psync output for 344 / 476 interruptions. All 132 differences start
 at a frame = 12 mod 16, 1-3 frames before f_i: the VAE decoder looks one latent (4 frames) ahead, so when f_i falls after the
 start of the last latent before the restart chunk boundary, re-decoding after the restart rewrites up to 3 already-played frames
-(median 9e-4 rad at the first differing frame, up to 0.139 rad). Rule: B3 rows are scored on the EXECUTED prefix -- the method's
+(median 9e-4 rad at the first differing frame, up to 0.139 rad). [Correction 11-08 audit (prefix_check_ex002.py, all 476 interruptions of
+every raw row: enc-s0 seeds 0 / 1 / 2, r4 base, step-1000 snapshot): <= 4 frames (4 when f_i falls on a latent start); 72.3 % of the
+interruptions have a bitwise-equal prefix, 20.0 % differ only in the last 1-3 frames, 7.8 % first differ at f_i - 4, none earlier --
+identical shares on every raw row (set by the latent phase of f_i). Max |y[:f] - U[:f]| p95 0.014 rad on enc-s0 (0.197 on r4 base).
+Post-processed and deployed-chain rows (R0causal / Funnel post, every ISC row, B1 / B2 / FRONT + ISC) have a bitwise-equal prefix on
+476 / 476. Raw rows are reported with v3 under this rule (primary) and with the continuation's own prefix y[:f] on both sides
+(diagnostic): enc-s0 s0 31.3 / 17.4 %, s1 28.6 / 16.2 %, s2 32.1 / 18.1 %, r4 base 92.4 / 74.4 %, snapshot 55.5 / 41.0 %.] Rule: B3 rows are scored on the EXECUTED prefix -- the method's
 own uninterrupted output before f_i, its continuation from f_i on (eval_interrupt_ex002.py --prefix executed, default; the file
 as written = --prefix generated, diagnostic only). The G1 interruption runs share this decoder property (not re-scored here).
 Addendum 11-08 01:1x (protocol fixes before any reported EX002 interruption number; found by a pipeline smoke run on the 458 tails
