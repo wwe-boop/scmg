@@ -101,13 +101,31 @@ def insert_key(y, t, cat, ik, a95, hand=None):
     return yi, dict(ik=info, timing=tm)
 
 
+def insert_point(y, e, ik, a95):
+    """amendment 4: aim IK (ray toward the target + wrist at shoulder + 0.45 m toward it), 3 chained rounds x 30 iterations, hold 0.4 s
+    over [t - 0.1, t + 0.3], quintic ramps (insert9b)."""
+    import torch
+    from ex002_keyframe import insert9b, HOLD
+    HOLD.setdefault('point4', (0.1, 0.3))
+    f = int(np.clip(round(e['t'] * FPS), 0, len(y) - 1)); q = y[f].copy(); h = e['hand']; tg = np.asarray(e['target'], np.float64)
+    for _ in range(3):
+        s = ik.geo(torch.as_tensor(q, dtype=torch.float64))['shoulder'][h].numpy(); wp = s + (tg - s) / np.linalg.norm(tg - s) * 0.45
+        q, info = ik.solve(q, h, 'aim', target=tg.tolist(), wrist_pos=wp.tolist(), it=30)
+    yi = y.copy(); tm = insert9b(yi, q, h, e['t'], 'point4', a95)
+    return yi, dict(ik=info, timing=tm)
+
+
 def keyframe(a):
     from ex002_keyframe import IK, A95
     P = json.loads(Path(a.plan).read_text())['events']; ik = IK(); a95 = json.loads(Path(A95).read_text())['a95']
     O = Path(a.out); O.mkdir(parents=True, exist_ok=True); log = []
     for f in sorted(Path(a.run).glob('[0-9]*.npy'), key=lambda p: int(p.stem)):
         ci = int(f.stem); y = np.load(f).astype(np.float32)
-        for e in [e for e in P if e['ci'] == ci and (e['kind'] in ('big', 'small') or (a.self_chest and e['cat'] == 'SELF'))]:
+        if a.point_only:                                                  # amendment 4: YOU / POINT point keyframes only
+            for e in [e for e in P if e['ci'] == ci and e['cat'] in ('YOU', 'POINT')]:
+                y, info = insert_point(y, e, ik, a95); log.append(dict(ci=ci, t=e['t'], cat=e['cat'], ik=info['ik']))
+        else:
+          for e in [e for e in P if e['ci'] == ci and (e['kind'] in ('big', 'small') or (a.self_chest and e['cat'] == 'SELF'))]:
             y, info = insert_key(y, e['t'], e['cat'], ik, a95, e['hand']); log.append(dict(ci=ci, t=e['t'], cat=e['cat'], ik=info['ik']))
         np.save(O / f.name, y.astype(np.float32))
     for g in Path(a.run).parent.glob('gt_*.npy'):
@@ -203,6 +221,7 @@ if __name__ == '__main__':
     p = sub.add_parser('plan'); p.add_argument('--cis', required=True); p.add_argument('--proto', choices=['tts', 'psync'], required=True)
     p.add_argument('--none', required=True); p.add_argument('--out', required=True)
     k = sub.add_parser('keyframe'); k.add_argument('--plan', required=True); k.add_argument('--run', required=True); k.add_argument('--out', required=True)
+    k.add_argument('--point-only', action='store_true', help='amendment 4: only the YOU / POINT IK point keyframes (applied on --run)')
     k.add_argument('--self-chest', action='store_true', help='amendment 2 SELF variant (b): chest keyframe instead of the aim token')
     v = sub.add_parser('validate'); v.add_argument('--plan', required=True); v.add_argument('--gt', required=True); v.add_argument('--out', required=True)
     e = sub.add_parser('eval'); e.add_argument('--plan', required=True); e.add_argument('--none', required=True); e.add_argument('--out', required=True); e.add_argument('specs', nargs='+')
