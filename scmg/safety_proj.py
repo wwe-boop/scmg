@@ -620,7 +620,7 @@ class RuckigLayer(_Base):
 class ProjectionLayer(_Base):
     def __init__(self, lim, coll, objective='l2', K=10, B=10, w=None, d_safe=2e-3, act=0.01, max_iter=4,
                  pos_margin=1e-5, shrink=0.995, encoder=None, window=64, steps=15, lr=None, lam=1.0, mu=1e3, smooth=0.0,
-                 tail_smooth=1e-6, recursive=False, pred_d=0.0, carry=False):
+                 tail_smooth=1e-6, recursive=False, pred_d=0.0, carry=False, pool=None):
         assert objective in ('l2', 'perceptual')
         self.lim, self.coll, self.obj, self.n = lim, coll, objective, lim.n
         J = lim.n
@@ -632,6 +632,7 @@ class ProjectionLayer(_Base):
         self.tail_smooth = tail_smooth            # 11-08: weight of the braking-tail velocity term (1e-6 = the original; EX002 1e-3)
         self.recursive = recursive                # 11-08 (EX002 3c-4): collision rows admit the shifted verified plan + hold
         self.pred_d, self.carry = pred_d, carry    # 11-08 (EX002 3c-5): predictive initial rows (act + pred_d) / active-set carry-over
+        self.pool = pool                          # 11-08 (EX002 3c-6): safety_pool_ex002.CollisionPool for the exact checks (bit-identical)
         if objective == 'perceptual' and encoder is None:
             raise ValueError('perceptual objective needs an FGDEncoder')
         self.name = 'proj_l2' if objective == 'l2' else ('proj_perc_s' if smooth else 'proj_perc')
@@ -656,9 +657,19 @@ class ProjectionLayer(_Base):
             lin = np.concatenate([lin_k, np.repeat(lin_k[-1:], self.B, 0)], 0)
             memo = {}                  # 11-08: identical (pose, reference) pairs (the held braking tail) are linearised once;
             ext = self.pred_d > 0 or self.carry  # lin_rows is a deterministic function of its inputs, so the rows are bit-identical
+            if self.pool is not None:  # 3c-6: the unique (pose, reference) linearisations of this chunk on the worker pool
+                order = []
+                for t in range(N):
+                    key = (lin[t].tobytes(), ref[t].tobytes())
+                    if key not in memo: memo[key] = None; order.append((key, t))
+                a_ = self.act + self.pred_d
+                nk = (dict(want_ids=True, **(dict(carry=self.carry_set, carry_act=a_ + 0.05) if self.carry and self.carry_set else {}))
+                      if ext else {})
+                res = self.pool.lin_rows([(lin[t], ref[t], a_ if ext else self.act, dict(nk)) for _, t in order])
+                for (key, _), r_ in zip(order, res): memo[key] = r_
             for t in range(N):
                 key = (lin[t].tobytes(), ref[t].tobytes())
-                if key not in memo:
+                if memo.get(key) is None:
                     if ext:            # 3c-5: predictive margin act + pred_d; carried pairs (active / cut in the previous chunk) too
                         ids = []; a_ = self.act + self.pred_d
                         rr, ql_ = lin_rows(self.coll, lin[t], ref[t], a_, ids=ids,
@@ -679,13 +690,19 @@ class ProjectionLayer(_Base):
             Xh = np.concatenate([x, np.repeat(x[-1:], 3, 0)], 0)     # braking tail followed by a hold
             if not (pos_ok(x, self.lim) and diff_ok(H, Xh, self.lim)[0]):
                 self.stats['verify_fail'] += 1; return None, qp
-            bad = [t for t in range(N) if self.coll.collides(x[t])]
+            if self.pool is not None:
+                bad = [t for t, c in enumerate(self.pool.collides(list(x))) if c]
+            else:
+                bad = [t for t in range(N) if self.coll.collides(x[t])]
             badm = []
             if self.coll.midpoints and not bad:
                 prev = np.concatenate([H[-1:], x[:-1]], 0) if len(H) else x[:-1]
                 cur = x if len(H) else x[1:]
                 off = 0 if len(H) else 1
-                badm = [t + off for t in range(len(cur)) if self.coll.collides(0.5 * (cur[t] + prev[t]))]
+                if self.pool is not None:
+                    badm = [t + off for t, c in enumerate(self.pool.collides([0.5 * (cur[t] + prev[t]) for t in range(len(cur))])) if c]
+                else:
+                    badm = [t + off for t in range(len(cur)) if self.coll.collides(0.5 * (cur[t] + prev[t]))]
             if not bad and not badm:
                 if self.carry:          # 3c-5: pairs of the active rows (slack <= 1e-6) and of every cut row -> next chunk
                     C = np.array(qp.crow) if qp.crow else np.zeros((0, N * self.n))
@@ -694,6 +711,15 @@ class ProjectionLayer(_Base):
                                                if qp.cids[i] >= 0 and (sl[i] <= 1e-6 or i >= qp.n_init))
                 return x, qp
             self.stats['coll_iters'] += 1
+            if self.pool is not None:    # 3c-6: cut rows of all bad frames / midpoints in one parallel round, added in serial order
+                res = self.pool.lin_rows([(x[t], ref[t], self.act, dict(want_ids=True) if self.carry else {}) for t in bad])
+                for t, (rows, ql, ids) in zip(bad, res):
+                    if rows: qp.add_collision(t, rows, ql, self.ds, ids=ids)
+                mids = [(0.5 * (x[t] + (x[t - 1] if t >= 1 else H[-1])), 0.5 * (ref[t] + (ref[t - 1] if t >= 1 else H[-1]))) for t in badm]
+                res = self.pool.lin_rows([(pm, rm, self.act, {}) for pm, rm in mids])
+                for t, (rows, ql, _) in zip(badm, res):
+                    if rows: qp.add_collision_mid(t, rows, ql, self.ds)
+                continue
             for t in bad:
                 if self.carry:
                     ids = []; rows, ql = lin_rows(self.coll, x[t], ref[t], self.act, ids=ids)
