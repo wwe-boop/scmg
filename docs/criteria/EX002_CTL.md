@@ -988,3 +988,7 @@ Hand height of the fixed present (quick lane, 53 present events per protocol; IK
   collision-free poses allow, so the solver trades about 5 cm of wrist height for orientation.
 - With the fingers up (about 0.2 m of hand), the fingertips reach about shoulder + 0.13 m, near chin / head height, which is what the
   render shows.
+Coordinator decision (11-08 ~17:30): weights unchanged. The full 9c'' (T-only + palm fix, INSFLAGS9C='--release-search --palm-fix') runs
+after the audit pass. Its result reports, as report-only numbers, the wrist z − shoulder z of present events (quick lane: −0.070 / −0.066 m,
+5.0 / 5.4 cm above the registered −0.12 m) and the IK residual (0.41 vs 0.25 without the fix). The raised gate (wrist ≥ shoulder − 0.20 m)
+is not affected.
