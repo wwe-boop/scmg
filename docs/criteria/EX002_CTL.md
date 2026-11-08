@@ -923,3 +923,24 @@ audit pass.
 - Unchanged across the three rows: presenting hand raised 1.00, palm 2 deg, finger hit 1.0, executability 1.0, finger ramp 0.013,
   both liveliness guards PASS, (i) and (ii) unchanged within 1 (2-clip FGD is not meaningful in absolute terms).
 - Hold wrist speed: 0.13 / 0.11 m/s (T-only); 0.105 / 0.098 m/s (T + taper); pool 0.28.
+## Render check of the 9b videos (coordinator, frame by frame; 2026-11-08 ~16:40)
+1. present0 (clip 10, t = 10.30 s, right hand presents). BUG FOUND: the palm direction is sign-agnostic.
+   - The wrist is on the same side: right wrist y −0.184 vs right shoulder −0.193 (MuJoCo FK agrees). Across all 536 present events
+     (offline s0) the median outward offset is +0.007 m and no wrist crosses the midline.
+   - But the hand points inward: hand direction (wrist → index base) is +y (0.86), the index base sits at y −0.005 (the midline), and the
+     palm faces the chest.
+   - The palm normal n = cross(index_base − wrist, third_base − wrist) has no fixed palm side. The palm is −n for the left hand and +n
+     for the right (curling moves the index tip toward it; at rest both palms face the midline).
+   - The IK term n − sgn·x took sgn from the generator's current pose, and the metric used |n_x|. Both accept a palm facing the chest.
+   - Signed re-score (offline s0): m9b palm angle 178° median, palm-forward share 0.16 (the sign-agnostic metric reported 2°); tok5b
+     104°, 0.00.
+   - So every reported palm PASS (modules 8, 8b, 9, 9b, m9b5c and the 9c' / 9c'' quick lanes) is invalid: those palms mostly face the
+     body.
+   - Fix (ctl-port, test_palm.py ALL_OK): ex002_present.py reports the signed palm angle (present_hand_palm_angle_signed_median,
+     palm-forward share); IK --palm-fix uses the signed palm forward (+x) and fingers up (+z) for present.
+2. aim0 (clip 32, t = 20.56 s, left hand). NOT a bug.
+   - A second command follows on the same hand: a present at t + 1.53 s (fingers L2 R1 → the left hand presents). Its ramp-in starts at
+     t + 0.46 s (before the aim release ends at t + 1.0 s), and its hold [t + 1.12, t + 1.92] has forearm elevation about 60°.
+   - That is the "forearm up" seen from t + 1.0 to t + 2.0 s. tok5b only overrides the fingers for that command.
+   - Before the second command, m9b equals tok up to the aim release by construction. The joint path is moderate (joint3 1.08 → 1.50,
+     joint7 0.22 → −0.44).
