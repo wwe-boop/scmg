@@ -87,10 +87,11 @@ def clip_seed(seed, mode, stem):
 class RetractStreamer(Streamer):
     def __init__(self, *args, t_int=None, keep_tok=None, audio='end', fm=None, fs=None, n_total=None, restart='chunk',
                  react_delay=0.04, retract=None, rest=None, tr=1.0, w=1.0, splice=0, w0=0., prefix=None, floor=0, guide=0.,
-                 comp=None, diff=0., fresh_feat=None, yield_token=False, **kw):
+                 comp=None, diff=0., fresh_feat=None, yield_token=False, yield_delay=0., **kw):
         super().__init__(*args, **kw)
         self.fresh_feat = fresh_feat      # psync: () -> a new CausalInputs of the clip (feat after the interruption)
         self.yield_token = yield_token    # 11-07 duplex: a YIELD control token arrives at t_i (models trained with yield_cf)
+        self.yield_delay = float(yield_delay)   # 11-08 token-use control: the YIELD arrives at t_i + yield_delay (default 0 = unchanged)
         if yield_token and not getattr(self.m.cfg, 'ctl', False): raise ValueError('--yield-token needs a model with cfg ctl')
         self.t_int, self.keep_tok, self.audio, self.n_total = t_int, keep_tok, audio, n_total
         self.sil = None if fm is None else torch.as_tensor((SIL_RAW - fm) / fs, device=self.dev).float()
@@ -159,7 +160,7 @@ class RetractStreamer(Streamer):
             self.causal = PostInterrupt(self.causal, fr, n50, sh, self.feat.shape[0], silence=sil)
         if self.yield_token:              # the interrupt event as a control token (no values) at t_i on the re-based clock
             from scmg.ctl import YIELD, NV, NVM
-            ty_ = torch.tensor([YIELD], device=self.dev); t_ = torch.tensor([self.t_int - o * STRIDE / 50.], device=self.dev).float()
+            ty_ = torch.tensor([YIELD], device=self.dev); t_ = torch.tensor([self.t_int + self.yield_delay - o * STRIDE / 50.], device=self.dev).float()
             v_ = torch.zeros(1, NV, device=self.dev); m_ = torch.zeros(1, NVM, device=self.dev)
             c = self.cond
             if 'ctl_type' in c:

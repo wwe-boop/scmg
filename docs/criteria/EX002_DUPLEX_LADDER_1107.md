@@ -47,3 +47,11 @@ L1 inference = ex002_interrupt.py --yield-token (YIELD at t_i, no look-ahead). I
 v3 / executed-prefix reference of its rows. L2 = rest_ramp_ex002.py on the L1 continuation (waist + arms; head / fingers keep the
 continuation); L3 = L2 through 3c-4b + ISC. Comparison rows (Funnel / R0causal / B3 on enc-s0, + ISC) are re-run with the half-B
 human reference (rest pose and RKD), so every row of the table uses half B.
+Token-use check (coordinator 12:4x, before any L1 run; G1 negatives row 13: the floor token was ignored):
+  same L1 checkpoint, same inputs (digital-silence pause after t_i), three runs on the 476 dev interruptions:
+    ON   YIELD at t_i (--yield-token)      OFF  no token      LATE (wrong time)  YIELD at t_i + 1.0 s (--yield-delay 1.0)
+  L1 uses the token iff (i) yield3d(ON) - yield3d(OFF) >= 20 pp with a recording-level paired bootstrap 95 % CI excluding 0, AND
+  (ii) the wrong-time placement moves the yield: median 3D-yield latency (LATE) - median latency (ON) >= 0.5 s over the
+  interruptions that yield in both runs. Otherwise L1 is logged "token ignored" (negatives) and L2 / L3 carry the result.
+  Pause-alone check: yield3d(OFF) is reported next to the base enc-s0 B3 (same chain); if OFF alone reaches the yield gate, the
+  pause input (not the token) explains the yield, stated as such.
