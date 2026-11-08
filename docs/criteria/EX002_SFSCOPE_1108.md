@@ -43,3 +43,40 @@ lane (5 lanes on 3 GPUs, batch 64 per process, no torchrun; log.txt has no rank 
 2a81db6 (bisect) reproduced sibag-s0 to 4 decimals (flow 0.6411 / gn 0.662 / dev_flow 0.6699 / 0.6697 vs 0.6699 / 0.6696-0.6697).
 So the single-process 'encoders' emulation is the same recipe as the original; DDP support is not needed for this base and
 'encoders' refuses world > 1 (the None-grad / unused-parameter semantics under DDP were never exercised by the bug runs).
+
+## RESULT 2026-11-08 08:0x (dlc1w474ln7rftyd SFSCOPE_DONE; ~/bulk/causal-train-1105/ex002_sfscope_table.py; all-s0 guard rows from
+## lively_floor_ex002.py per seed, the lane predates the always-on guard)
+Release check: REF_TRAIN_CHECK OK on 20261108-0643-ex002-sfscope before any lane. Gate 0 PASS: enc-s0 flow 0.6411 / gn 0.6619 /
+dev_flow 0.6699 / 0.6696 vs 5d8f154 0.6411 / 0.6619 / 0.6699 / 0.6697 (original sibag-s0 0.6411 / 0.6620 / 0.6699 / 0.6697); enc-s1
+0.6361 / 0.6656 / 0.6702 / 0.6698 vs original sibag-s1 0.6361 / 0.6657 / 0.6702 / 0.6699. No skipped steps in any lane.
+| scope | seed | protocol | FGD v2 (seeds 0-2) | FKD | still | wrist m/s | amp m | held | stutter | guards |
+|---|---|---|---|---|---|---|---|---|---|---|
+| sf0 | 0 | offline | 181.0 (164.3-197.8) | 3.01 | 0.148 | 0.177 | 0.067 | 0.023 | 1.032 | FAIL still,wrist,amp |
+| sf0 | 0 | psync | 222.7 (197.2-242.5) | 3.54 | 0.181 | 0.151 | 0.060 | 0.031 | 1.023 | FAIL still,wrist,amp |
+| sf0 | 1 | offline | 162.9 (145.7-181.7) | 2.76 | 0.133 | 0.192 | 0.070 | 0.000 | 1.032 | FAIL still,wrist,amp |
+| sf0 | 1 | psync | 201.8 (192.7-211.0) | 3.27 | 0.175 | 0.161 | 0.068 | 0.023 | 1.022 | FAIL still,wrist,amp |
+| all | 0 | offline | 125.1 (117.7-138.6) | 2.03 | 0.064 | 0.234 | 0.080 | 0.008 | 1.063 | FAIL still,wrist,amp |
+| all | 0 | psync | 155.4 (128.3-171.0) | 2.28 | 0.097 | 0.204 | 0.079 | 0.016 | 1.067 | FAIL still,wrist,amp |
+| all | 1 | offline | 114.4 (101.3-127.3) | 1.73 | 0.038 | 0.263 | 0.083 | 0.000 | 1.066 | FAIL still,wrist,amp |
+| all | 1 | psync | 131.4 (111.9-142.4) | 1.78 | 0.047 | 0.238 | 0.081 | 0.008 | 1.063 | FAIL still,wrist,amp |
+| encoders | 0 | offline | 86.3 (84.1-87.7) | 1.51 | 0.024 | 0.316 | 0.095 | 0.000 | 1.056 | PASS |
+| encoders | 0 | psync | 109.0 (107.0-112.0) | 1.54 | 0.029 | 0.323 | 0.095 | 0.008 | 1.053 | PASS |
+| encoders | 1 | offline | 86.7 (81.5-89.5) | 1.49 | 0.024 | 0.353 | 0.096 | 0.008 | 1.067 | PASS |
+| encoders | 1 | psync | 102.6 (98.2-106.0) | 1.49 | 0.023 | 0.376 | 0.098 | 0.008 | 1.061 | PASS |
+| czm+encoders | 0 | offline | 85.3 (82.6-87.4) | 1.64 | 0.050 | 0.277 | 0.092 | 0.000 | 1.064 | FAIL still,wrist |
+| czm+encoders | 0 | psync | 126.3 (115.0-135.1) | 1.87 | 0.049 | 0.267 | 0.086 | 0.008 | 1.062 | FAIL still,wrist,amp |
+2-seed mean sf0       offline FGD v2 172.0  still 0.141  wrist 0.185
+2-seed mean sf0       psync   FGD v2 212.3  still 0.178  wrist 0.156
+2-seed mean all       offline FGD v2 119.7  still 0.051  wrist 0.248
+2-seed mean all       psync   FGD v2 143.4  still 0.072  wrist 0.221
+2-seed mean encoders  offline FGD v2 86.5  still 0.024  wrist 0.334
+2-seed mean encoders  psync   FGD v2 105.8  still 0.026  wrist 0.350
+SELECTION czm-enc-s0 vs enc-s0: (a) psync FGD range below False (115.0-135.1 vs 107.0-112.0) (b) offline <= 1.05x True (c) psync FKD <= 1.10x False (e) guards False; enc-s0 guards True
+BASE -> enc-s0 ((d) skipped steps: see train.jsonl)
+Reading: encoder-only self-forcing is the best of the three on every column (2-seed FGD v2 86.5 / 105.8 vs full self-forcing
+119.7 / 143.4 vs sf0 172.0 / 212.3, offline / psync) and the only regime that passes the liveliness guards; sf0 is the worst.
+For reference, the original sibag-s0 / s1 / s2 (bench-only, lively-1108 diag): FGD v2 offline 85.5 / 86.4 / 91.2 (mean 87.7, SD 3.1),
+psync 107.8 / 102.5 / 96.2 (mean 102.2, SD 5.8) -- enc-s0 / enc-s1 match their seed twins (86.3 / 109.0, 86.7 / 102.6).
+Selection (frozen rule): czm-enc-s0 fails (a) (psync 115.0-135.1 vs 107.0-112.0), (c) (FKD 1.87 vs 1.54) and (e) (still / wrist,
+and amplitude in psync); enc-s0 passes (e) in both protocols -> BASE = enc-s0 (current code, self_force_scope encoders, no causal
+match), the clean-code successor of sibag-s2. The causal training match does not help on this recipe (psync worse).
