@@ -706,3 +706,46 @@ Module 9c quick check (disclosed, before the DLC run): 3 clips (offline seed 0, 
 - Default-path check: the 9b insertion with the new code reproduces the m9b-enc output of clip 5 bitwise.
 - Cost: about 500 s per clip per row on speech_server, about 3x 9b. The insert stage therefore runs on CPU pods split by NSH / ISH, then
   the eval stage runs on a 4-GPU pod.
+## Module 5c result (dlc150dvyjw8nthi, LANE_DONE 13:46 2026-11-08; post-processing of the m9b-enc generations; DLC)
+IDENTITY:
+- Sparse plan: 5c equals 5b bitwise (tok5c, tok5cplain, m9b5c vs m9b; 43/43 clips × 3 seeds × 2 protocols; sibag-s2 too).
+- Dense plan: 13/43 clips bitwise; the rest differ, max |diff| 0.35–0.51 rad, at the window crossings.
+Original 5b gates on enc-s0, tok5c (tok5b of m9b-enc in brackets), offline / psync:
+- STG gain +0.099 [+0.080, +0.118] / +0.088 [+0.071, +0.105] (tok5b +0.095 / +0.084): FAIL (< +0.10 on both). Shuffle follows (0.365 vs
+  0.311; 0.350 vs 0.309).
+- finger hit 1.000 (override): PASS.
+- (i) 86.96 ≤ 92.16 / 107.04 ≤ 112.74: PASS.
+- (ii) 92.25 > 90.15 / 118.27 > 114.34: FAIL, bitwise = 5b. Without the override (tok5cplain): 90.05 ≤ 90.15 / 115.30 > 114.34.
+- executability 100 %: PASS.
+VERDICT: 5c fails the original 5b gates on enc-s0 (STG and (ii)), exactly where 5b fails them on enc-s0; on the sparse plan it is 5b
+bitwise. On sibag-s2 the 5b gates had passed (fresh-plan confirmation).
+Blend-artifact report (dense plan, offline / psync):
+- arm frames over 100 rad/s²: tok5b 1.30 / 1.32 % → tok5c 0.88 / 0.86 % (none 0.66 / 0.69 %, GT 0.10 %);
+- random-window p95: 185 / 186 → 90 / 89 (none 50 / 57);
+- max: 1307 / 1405 → 405 / 305;
+- dense whole-clip FGD v2: 178.7 / 216.2 → 179.0 / 216.5 (none 86.3 / 109.0);
+- finger ramp frames over the jerk limit (dense): 0.038 / 0.046 → 0.029 / 0.039.
+(ii) hypothesis on sibag-s2: tok5c psync 105.80 = tok5b 105.80 (offline 96.61 = 96.61), bitwise as predicted: the blend bug did not cause
+the sibag-s2 tok psync (ii) failure. Dense whole-clip FGD v2 on sibag-s2: 179.35 → 179.73 / 202.49 → 202.90.
+Release continuity, median / p95 / max (rad/s²), every row:
+
+| row | dense, offline | dense, psync | sparse, offline | sparse, psync |
+|---|---|---|---|---|
+| sibag tok5b | 20.1 / 80.6 / 220 | 21.6 / 80.6 / 261 | 19.7 / 72.6 / 184 | 22.0 / 75.8 / 184 |
+| sibag ik | 55.3 / 99.2 / 220 | 55.9 / 103.3 / 261 | 53.5 / 108.1 / 186 | 55.8 / 112.9 / 204 |
+| sibag m9 | 54.4 / 98.7 / 299 | 55.3 / 104.0 / 343 | 47.5 / 112.3 / 172 | 49.8 / 111.0 / 192 |
+| enc tok5b | 18.9 / 78.1 / 231 | 20.2 / 75.1 / 165 | 20.3 / 73.0 / 208 | 21.4 / 72.8 / 222 |
+| enc m9b | 27.1 / 226.1 / 1044 | 27.8 / 241.8 / 1235 | 24.5 / 67.2 / 195 | 24.1 / 60.0 / 133 |
+| enc tok5c | 18.8 / 77.2 / 231 | 20.1 / 75.0 / 165 | = tok5b | = tok5b |
+| enc m9b5c | 27.1 / 92.5 / 217 | 27.5 / 90.5 / 229 | = m9b | = m9b |
+
+m9b5c with the 9b gates (dense rows change, sparse rows = m9b):
+- angle 28.3 / 27.7: FAIL;
+- elevation +1.4 / -0.8: PASS;
+- STG +0.128 [+0.102, +0.158] / +0.131 [+0.105, +0.160]: PASS;
+- presenting hand raised 0.824 / 0.799: FAIL psync; palm 2.0: PASS;
+- (i): PASS; (ii): FAIL (= m9b);
+- arm ramps 0.030 / 0.028 (tok5c 0.225): PASS;
+- executability: PASS; liveliness sparse: PASS;
+- release median 27.1 / 27.5: PASS.
+Same verdict as 9b.
