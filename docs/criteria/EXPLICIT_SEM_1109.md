@@ -194,3 +194,14 @@ NUMBER gates: count hit 1.00 (>= 0.90); presenting-hand palm signed angle median
 hand raised share 1.00 (>= 0.80) -> PASS. Before amendment 5: raised 0.14, palm 99.6 deg. The other categories are unchanged (SELF 0.98,
 YOU 0.98, POINT 0.90, BIG 0.67, SMALL 0.33 on this seed, identical to before). Side gates: FGD v2 103.27 (before 105.51, none
 106.98, s0); FKD 1.468; liveliness guard PASS; executability after CBF 100 % (finger-ramp frames over the jerk limit 0.0 %).
+
+## Amendment 6 (main 11-09 07:0x; registered before running): longer NUMBER hold + readable duration
+- NUMBER present keyframe hold extended to 1.2 s over [t - 0.2, t + 1.0] (was t +- 0.4). The module-10 finger override covers the
+  same window (centre t + 0.4 s, hold 0.6 s, the same 0.3 s minimum-jerk ramps). Everything else as amendment 5
+  (ex002_keyframe.py insert --finger-hold 0.2,1.0, default off = unchanged).
+- Gates unchanged: count hit >= 0.90; palm signed median <= 45 deg; presenting-hand raised share >= 0.80 (measured over t +- 0.4 s as
+  before); side gates as before.
+- Report-only "readable duration": per NUMBER command, the seconds within [t - 1, t + 2] in which the presenting hand is raised
+  (wrist >= shoulder - 0.20 m) AND its signed palm angle is <= 45 deg; median and IQR (before / amendment 5 / amendment 6).
+- Quick lane: seed 0, TTS-sync, 43 recordings, 18 NUMBER commands (as amendment 5). Then the "three" and "first" close-ups are
+  re-rendered with the render-side additions (COMMAND overlay, window start in the title, renderer-input sha256 == scored file).
