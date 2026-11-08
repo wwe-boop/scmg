@@ -10,6 +10,7 @@
 - 论文写法：sibag-s2 = “self-forcing p = 0.5；因 autocast 缓存 bug，自强制 batch 只更新条件编码器”。不写成“自强制关闭”。
 - 方法开关：StageCfg.self_force_scope = 'encoders'（默认 'all' 不变；与旧代码逐位一致）。EX002 新底座按 docs/criteria/EX002_SFSCOPE_1108.md 选（当前代码 + encoders，±因果匹配）；sf0 / all / encoders 三方对比进补充表。G1 主表不变（sf0）。
 - 结果（EX002_SFSCOPE_1108.md）：encoders 在 FGD v2、FKD、活跃度上全面最好（两种子 86.5 / 105.8，all 119.7 / 143.4，sf0 172.0 / 212.3），EX002 底座 = enc-s0（3 个训练种子报均值 ± SD）。EX002 上因果训练匹配无益（czm-enc-s0 psync 126.3 vs 109.0，守卫不过；负面表第 41 行）：因果匹配的主张只在 G1 成立（G1 显著），EX002 如实报告“此配方上无益”。
+- EX002 安全层定稿 = 3c-4b（单线程；EX002_CBF_1108.md）。论文写法（按实际情况）：每帧安全、零 fallback、可复现；单块 p99 在桌面 CPU 单线程上为 184 ms，未达到预注册的 100 ms 目标，但低于 320 ms 的块步长，可流水线实时运行；带来约一个块的额外延迟；未在机载计算机上实测。禁止写“机载实时”。端到端时延表中把安全层列为单独一级。3c-5 / 3c-6 提速无收益（负面表第 42 行）。r3d 解码器决定后，在新解码上按同样空闲条件只重测 3c-4b 时延。
 - 回归保护：每个 release 先过 scripts/tests/ref_train_ex002.sh（CHECK=1 写 REF_TRAIN_OK.json）再提交车道；bench_ex002 eval 对每条车道默认输出 13 点活跃度守卫。
 
 ## V9 变更：P4 控制符加目标方向，对上空间指向基准（用户 11-05 22:3x 定；覆盖 V8 中“不带空间目标”）
