@@ -57,3 +57,20 @@ Caveats, stated with the verdict:
   (3) psync wrist speed: the mean over the 6 runs is within [0.75, 1.25] x GT.
   Otherwise enc stays an EX002 finding. Full SF is reported as is (its psync FGD and its stutter side by side), with no gate.
   Offline numbers, dBA / dDiv / dJerk, still share, amplitude and pair_win are reported.
+
+## Full G1 dev lane RESULT (dlc601udnia89stl, FULL_DONE 04:57; 400 dev clips, 3 training seeds x per_clip 0 / 1, 36 benchmarks)
+Official FGD, mean over per_clip 0 / 1 per training seed (seeds 0 / 1 / 2 -> mean):
+- psync: sf0 1.655 / 1.607 / 1.472 -> 1.578; full 1.442 / 1.433 / 1.318 -> 1.398; enc 1.970 / 1.960 / 1.781 -> 1.904
+- offline: sf0 1.443; full 1.315; enc 1.565
+dBA (psync): sf0 -0.048, full +0.030, enc +0.059; dDiv (psync): sf0 -0.200, full -0.062, enc +0.258.
+Wrist speed / GT (psync): sf0 0.85, full 1.18, enc 1.41. Still share (psync): sf0 0.072, full 0.032, enc 0.013 (GT 0.048).
+Stutter max / min (psync, mean of 6 runs): sf0 1.283, full 1.782, enc 1.360 (GT 1.18). Offline: sf0 1.24, full 1.72, enc 1.25.
+Registered reading:
+(1) enc psync FGD 1.904 <= sf0's largest seed mean 1.655? NO.
+(2) enc psync stutter 1.360 <= sf0 + 0.05 = 1.333? NO.
+(3) enc psync wrist 1.41 x GT within [0.75, 1.25]? NO.
+-> encoder-only self-forcing is NOT confirmed cross-platform; it stays an EX002 finding. On G1 it over-animates (above GT speed,
+below GT stillness) and is worse on FGD. Full SF, reported as is: the best psync FGD (1.398) with the worst chunk stutter (1.78).
+pair_win sanity on the full set: GT 0.712 (rec 0), mismatched GT 0.572 (rec 0; only 212 of 392 events survive the length crop
+of the mismatched stems) -> |0.57 - 0.5| > 0.03 -> pair_win NOT reported, as registered.
+The quick-lane PASS (QUICK100, seed 0) did not survive 3 training seeds on 400 clips.
