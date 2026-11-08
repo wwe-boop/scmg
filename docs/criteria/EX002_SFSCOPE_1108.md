@@ -80,3 +80,10 @@ psync 107.8 / 102.5 / 96.2 (mean 102.2, SD 5.8) -- enc-s0 / enc-s1 match their s
 Selection (frozen rule): czm-enc-s0 fails (a) (psync 115.0-135.1 vs 107.0-112.0), (c) (FKD 1.87 vs 1.54) and (e) (still / wrist,
 and amplitude in psync); enc-s0 passes (e) in both protocols -> BASE = enc-s0 (current code, self_force_scope encoders, no causal
 match), the clean-code successor of sibag-s2. The causal training match does not help on this recipe (psync worse).
+
+## Base enc, 3 training seeds (09:1x; enc-s2 from dlc91cavffcjpjyy; 2000 steps = the original sibag length; 0 skipped steps)
+  enc-s0  offline FGD v2 86.3 FKD 1.51 | psync 109.0 / 1.54
+  enc-s1  offline 86.7 / 1.49          | psync 102.6 / 1.49
+  enc-s2  offline 90.2 / 1.37          | psync  95.1 / 1.15   (original sibag-s2: 91.2 / 1.38 | 96.2 / 1.15)
+  mean +- SD: offline FGD v2 87.7 +- 2.1, FKD 1.46 +- 0.07; psync FGD v2 102.2 +- 7.0, FKD 1.39 +- 0.21; still 0.024 / 0.025,
+  wrist 0.335 / 0.354 m/s, amplitude 0.097 / 0.098 m; guards pass for all three seeds in both protocols.
