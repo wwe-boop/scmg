@@ -100,3 +100,8 @@ the r3d decoder decision.)
 Check (11-08 11:5x): the safe and the ISC rows use the same v3 pairing: the counterfactual reference is the same no-interruption
 stream, enc-s0 psync s0 through the same 3c-4b layer (runs/ex002-proj4b-enc/psync/s0, passed as B3:<dir>:<ref> in both evals);
 only the interrupted streams differ, so 10.3 % -> 0.4 % (R0causal) is not a reference change.
+Addendum 11-08 14:xx (coordinator; written before any model row is scored under it): yield metric v4 replaces yield3d as the primary
+yield (yield3d kept as a secondary column). Reason: only 20 / 297 (6.7 %) A-half human tails that need a yield reach R_sil within the
+tail, so yield3d scores human behaviour near the bottom. Definition, calibration (A half only) and validity gates (B-half tails
+>= 85 %, speech continuations GT / FRONT / B1 <= 15 %): scripts/ex002/yield_v4_ex002.py (d0d67b0) and refine-logs/EVAL_PROTOCOL.md
+section 6. Iterations of the definition (A half only) are listed here as they happen. Iteration 1 = the d0d67b0 definition.
