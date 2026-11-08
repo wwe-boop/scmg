@@ -10,26 +10,31 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parents[2])); sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, '/home/xr-25b7/projects/gesture/codex/render-isaac')
 X = '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/control-token-1105/ex002'; R = sys.argv[sys.argv.index('--rend') + 1] if '--rend' in sys.argv else '/home/xr-25b7/bulk/qual-1108/ql9cpp/rend'; R5 = R; FD = X + '/PLAN_dev_m9b_dense.json'
-h = lambda s: hashlib.sha1(s.encode()).hexdigest(); FPS = 50
+h = lambda s: hashlib.sha1(s.encode()).hexdigest(); FPS = 50; XF = X
 
 
 def main():
     from qual_ex002 import q37, prim
     import soundfile as sf
     from qual_ex002 import rec_audio
-    ap = argparse.ArgumentParser(); ap.add_argument('--out', required=True); ap.add_argument('--rend', default=R); a = ap.parse_args(); O = Path(a.out)
+    ap = argparse.ArgumentParser(); ap.add_argument('--out', required=True); ap.add_argument('--rend', default=R); ap.add_argument('--full', action='store_true'); a = ap.parse_args(); O = Path(a.out)
     for d in ('traj', 'draw', 'audio', 'video'): (O / d).mkdir(parents=True, exist_ok=True)
     P = json.loads(Path(FD).read_text()); L = {}
     def ok(e):
-        if e['ci'] not in L: L[e['ci']] = len(np.load(f"{R}/tok5c/{e['ci']}.npy")) / FPS
+        if e['ci'] not in L: L[e['ci']] = len(np.load(f"{X}/m5c-enc/offline/tok5c/d_given_s0/{e['ci']}.npy")) / FPS
         return e['t'] - 5 >= 0 and e['t'] + 5 <= L[e['ci']]
     rank = lambda kind: [e for e in sorted([e for e in P['events'] if e['kind'] == kind], key=lambda e: h(f"{e['clip']}:{e['t']:.3f}")) if ok(e)]
     ev = {(e['ci'], round(e['t'], 2)): e for e in P['events']}; pick = [('present0', ev[(10, 10.30)]), ('aim0', ev[(32, 20.56)])]
+    if a.full:                                                        # full 9c'' run: + the next unseen events of the sha1 rule (aims[2], fins[1])
+        aims, fins = rank('aim'), rank('finger'); pick += [('aim2', aims[2]), ('present1', fins[1])]
     upper = np.asarray(json.loads(Path('/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/train-v1-20261101/views/data-v36_1/META.json').read_text())['ex002']['upper'], np.float32)
     jobs, man = [], []
     for name, e in pick:
         ci = e['ci']; f0 = int(round((e['t'] - 5) * FPS)); f1 = f0 + 10 * FPS; t = e['t'] - f0 / FPS; panels, draws = [], []
-        for lab, d, root in (('token-only (5c)', 'tok5c', R), ("9c' (deictic pool)", 'm9cp', R), ("9c'' T + palm fix", 'm9cpTf', R)):
+        rows = ((('token-only (5c)', 'tok5c', R), ("9c' (deictic pool)", 'm9cp', R), ("9c'' T + palm fix", 'm9cpTf', R)) if not a.full else
+                (('token-only (5c)', 'tok5c/d_given_s0', XF + '/m5c-enc/offline'), ('9c (registered)', 'm9c/d_given_s0', XF + '/m9c-enc/offline'),
+                 ("9c'' (T + palm fix)", 'm9c/d_given_s0', XF + '/m9cpp-enc/offline')))
+        for lab, d, root in rows:
             y = np.load(f'{root}/{d}/{ci}.npy')[f0:f1]; tp = O / 'traj' / f'{name}__{d}.npz'; np.savez(tp, Q37=q37(y), fps=50.0)
             if e['kind'] == 'aim': fr, ref = prim(y, target=e['target'], hand=e['hand'], win=(t - 0.4, t + 0.9), upper=upper)
             else:
