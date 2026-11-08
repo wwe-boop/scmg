@@ -137,3 +137,11 @@ Verdict per category: SELF PASS (chest keyframe only), NUMBER PASS, YOU FAIL. PO
 - The metric (angle <= 15 deg AND extension >= 0.40 m at the apex frame), the gate (+20 pp with CI, TTS-sync primary), the side
   gates and the 10 recordings are unchanged. Render: one YOU event (the first "you" by sha1("<clip>:<onset:.3f>:explrender")),
   panels GT / none / given (token) / given (point keyframe).
+
+## Amendment 4 RESULT (11-09 05:12; final/<proto>_point, release 20261109-045441-expl-a4-1109 = exp/ctl-port 6238efd)
+TTS-sync (primary): YOU 0.19 -> 0.94 (+0.75 [0.50, 0.93], PASS); POINT 1/1 (not gated). The row also carries SELF chest 1.00,
+NUMBER 1.00, BIG 1/1, SMALL 1/2. psync: YOU 0.07 -> 0.93 (+0.87 [0.60, 1.00]), POINT 2/2.
+Side gates: FGD v2 TTS-sync 112.89 / psync 111.57 (none 114.83); outside +-1 s 122.73 (= none); FKD 1.81 / 1.76; liveliness guard
+PASS (still 0.019 / 0.020, wrist 0.316 / 0.323 m/s, amp 0.099 / 0.101).
+Combined canonical row (SELF chest + YOU / POINT point keyframes + NUMBER finger override + BIG / SMALL keyframes): every gated
+category (SELF, YOU, NUMBER) PASSES on TTS-sync and psync; the not-gated BIG / POINT succeed on all their commands, SMALL on 1 of 2.
