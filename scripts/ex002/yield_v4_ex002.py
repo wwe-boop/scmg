@@ -132,6 +132,7 @@ def tails(a):
 
 def score(a):
     par = json.loads(Path(a.params).read_text()); ints = json.loads(Path(X + '/interrupts_dev_ex002.json').read_text())['interrupts']; res = {}
+    per = open(a.per_item, 'w') if a.per_item else None
     for spec in a.rows:
         lab, rest_ = spec.split('=', 1); d, pref = rest_.split(':'); rs = []
         for r in ints:
@@ -141,6 +142,7 @@ def score(a):
             z = np.concatenate([U[:f], y[f:]])[:f + W]
             if len(z) < f + W: continue
             rs.append(judge(par, z, f))
+            if per: per.write(json.dumps(dict(rs[-1], method=lab, ci=r['ci'], item=r['item'], frac=r['frac'])) + '\n')
         res[lab] = summ(rs); print(lab, json.dumps(res[lab]), flush=True)
     Path(a.out).write_text(json.dumps(res, indent=1))
 
@@ -150,5 +152,5 @@ if __name__ == '__main__':
     p = sp.add_parser('calib'); p.add_argument('--out', required=True)
     p = sp.add_parser('audit'); p.add_argument('--params', required=True); p.add_argument('--out', required=True)
     p = sp.add_parser('tails'); p.add_argument('--params', required=True); p.add_argument('--out', required=True); p.add_argument('--seg', required=True)
-    p = sp.add_parser('score'); p.add_argument('--params', required=True); p.add_argument('--out', required=True); p.add_argument('rows', nargs='+')
+    p = sp.add_parser('score'); p.add_argument('--params', required=True); p.add_argument('--out', required=True); p.add_argument('--per-item', default=None); p.add_argument('rows', nargs='+')
     a = ap.parse_args(); dict(calib=calib, audit=audit, score=score, tails=tails)[a.cmd](a)
