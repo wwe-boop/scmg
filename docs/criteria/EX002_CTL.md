@@ -1191,3 +1191,17 @@ Module 6-revived (D5) amendment (2026-11-08 ~23:45, BEFORE any D5 run; coordinat
   [t − 0.6, t + 1.2] s window. ctl_flow gating is per frame by w_k(t).
 - The ungated control stays ctlenc (2000 steps, the same recipe length as D5). The 4000-step ctl modules of module 10 are reported
   beside it as report-only.
+D5 amendment 2 (2026-11-09 ~00:00, before any D5 run; coordinator): the ungated baseline is the 4000-step ctl modules of module 10 (b)
+(m10-enc/b4k), replacing ctlenc (2000 steps) from the first amendment. The construction check stays as in amendment 1.
+## Module 9c'' on the adopted token path tok10ab (pre-registered 2026-11-09 ~00:00, before any run of this port)
+Same module, new base for the token path; settings and gates unchanged from 9c'' (0e7edc4 + palm fix 2ebb4d1).
+- Input: the 4000-step ctl generations (m10-enc/{offline,psync}/gen4k: d_given / s_given / d_shuffle, seeds 0-2) blended with 5c,
+  without override (tok10ab plain). The insertion's finger override uses the human library shapes (module 10a), so the finger
+  commands match tok10ab. Pool: HOLD_POOL_DEICTIC_TRAIN.npz; flags --release-search --palm-fix.
+- Reference row: tok10ab (m10-enc). Registered control row: "none + 9c''" = the same insertion (same flags, same library override) on
+  the enc-s0 no-token stream.
+- Gates as 9c'': angle ≤ 25° (apex) with the hold-window angle beside it; elevation ±5; STG gain ≥ +0.10 with shuffle follow (and the
+  shuffle margin vs the D3 controls); count ≥ 0.9; raised ≥ 0.80 and signed palm ≤ 45° (actual hand = rule hand here); (i) / (ii) ≤ C + δ;
+  executability 100 %; ramp jerk ≤ reference + 2 pts; both liveliness guards; release median ≤ 29.8 with p95 / max. Report-only: wrist
+  height, IK residual, rejects, hold speed, apex-in-hold, STG split by a same-hand present within 2 s.
+- Quick lane first (clips 0 and 1, seed 0, both protocols, all gates), then the full run on the coordinator's go.
