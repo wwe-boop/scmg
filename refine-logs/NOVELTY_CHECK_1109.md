@@ -30,3 +30,24 @@ Method: the novelty-check skill, run in a degraded form.
 1. Read the full text of RoboGesture, MIRA and InteractGesture; confirm each delta above.
 2. A second-model check, if Codex MCP becomes available.
 3. Run C3 on G1 (dev) and an isolation ablation.
+
+## Full-text read of the 3 closest papers (11-09 00:40; web-fetch of the arXiv HTML; some passages were tool summaries and are marked so in the agent report)
+- **RoboGesture (2608.28693).**
+  - Audio only ("text-free"); text is used only upstream (ASR → LLM → TTS).
+  - Not strictly causal: each 1 s chunk sees about 1 s of future audio inside its window.
+  - The safety filter is per frame with one-step Δq: an OSQP QP with linearised collision constraints only. Joint limits are not in the QP, and velocity is only a cost.
+  - No recursive-feasibility or zero-violation claim; infeasibility handling is not stated. Residual self-collision is 0.13 % (SemanticBEAT) / 0.88 % (BEAT), measured on their own MuJoCo primitives (dist < −0.01).
+  - No interruption handling. No comparison with ECHO-G. Code and weights not stated.
+- **MIRA (2609.24547).**
+  - Audio only, causal; predicts 50 frames and commits 15.
+  - At barge-in it terminates the motion and holds the last safe pose (or a "fallback policy" that is not described).
+  - Evaluation is preemption latency only (466 ms median); there is no measure of the motion after the stop and no human comparison.
+  - The safety layer is a per-frame collision-aware IK projection that holds the last pose if projection fails. Self-collision 2.61 %.
+- **InteractGesture (2608.25734).**
+  - Inference-time guidance on a frozen GestureLSM; not strictly causal (later chunks back-propagate into earlier ones).
+  - SMPL-X only, no robot. No pointing-specific metric.
+- **Effect on the claims:**
+  - C1 is stronger. Neither robot system uses incrementally revealed text, and neither is strictly causal in both modalities (RoboGesture has in-chunk future audio).
+  - C2 is stronger: residual collisions vs a 0 / 0 certificate with recursive feasibility; hold vs a measured retraction with a human reference.
+  - Control (C5) stays weak in novelty, but ours is on a robot and causal.
+  - Caveat: the "0 vs 0.13 %" comparison needs one detector (task 2, agent A).
