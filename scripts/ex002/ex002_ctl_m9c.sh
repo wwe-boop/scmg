@@ -2,6 +2,7 @@
 # 11-08 EX002 module 9c (criteria docs/criteria/EX002_CTL.md "Module 9c"): post-processing of the m9b-enc generations (enc-s0 + ctlenc,
 # decoder r3, plans 1112, seeds 0-2, offline + psync) on the 5c input: rows tok5c (5c + override, reference), m9c (9c insertion, point
 # pool = replayed train pointing-hold wrist motion) and m9cctl (control: train non-pointing gesture windows). Gates as 9b. 4 GPUs, one pod.
+#   9c'' (11-08): INSFLAGS9C='--release-search --palm-fix' (extra insert flags, default none)
 #   9c' (11-08): POOL9C=<pool npz>, ROWS9C='m9c|point' (insert only the point row), LINK_CTL9C=<m9c-enc> (reuse its control row)
 #   ex002_ctl_m9c.sh <out dir> [insert|eval|all]      env PY, NPROC (parallel insertion processes, default 38), NSH / ISH (insert
 #   stage split over NSH CPU pods: this pod runs command lines i with i % NSH == ISH)
@@ -32,7 +33,7 @@ fi
 until [ -f $O/BLENDED ]; do sleep 30; done                      # pods ISH > 0 wait for pod 0
 for pr in offline psync; do for sd in 0 1 2; do for x in "$FD|given|d_given" "$FS|given|s_given" "$FD|shuffle|d_shuffle"; do IFS='|' read -r pl m nm <<< "$x"
   for row in ${ROWS9C:-m9c|point m9cctl|control}; do IFS='|' read -r rn pool <<< "$row"; for k in 0 1 2 3; do
-    echo "$PY $KF insert --version 9c --hold-pool $POOL --pool $pool --given $O/$pr/tok5cplain/${nm}_s$sd --plan $pl --out $O/$pr/$rn/${nm}_s$sd --mode $m --shard $k/4"
+    echo "$PY $KF insert --version 9c --hold-pool $POOL --pool $pool ${INSFLAGS9C:-} --given $O/$pr/tok5cplain/${nm}_s$sd --plan $pl --out $O/$pr/$rn/${nm}_s$sd --mode $m --shard $k/4"
   done; done
 done; done; done | awk -v n=$NSH -v i=$ISH '(NR - 1) % n == i' > $O/insert_cmds.$ISH.txt
 xargs -P $NP -I{} bash -c '{} > /dev/null 2>&1 || echo "FAILED {}"' < $O/insert_cmds.$ISH.txt >> $O/lane.log
