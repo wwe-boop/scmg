@@ -506,7 +506,7 @@ same right: the retargeted data sits at its own acceleration limits); 3-clip pos
 (point), 0.77 / 0.77 s (present); release peak acceleration median 27.1 (tok 27.8; human p95 29.8), p95 254 (tail); arm ramp jerk over-limit 0.033
 (tok 0.294). Plans for the run: PLAN_dev_m9b_dense.json (1092 events, 556 aim; sha256 a0336b83…12b2), PLAN_dev_m9b_sparse.json (302 events,
 163 aim; sha256 2ad29827…5eed).
-## Module 5c (pre-registered 2026-11-08 ~11:20, before any 5c gate number; coordinator after the 9b release-tail diagnosis)
+## Module 5c (pre-registered 2026-11-08 ~10:30, before any 5c gate number; coordinator after the 9b release-tail diagnosis)
 Bug fixed: 5b composes the per-command windows by max(); on the dense plans (about 72 % of command gaps in 1.2–1.8 s) a ramp-out crossing
 the next ramp-in gives w a corner (derivative jump), and the blended pose gets a cusp (see the 9b release-tail diagnosis above).
 - 5c: w = 1 − Π_i (1 − w_i) on frames where ≥ 2 windows are non-zero; elsewhere the single window, as in 5b. This is C1, keeps every
