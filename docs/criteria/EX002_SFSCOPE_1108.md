@@ -22,7 +22,7 @@ parameter set 325 / 327 with intent_aux, loss and every other gradient identical
 enc-s0 (current code + scope encoders, sibag recipe, seed 0) must reproduce the 5d8f154 training curve to 4 decimals: mean flow and
 gn over steps >= 500 (0.6411 / 0.662) and dev_flow at 1000 / 2000 (0.6699 / 0.6697). If not: stop, report, no tuning.
 
-## Ablation (supplementary table; dev, 43 recordings)
+## Ablation (dev, 43 recordings)
 sibag recipe (r4 base, cfg adsc + intent_aux, sc p_stream 0.67 / p_async 1 / p_async_seg 0 / w_int 0.3 / sem_w 2.0, self_force_steps
 4, rounds 1, cfg / mix / noise 0, BAgger 0.33, semsynth 0.6, batch 64, 2000 steps, lr 1e-4), training seeds 0 and 1:
   sf0 (self_force_p 0) | all (self_force_p 0.5, scope all) | encoders (self_force_p 0.5, scope encoders)
