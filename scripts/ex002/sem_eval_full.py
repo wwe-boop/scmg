@@ -64,7 +64,7 @@ def main():
         o = arr(lab, 'E_own', own=True)
         if o: r['E_own_retrieved'] = float(np.mean([z['E_own'] for z in o])); r['n_own'] = len(o)
         res[lab] = r
-    recs = sorted({z['rec'] for z in rows.get('none', []) + rows.get('given', [])})
+    recs = sorted({z['rec'] for v in rows.values() for z in v})
     def boot(fn):
         bs = []
         for _ in range(2000):
