@@ -813,3 +813,13 @@ Base enc-s0 + ctlenc, decoder r3, 5c blend, plans 1112, seeds 0-2, offline AND p
 - Report-only: the inside / outside / swap split of (ii) (scripts/ex002/diag/ii_split.py); liveliness guards; finger ramp jerk; the
   independent shape check.
 - Adoption: a row that passes every gate becomes the token path for 9c and later modules; otherwise a negatives row.
+Module 10 setup (before any module-10 run):
+- Library: tokens/HAND_LIBRARY_TRAIN.npz (sha256 2e73ca18…), 2000 entries per (h, n).
+- Independent joint-angle check over the library: agreement 0.62 / 0.61 / 0.56 / 1.00 (left, n = 0..3) and 0.67 / 0.52 / 0.60 / 1.00
+  (right).
+- Over the sampled dense-plan events (1072 hand-commands): 0.72 overall, 1.00 for n = 3, 0.55–0.69 for n = 0..2.
+- Reading: the detector counts a finger as extended only if it is fully straight (curl fraction < 0.15). The nearest-template angle
+  rule calls partly curled human fingers extended when they are closer to the straight template, so the two rules disagree on graded
+  human shapes.
+- The template override path is bitwise unchanged (clips 0 and 7 vs m5c-enc tok5c).
+- Job script: ctl-port ex002_ctl_m10.sh.
