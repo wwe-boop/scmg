@@ -22,6 +22,10 @@ estimate).
 - Arm O (one-step, matched compute): the same recipe with sem_rollout_steps 0. Its steps = round(600 x s/step(R) / s/step(O)),
   with s/step(O) measured on a 50-step probe of the same configuration (matched wall-clock).
 - Reference: the P2 model (quick-lane results and the full-run realisation numbers).
+- Loss weighting under the rollout: frame weights = the valid-frame indicator (no training-noise-level trust weight, which belongs
+  to the one-step estimate).
+- Note (A, Step 0 pre-read): P2's one-step training sem_desc fell only 1.39 -> 1.34, while the dev rollout E(given) is 1.04. By
+  Fable's Step-0 rule this points to causes 2 / 4 rather than cause 1; the lane runs as ordered by main.
 - Rows per arm: offline none / given (oracle) / swapped, the P2 quick-lane plans (PLAN_oracle of p2-quick-1109).
 - Primary measures: realisation ratio (realised / commanded amp_h and vpeak_h, median over the 62 events), descriptor error E
   given vs none, swap follow, FGD v2 of given (10 recordings) vs none.
