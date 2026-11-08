@@ -124,3 +124,25 @@ section 6. Iterations of the definition (A half only) are listed here as they ha
   v3 unless calibrated on A and confirmed on a fresh set: a fresh confirmation set is being built (dev-speaker 2_scott / 13_lu post-
   speech tails with gap >= 2.6 s from the G1 candidate list, never among the 757; 101 candidates, 28 recordings; tails_fresh).
   Until a definition passes on B and on the fresh set, yield3d and the v4 components (activity, withdrawal) are reported numbers only.
+
+## Metric M1: paired stroke-suppression yield (PSS) -- pre-registered 11-08 21:0x from refine-logs/FABLE_DESIGN_1108.md M1, before any
+## model row is scored under it (validity gates first; no single yield gate: PSS is reported with withdrawal and RKD, never alone)
+s(t) = the larger wrist speed (exact FK, as yield_v4 feats, m/s). A stroke = an onset where s rises through v_s from below and stays
+above v_s for >= 5 frames (0.1 s); rho(window) = strokes per second. v_s = the median over the half-A human tails of the peak of s in
+their pre-offset speech window; rho_min = the p10 of the half-A pre-offset stroke rates (both fixed numbers from half A only).
+Windows (50 Hz): post = [f + 15, f + 107) (0.3 .. 2.13 s); reference window = for a MODEL the same frames of its own uninterrupted
+continuation U (the v3 reference); for a HUMAN tail the preceding speech [max(0, off - 92), off) (92 frames when available; a tail with
+fewer than 50 pre-offset frames is excluded and counted). PSS = 1 - rho(post) / max(rho(ref), rho_min); an event passes iff PSS >= 0.5.
+Validity gates (half A calibrates; nothing else is looked at before they are written):
+ (1) human tails pass on >= 85 % of the half-B tails AND >= 85 % of the fresh dev-speaker tails (tails_fresh; reported per speaker);
+ (2) dev GT continuing to speak (window inside speech at each of the 476 interruption points: post = [f + 15, f + 107) of GT, ref =
+     [f - 92, f) of GT) passes on <= 15 %;
+ (3) mismatched reference (the half-B tails scored against another half-B tail's pre-offset window, fixed derangement by sort order)
+     moves the half-B pass rate by <= 10 pp.
+ Iteration (at most 2, logged): if (1) or (2) fails, only v_s (the half-A percentile of the per-tail peak, grid 30 / 40 / 50 / 60 / 70)
+ or the post-window skip (0.2 / 0.3 / 0.5 s) changes; the pick uses half A only: among the grid points whose half-A tail pass rate is
+ >= 0.90, the highest v_s percentile, then the longest skip; then (1)-(3) re-run. If the gates still fail after 2 iterations, PSS is
+ recorded as an invalid metric (negatives) and not used.
+Known limits (recorded): humans are paired with their own preceding speech, models with their own counterfactual continuation -- not
+the same pairing; B3 (generator continues) has PSS ~ 0 by construction; B1 / FRONT pass PSS by construction and are rejected only by
+withdrawal / RKD.
