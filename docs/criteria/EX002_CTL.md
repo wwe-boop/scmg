@@ -823,3 +823,29 @@ Module 10 setup (before any module-10 run):
   human shapes.
 - The template override path is bitwise unchanged (clips 0 and 7 vs m5c-enc tok5c).
 - Job script: ctl-port ex002_ctl_m10.sh.
+## Label provenance (audit pass-1 finding, 2026-11-08 ~15:10; applies to every EX002 control section above)
+EX002 pointing commands, the CTL.json 'aim' tokens and the dev plans' targets are HINDSIGHT relabels, not human pointing.
+- How they are built (scripts/ex002/ex002_ctl_tokens.py): random times ≥ 1.5 s apart; hand = the wrist farther from rest; target =
+  wrist + U[1.5, 3] m along the forearm ray at that time.
+- They measure controllability (does the robot follow a commanded direction), not the reproduction of human pointing.
+- The 9c "point" pool (HOLD_POOL_TRAIN.npz) and HOLD_STATS_TRAIN.json are built from these tokens, so they are random-time windows of
+  the more-extended hand, not pointing holds. The 9c point-vs-control contrast is mainly hand choice.
+- Real human pointing in the train split: the 1060 BEAT2 deictic events of EVENTS.json. They have no 3D targets. APEX.json was trained
+  on all of them; none of their stems is a dev item or clip (checked: overlap 0).
+Hold statistics side by side, median [IQR]:
+
+| source | window | push-out A (mm) | perpendicular drift (cm) | wrist speed (m/s) |
+|---|---|---|---|---|
+| hindsight tokens (2947) | [t − 0.3, t + 0.6] | 5 [0, 23] | 4.7 [1.8, 9.5] | 0.161 [0.068, 0.267] |
+| real deictic (1060) | [t − 0.3, t + 0.6] | 4 [0, 19] | 11.0 [4.9, 18.2] | 0.289 [0.173, 0.445] |
+| real deictic (1060) | [t − 0.1, t + 0.6] | 2 [0, 12] | 9.3 [3.7, 16.9] | 0.281 [0.150, 0.438] |
+
+Real-deictic end along-ray value: −37 mm [−105, −1] (onset window), i.e. a retraction.
+## Module 9c' (pre-registered 2026-11-08 ~15:15, before any 9c' run; coordinator decision after the provenance finding)
+9c exactly as 1b19ea9, with one change: the point pool is built from the 1060 real train deictic events.
+- Pool: tokens/HOLD_POOL_DEICTIC_TRAIN.npz (sha256 9761af44…; scripts/ex002/deictic_pool.py). Window [t − 0.1, t + 0.6] s at the
+  annotated time; hand = the larger wrist-path diameter in [t − 1, t + 1] s (the APEX.json rule). Point pool speed 0.281 [0.150, 0.438] m/s.
+- The control pool is unchanged (the m9cctl row of m9c-enc is reused, linked; same inputs, same pool).
+- Run: insertion of the point row only (row name m9c inside m9cp-enc), then the 9c eval stage. Same gates as 9b / 9c, reference tok5c.
+- 9c (registered) finishes as is. Its result will state that "point" means hindsight windows and that the point-vs-control contrast is
+  mainly hand choice.
