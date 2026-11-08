@@ -118,3 +118,11 @@ Source: refine-logs/FABLE_ROUND4B_1109.md §1 + main review. CPU only, no genera
 - Caveat stated with the result: the hand-in-use features come from the GT motion of the preceding 1 s (the deployed
   generator's own history plays this role). Speed / amplitude persistence can explain the amplitude R^2. Post-hoc diagnostic,
   not a gate, running: the same model with text + lexicon + prosody only, and with history only.
+- Post-hoc diagnostic (not a gate; same model selection by train CV):
+  - text + lexicon + prosody only: ridge 1000, dev E 1.404, i.e. -3.7 % [1.9, 5.1] vs the marginal mean (R^2 amp_h 0.08,
+    vmean_h 0.07);
+  - motion history only: k-NN 50, dev E 1.094, i.e. -25.0 % [20.7, 29.3].
+  The whole registered gain comes from the preceding 1 s of motion (amplitude / speed persistence), which the generator already
+  conditions on. From the deployable TEXT + AUDIO inputs the descriptor is predictable by only ~4 %, below the 10 % bar the
+  pre-check used. Reading: the registered gate passed, but for the purpose it was meant for ("can a deployable source beat the
+  marginal on WHAT gesture to make") the answer is no. Design A would mostly learn persistence. Not run pending main's decision.
