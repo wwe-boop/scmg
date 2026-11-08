@@ -1182,3 +1182,12 @@ Report-only: finger ramp over-limit 0.051 / 0.057 (tok10ab; tok5c 0.037 / 0.045)
 independent joint-angle agreement 0.72.
 VERDICT: tok10ab (4000-step ctl modules + human-library override shapes, 5c blend) PASSES every module-10 gate on enc-s0, with STG CIs
 excluding +0.10. By the adoption rule it becomes the EX002 token path for 9c-line and later modules.
+Module 6-revived (D5) amendment (2026-11-08 ~23:45, BEFORE any D5 run; coordinator-approved):
+- Construction check: kill if the given and none outputs differ (max |y_given − y_none| ≠ 0) on any frame before each clip's first
+  window start (t₁ − 0.6 s). After a window the causal generator conditions on the changed history, so frames outside later windows
+  are not required to match. Report-only: the decay of max |y_given − y_none| at 1 / 2 / 3 s after each window end, next to ctlenc
+  (ungated) on the same clips.
+- Planner (`ctl` text-stream) gating is per chunk: a control token is visible to chunk k only if chunk k's frames overlap the token's
+  [t − 0.6, t + 1.2] s window. ctl_flow gating is per frame by w_k(t).
+- The ungated control stays ctlenc (2000 steps, the same recipe length as D5). The 4000-step ctl modules of module 10 are reported
+  beside it as report-only.
