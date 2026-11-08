@@ -105,3 +105,16 @@ Source: refine-logs/FABLE_ROUND4B_1109.md §1 + main review. CPU only, no genera
   bootstrap 95 % CI (2000 resamples of the 43 dev recordings) of 1 - E(model) / E(marginal mean) lies above 0.
   PASS -> Design A quick lane (pre-registered separately). FAIL -> finding "the semantic descriptor is not inferable from
   deployable causal inputs on BEAT2", written here and as a negatives row; no MDN run.
+
+## Round 4b pre-check RESULT (11-09 03:2x; sem-1109/PRECHECK.json; release 20261109-031432-p2-precheck-1109)
+- Model chosen by train CV: ridge alpha 100 (CV E 0.709 vs the marginal mean's 0.876; k-NN 0.79-0.90).
+- Dev (247 events): E ridge 1.096; marginal mean 1.459; marginal sample 2.322; lexicon-class mean 1.453.
+  Reduction vs the marginal mean = 24.9 %, bootstrap 95 % CI [17.3, 30.1] % -> GATE PASS (>= 10 %, CI above 0).
+- Where the gain comes from (dev R^2): amp_h 0.33, amp_o 0.45, vmean_h 0.43, vmean_o 0.52, path 0.43, disp 0.27, z_mean 0.23,
+  iw 0.24; but vpeak 0.09, tpeak 0.02, z_end 0.01, x_mean 0.00 and dir 0.00 / 0.00 / 0.09. The predictable part is
+  "how big / fast", not "which shape / direction".
+- Within-class / total variance on train is 0.98-1.00 for every component: the BEAT2 class carries almost no descriptor
+  information (consistent with the lexicon-class mean = the marginal mean).
+- Caveat stated with the result: the hand-in-use features come from the GT motion of the preceding 1 s (the deployed
+  generator's own history plays this role). Speed / amplitude persistence can explain the amplitude R^2. Post-hoc diagnostic,
+  not a gate, running: the same model with text + lexicon + prosody only, and with history only.
