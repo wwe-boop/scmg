@@ -114,6 +114,13 @@ def rest():
     l1 = step(m, vae, b, dataclasses.replace(StageCfg(), sem_cf_p=1.0, w_sem_desc=1.0, sem_bank=bank, ctl_drop=0.0))
     r = float(l1['flow']) != float(l0['flow'])
     print(f"4b sem_cf_p 1 lifts imitation (flow {float(l0['flow']):.5f} -> {float(l1['flow']):.5f}):", r); ok &= r
+    # 5 (11-09 Design B): the rollout-scored outcome runs, is finite and reaches ctl_desc_in; the recipe terms are unchanged
+    l5 = step(m, vae, b, dataclasses.replace(StageCfg(), sem_cf_p=0.5, w_sem_desc=1.0, sem_bank=bank, ctl_drop=0.0, sem_rollout_steps=2))
+    l0 = step(m, vae, b, dataclasses.replace(StageCfg(), sem_cf_p=0.5, w_sem_desc=1.0, sem_bank=bank, ctl_drop=0.0))
+    g5 = torch.autograd.grad(l5['sem_desc'], [p for n, p in m.named_parameters() if n.startswith('ctl_desc_in')], allow_unused=True)
+    gd5 = sum(0. if g is None else float(g.abs().sum()) for g in g5)
+    r = bool(torch.isfinite(l5['sem_desc'])) and gd5 > 0 and torch.equal(l5['flow'].detach(), l0['flow'].detach()) and float(l5['sem_desc']) != float(l0['sem_desc'])
+    print(f"5 rollout-scored sem_desc {float(l5['sem_desc']):.3f} (one-step {float(l0['sem_desc']):.3f}), grad ctl_desc_in {gd5:.3g}, flow unchanged:", r); ok &= r
     return ok
 
 
@@ -123,7 +130,7 @@ def main():
     # the appended 'sem' type adds one embedding row: the old rows' gradients must be identical, the new row's zero
     A = dict(A); P = dict(P); A2 = dict(A)
     n0 = P['ctl_type.weight'].shape[0]; ct = A.pop('ctl_type.weight'); cp = P.pop('ctl_type.weight')
-    rows = np.array_equal(ct[:n0], cp) and not ct[n0:].any() and ct.shape[0] == n0 + 1
+    rows = np.array_equal(ct, cp) if ct.shape == cp.shape else (np.array_equal(ct[:n0], cp) and not ct[n0:].any() and ct.shape[0] == n0 + 1)
     r = same(A, P); print(f'1 default (ctl, aim + finger tokens) == pre-change (+ ctl_type old rows identical, new row 0: {rows}):', r[0] and rows, '' if r[0] else r[1]); ok &= r[0] and rows
     O = run(CODE, f'{td}/desc0.npz', 'desc0'); r = same(A2, O); print('2 ctl_desc on, no descriptor in batch == off:', r[0], '' if r[0] else r[1]); ok &= r[0]
     ok &= rest()

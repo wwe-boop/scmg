@@ -164,6 +164,8 @@ class StageCfg:
     sem_cf_p: float = 0.0          # 11-09 P2 sem_cf (cfg.ctl_desc): P(sample's kept SEM tokens get another SEM token's descriptor + hand)
     w_sem_desc: float = 0.0        # 11-09 P2 outcome loss: E(descriptor of the decoded window [a, b], given descriptor) (scmg/sem_desc.py)
     sem_bank: str = ''             # SEM_BANK.json (descriptor mu / sd of the train bank) for w_sem_desc
+    sem_rollout_steps: int = 0     # 11-09 Design B: >0 = sem outcome on a decoded k-step CFG rollout (self-generated context with self_force_p)
+    sem_rollout_cfg: float = 2.0   # CFG weight of that rollout (the inference value)
     ctl_cf_p: float = 0.0          # 11-06 counterfactual control: P(sample's kept POINT tokens get ANOTHER token's target, rolled over
                                    # the batch); their segment [a - 0.3, b + 0.3] is removed from the flow loss and only the ray loss
                                    # (w_ctl_aux, toward the swapped target) supervises it -> following the token is the only way down
@@ -982,6 +984,25 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         zz = torch.cat([extra, x1hat, nxt], 1)
         yfull = vae.decode(zz * model.lat_std + model.lat_mean)
         y = yfull[:, Hx * STRIDE:(Hx + L) * STRIDE]                                   # frames of [ctx | target]
+        y_sem = y
+        if sc.sem_rollout_steps > 0 and sc.w_sem_desc > 0 and ctl is not None and ctl.get('cdesc') is not None:
+            # 11-09 Design B (docs/criteria/P2B_ROLLOUT_1109.md; default off): the sem outcome on a decoded k-step CFG rollout of every
+            # chunk's target from noise (conditional branch with gradient, unconditional branch detached), known context as given
+            if cfg.mtc or cfg.planner != 'chunk' or cfg.style or ins is not None: raise ValueError('sem_rollout_steps: plain chunk planner only')
+            with torch.no_grad():
+                a_u = model.audio_null.expand_as(a); am_u = torch.zeros_like(amask_k); tm_u = torch.zeros_like(tmask)
+                h_u = model.plan(plan_input, a_u, am_u, text, tm_u, g, tids=batch.get('tids'), tidm=(torch.zeros_like(tidm_d) if tidm_d is not None else None),
+                                 sref=sref, tvis=tvis, lvis=lvis, sstate=sstate)
+                h0_u = model.sem_h(h_u).flatten(0, 1); ft_u = model.flow_text(text, tm_u, tvis, tsec, K); aw_u = model.audio_null.to(aw.dtype).expand_as(aw)
+            kr = torch.zeros_like(known); kr[:, :cfg.ctx] = known[:, :cfg.ctx]
+            xr = torch.where(kr[..., None], x1i, torch.randn_like(x1i)); nst = int(sc.sem_rollout_steps)
+            for i_ in range(nst):
+                tt_ = torch.full(kr.shape, i_ / nst, device=dev); tt_[kr] = 1.
+                vc_ = model.flow_velocity(xr, tt_, kr, h_flow.flatten(0, 1), gi, aw, awm, style_tok, state_ada, ftext=ftext, **({} if ctl_c is None else dict(ctl_c=ctl_c)))
+                with torch.no_grad(): vu_ = model.flow_velocity(xr, tt_, kr, h0_u, gi, aw_u, awm, style_tok, state_ada, ftext=ft_u)
+                xr = torch.where(kr[..., None], xr, xr + (vu_ + sc.sem_rollout_cfg * (vc_ - vu_)) / nst)
+            nxt_r = torch.where((kk_ + 1 < K)[None, :, None], x1_full[:, nx], xr.view(B, K, L, -1)[:, :, -1]).flatten(0, 1)[:, None]
+            y_sem = vae.decode(torch.cat([extra, xr, nxt_r], 1) * model.lat_std + model.lat_mean)[:, Hx * STRIDE:(Hx + L) * STRIDE]
         fv = seg_valid[:, -2 * CHUNK_FRAMES:].float() * torch.cat(
             [has_ctx[:, None].float().expand(M, CHUNK_FRAMES), tgt_valid.float().repeat_interleave(STRIDE, 1)], 1)
         fv = fv * (kk.view(M) >= 4).float()[:, None]                                  # needs 4 chunks of history
@@ -1008,7 +1029,8 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             sf = contract_loss(y.float() * qs + qm, fv_all * w_inst[:, None])   # the executable contract holds in the bridge too
             out.update(sf); loss = loss + sc.w_safe * (sf['safe_lim'] + sf['safe_lr'] + sc.safe_torso_w * sf['safe_torso'])
         if sc.w_sem_desc > 0 and ctl is not None and ctl.get('cdesc') is not None:     # 11-09 P2 outcome loss
-            out.update(sem_desc_loss(y.float() * qs + qm, batch, ctl, fv * w_inst[:, None], B, K, sc.sem_bank))
+            fw_sem = fv * w_inst[:, None] if sc.sem_rollout_steps == 0 else (fv > 0).float()   # rollout: no noise-level trust weight
+            out.update(sem_desc_loss(y_sem.float() * qs + qm, batch, ctl, fw_sem, B, K, sc.sem_bank))
             loss = loss + sc.w_sem_desc * out['sem_desc']
         if sc.w_ctl_aux > 0 and ctl is not None:
             out.update(ctl_ray_loss(y.float() * qs + qm, batch, ctl, fv * w_inst[:, None], B, K, extra=sc.w_ctl_ray_el > 0 or sc.w_ctl_raise > 0 or sc.w_ctl_ray_az > 0))
