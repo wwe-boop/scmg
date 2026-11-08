@@ -126,3 +126,11 @@ Source: refine-logs/FABLE_ROUND4B_1109.md §1 + main review. CPU only, no genera
   conditions on. From the deployable TEXT + AUDIO inputs the descriptor is predictable by only ~4 %, below the 10 % bar the
   pre-check used. Reading: the registered gate passed, but for the purpose it was meant for ("can a deployable source beat the
   marginal on WHAT gesture to make") the answer is no. Design A would mostly learn persistence. Design A NOT run (main 11-09: agreed); negatives row 61.
+
+## Visual check of the P2 renders (main, 11-09 03:4x; renders qual-1109-p2, rule fec7a8d)
+The descriptor effect is real but visually subtle: given and none look alike (hands near the waist, small changes in wrist height
+and spread). The realised amplitude / peak speed fall well short of the command (ev2: commanded amp 0.19 / vpk 0.84, realised
+0.09 / 0.28; ev0 swapped: commanded vpk 1.07, realised 0.34). ev2 is "my" (deictic): no panel moves a hand toward the chest.
+Reading: P2 shows a controllable statistic, not a recognisable gesture. The P2 full run stays as mechanism evidence (lower
+priority) with a report-only "realisation ratio" (realised / commanded amp_h and vpeak_h). The explicit-semantics canonical path
+(EXPLICIT_SEM_1109.md amendment 1) is the deliverable for "appropriate gesture".
