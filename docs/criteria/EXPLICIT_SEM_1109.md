@@ -154,3 +154,25 @@ category (SELF, YOU, NUMBER) PASSES on TTS-sync and psync; the not-gated BIG / P
   a category is gated only with >= 5 commands per seed (mean).
 - Side gates (3-seed means): FGD v2 <= none + delta, delta = max(0.03 x none, 2 x SD of none's 3 seeds) (EX002 gate 3);
   FGD v2 outside +-1 s of the commands reported; liveliness guard; executability after CBF = 100 % of clips (ex002_exec.py).
+
+## Full dev run RESULT (dlc11nthcb823y60, LANE_DONE 06:36; 43 recordings x seeds 0-2; commands per seed: SELF 56, YOU 49,
+## POINT 31 (psync 33), NUMBER 18, BIG 9, SMALL 6 -> all gated)
+TTS-sync (primary), success none -> given, pooled over the 3 seeds (delta, recording bootstrap CI):
+- SELF 0.00 -> 0.98 (+0.98 [0.95, 0.99]) PASS
+- YOU 0.10 -> 0.97 (+0.86 [0.81, 0.92]) PASS
+- POINT 0.06 -> 0.84 (+0.77 [0.68, 0.88]) PASS
+- NUMBER 0.07 -> 1.00 (+0.93 [0.87, 0.98]) PASS
+- BIG 0.00 -> 0.74 (+0.74 [0.50, 0.92]) PASS
+- SMALL 0.00 -> 0.50 (+0.50 [0.22, 0.78]) PASS
+psync: SELF +0.97, YOU +0.90, POINT +0.81, NUMBER +0.94, BIG +0.74, SMALL +0.44, all with CI above 0 -> PASS.
+Side gates (3-seed means):
+- FGD v2: none 109.02 (seeds 106.98 / 108.07 / 112.03), TTS-sync 106.85, psync 103.20. The bar is none + delta, with delta =
+  max(0.03 x 109.02, 2 x 2.66) = 5.31, so the bar is 114.34 -> PASS (both below none).
+- FGD v2 outside +-1 s of the commands (s0): none 106.23, TTS-sync 106.25.
+- FKD: 1.538 / 1.522 / 1.469.
+- Liveliness guard: given PASS on all 6 runs (wrist 0.34 m/s); none fails it on s0 (the base itself).
+- Executability after CBF: 100 % of clips on all 6 runs (post pos / vel / acc 0; raw violation 41-44 %; finger-ramp jerk over the
+  limit on 3-5 % of the ramp frames).
+Report only: BIG wrist height relative to the shoulder (max in the window): none mean -0.19 m; given mean -0.05 m, max +0.06 m.
+The BIG keyframe brings the wrists to about shoulder height; it does not lift them clearly above it.
+Verdict: the canonical explicit-gesture row passes every gated category on TTS-sync and psync, with all side gates.
