@@ -620,3 +620,39 @@ Goal: remove the decoder's 4-frame acceleration pattern without touching the lat
 - Reported for the winner: per-frame-in-latent rates, arm-joint split, and one before / after render (same clip, r3 vs r3d decode,
   front view).
 - Cost: one 4-GPU pod, about 1.2 h for both arms.
+## Module 9b result (dlc127d7nvk060w9, LANE_DONE 12:09 2026-11-08; enc-s0 + ctlenc; fresh plans 1112, seeds 0-2; DLC A800)
+IDENTITY: the control model's none output equals A's enc-s0 runs bitwise (6/6 runs, max |diff| 0).
+Rows: tok = 5b + minimum-jerk override (reference); m9b = 9b insertion on 5b plain. m9 (sibag-s2, f184a6f) is quoted as a reference row.
+Rejected keyframes: aim 2.0 % offline / 2.4 % psync; present 0.3 % / 0.3 %; fallback grid used for 1.4 % / 1.3 % of presents. Median Tin / Tout:
+aim 0.40 / 0.46 s (offline), 0.42 / 0.46 s (psync); present 0.71 / 0.70 s, 0.71 / 0.69 s.
+tok on enc-s0 (reference, reported first):
+- STG gain +0.095 [+0.077, +0.115] offline, +0.084 [+0.070, +0.100] psync (below +0.10);
+- angle 33.2 / 34.6 deg; elevation above shoulder -3.5 / -8.8 deg; presenting hand raised 0.21 / 0.11; palm 74.6 / 75.7 deg;
+- (i) 86.96 / 107.04 (pass); (ii) 92.25 > 90.15 offline and 118.27 > 114.34 psync (FAIL on both protocols);
+- release median 18.9 / 20.2 (dense), 20.3 / 21.4 (sparse).
+PRIMARY (m9b, offline / psync):
+- pointing angle (median forearm angular error at the apex frame): 29.0 / 28.2 deg, gate 25: FAIL (m9 23.4 / 23.9; tok 33.2 / 34.6;
+  none 45.6 / 46.4);
+- elevation above shoulder +1.5 / -0.7 deg (gate ±5): PASS;
+- STG +0.122 [+0.095, +0.153] / +0.127 [+0.102, +0.154]: PASS; shuffle follows (0.365 vs 0.275; 0.391 vs 0.276);
+- present count hit 1.000: PASS; presenting hand raised 0.824 / 0.799 (gate 0.80): offline PASS, psync FAIL by 0.001; palm 2.0 / 2.0 deg: PASS.
+SIDE GATES (m9b):
+- quality (i) sparse outside ±1 s 86.97 ≤ 92.16 / 107.04 ≤ 112.74: PASS;
+- quality (ii) sparse whole clip 92.15 > 90.15 / 116.40 > 114.34: FAIL (tok fails too: 92.25 / 118.27);
+- ramp jerk: finger ramps over the limit 0.037 / 0.045 = tok; arm ramps 0.042 / 0.039 dense and 0.024 / 0.022 sparse
+  (tok 0.213 / 0.213, 0.173 / 0.182): PASS;
+- executability after CBF 100 %: PASS;
+- liveliness, sparse given:
+  - protocol guard PASS / PASS (offline still 0.022, speed 0.314, amplitude 0.095; psync 0.026 / 0.316 / 0.094);
+  - my guard PASS / PASS (0.029 / 0.314 / 0.095; 0.032 / 0.316 / 0.094);
+  - dense (report-only): protocol guard fails on speed / amplitude (0.290 / 0.075; 0.273 / 0.073);
+- release continuity, median peak arm acceleration around release, dense 27.1 / 27.8 and sparse 24.5 / 24.1 ≤ 29.8: PASS.
+  Report-only p95: dense 226 / 242 (the 5b dense-plan cusps, root cause row 47), sparse 67.2 / 60.0 (tok 73.0 / 72.8). Max: from the 5c job.
+VERDICT: module 9b FAILS the primary pointing-angle gate (both protocols), presenting-hand raised on psync (0.799), and quality (ii)
+(both protocols; tok fails it too). It passes STG, elevation, count, palm, quality (i), ramp jerk, executability, both liveliness guards
+and release continuity (median).
+Diagnosis of the angle failure (offline seed 0, 197 aim events of 15 clips, read-only):
+- At the middle frame of the IK hold the median forearm angular error is 0.9 deg (IK residual median 4.2 deg).
+- The frozen apex detector (APEX.json, logistic regression with positive weights on wrist speed) never chose a frame inside the hold:
+  75 % of apex frames fall before it, 25 % after, and the median error at those frames is 31.4 deg.
+- The hold is exactly static (speed 0), which the detector scores low. The gate (apex rule) is unchanged.
