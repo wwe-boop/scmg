@@ -23,6 +23,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2])); sys.path.insert(0,
 FPS = 50; ARM = {0: list(range(4, 11)), 1: list(range(11, 18))}
 V = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/train-v1-20261101/views/data-v36_1'
 HS = '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/control-token-1105/ex002/tokens/HAND_SHAPES.json'
+A95 = '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/control-token-1105/ex002/tokens/ARM_ACC_P95.json'
 HOLD = dict(aim=(0.1, 0.6), finger=(0.4, 0.4)); RAMP = 0.3; LAM = 0.05
 JLIM = np.array([300., 300., 300., 400., 500., 500., 500.])           # arm jerk limits (rad/s^3, scmg/safety.py limits34)
 
@@ -47,7 +48,7 @@ class IK:
     def pen(self, q):
         return self.K.penetration(q[None].float())[0].double()
 
-    def solve(self, q0, h, kind, target=None, it=20):
+    def solve(self, q0, h, kind, target=None, it=20, pen_w=10.0, present_off=None):
         q0 = torch.as_tensor(q0, dtype=torch.float64); q = q0.clone(); idx = ARM[h]
         sgn = None
         def res(x):
@@ -56,11 +57,14 @@ class IK:
             if kind == 'aim':
                 t = torch.as_tensor(target, dtype=torch.float64); r.append((w - e) / (w - e).norm() - (t - w) / (t - w).norm())
             else:
-                mid = 0.06 if h == 0 else -0.06                         # left hand toward -y (midline), right toward +y
-                pt = s + torch.tensor([0.30, -mid, -0.12], dtype=torch.float64); r.append(w - pt)
+                if present_off is None:                                  # m9: left hand toward -y (midline), right toward +y
+                    mid = 0.06 if h == 0 else -0.06; off = torch.tensor([0.30, -mid, -0.12], dtype=torch.float64)
+                else:                                                    # 9b: (forward, OUTWARD, dz); outward = +y left, -y right
+                    fx, out, dz = present_off; off = torch.tensor([fx, out if h == 0 else -out, dz], dtype=torch.float64)
+                pt = s + off; r.append(w - pt)
                 n = torch.cross(g['index_base'][h] - w, g['third_base'][h] - w, dim=0); n = n / n.norm().clamp(min=1e-9)
                 r.append(n - sgn * torch.tensor([1., 0., 0.], dtype=torch.float64))
-            r.append(np.sqrt(LAM) * (x - q0[idx])); r.append(10.0 * self.pen(qq).square().sum().add(1e-12).sqrt().reshape(1))
+            r.append(np.sqrt(LAM) * (x - q0[idx])); r.append(pen_w * self.pen(qq).square().sum().add(1e-12).sqrt().reshape(1))
             return torch.cat([x_.reshape(-1) for x_ in r])
         if kind != 'aim':
             g = self.geo(q); n = torch.cross(g['index_base'][h] - g['wrist'][h], g['third_base'][h] - g['wrist'][h], dim=0); sgn = 1. if float(n[0]) >= 0 else -1.
@@ -78,6 +82,41 @@ class IK:
 def mj(x): x = np.clip(x, 0, 1); return x ** 3 * (10 - 15 * x + 6 * x * x)
 
 
+GRID9B = [(0.30, o, dz) for dz in (-0.12, -0.06, -0.18) for o in (0.05, 0.10, 0.00)]     # 9b present fallback grid (never inward)
+
+
+def state(y, f):
+    """position / velocity / acceleration (rad, rad/s, rad/s^2) of y at frame f (central differences, clamped)."""
+    f = int(np.clip(f, 1, len(y) - 2)); return y[f], (y[f + 1] - y[f - 1]) * FPS / 2, (y[f + 1] - 2 * y[f] + y[f - 1]) * FPS ** 2
+
+
+def quintic(p0, v0, a0, p1, v1, a1, T, n):
+    """quintic Hermite samples at n frames spanning [0, T] (inclusive start, exclusive end), per joint."""
+    t = np.arange(n)[:, None] / FPS; T = max(T, 1e-3)
+    c0, c1, c2 = p0, v0, a0 / 2
+    c3 = (20 * (p1 - p0) - (8 * v1 + 12 * v0) * T - (3 * a0 - a1) * T ** 2) / (2 * T ** 3)
+    c4 = (30 * (p0 - p1) + (14 * v1 + 16 * v0) * T + (3 * a0 - 2 * a1) * T ** 2) / (2 * T ** 4)
+    c5 = (12 * (p1 - p0) - 6 * (v1 + v0) * T - (a0 - a1) * T ** 2) / (2 * T ** 5)
+    return c0 + c1 * t + c2 * t ** 2 + c3 * t ** 3 + c4 * t ** 4 + c5 * t ** 5
+
+
+def insert9b(yi, qk, h, t, kind, a95):
+    """adaptive quintic ramp-in / hold / quintic release to the generator's own state (9b)."""
+    T = len(yi); jj = ARM[h]; a, b = HOLD[kind]; f_h0, f_h1 = int(round((t - a) * FPS)), int(round((t + b) * FPS))
+    f_h0, f_h1 = max(1, f_h0), min(T - 2, f_h1)
+    if f_h1 <= f_h0: return None
+    a9 = np.asarray(a95)[[j - 4 for j in jj]]
+    Tin = float(np.clip(np.sqrt(5.77 * np.max(np.abs(qk[jj] - yi[f_h0, jj]) / a9)), 0.3, 0.8))
+    Tout = float(np.clip(np.sqrt(5.77 * np.max(np.abs(qk[jj] - yi[f_h1, jj]) / a9)), 0.3, 0.8))
+    f_in = max(1, f_h0 - int(round(Tin * FPS))); f_out = min(T - 2, f_h1 + int(round(Tout * FPS)))
+    p0, v0, a0 = state(yi[:, jj], f_in); p1, v1, a1 = state(yi[:, jj], f_out)
+    z = np.zeros(len(jj))
+    if f_h0 > f_in: yi[f_in:f_h0, jj] = quintic(p0, v0, a0, qk[jj], z, z, (f_h0 - f_in) / FPS, f_h0 - f_in)
+    yi[f_h0:f_h1 + 1, jj] = qk[jj][None]
+    if f_out > f_h1 + 1: yi[f_h1 + 1:f_out, jj] = quintic(qk[jj], z, z, p1, v1, a1, (f_out - f_h1 - 1) / FPS, f_out - f_h1 - 1)
+    return dict(t_in0=f_in / FPS, t_hold=(f_h0 / FPS, f_h1 / FPS), t_release=f_out / FPS, Tin=Tin, Tout=Tout)
+
+
 def window(T, t, kind):
     a, b = HOLD[kind]; fr = np.arange(T) / FPS
     return mj((fr - (t - a - RAMP)) / RAMP) * mj(((t + b + RAMP) - fr) / RAMP), (t - a - RAMP, t + b + RAMP)
@@ -89,6 +128,7 @@ def insert(a):
     for e in P['events']:
         if not e.get('present'): by.setdefault(e['ci'], []).append(e)
     out = Path(a.out); out.mkdir(parents=True, exist_ok=True); ik = IK(); shapes = json.loads(Path(HS).read_text())['shapes']; log = []
+    a95 = json.loads(Path(A95).read_text())['a95'] if a.version == '9b' else None
     fs = sorted(Path(a.given).glob('*.npy'), key=lambda p: int(p.stem)); si, sn = (int(x) for x in a.shard.split('/'))
     for f in fs[si::sn]:
         ci = int(f.stem); y = np.load(f).astype(np.float32); T = len(y); yi = y.copy(); spans = []
@@ -96,9 +136,19 @@ def insert(a):
             v = e if a.mode == 'given' else dict(e, **e['shuffle']); fe = min(int(round(e['t'] * FPS)), T - 1)
             if e['kind'] == 'aim': h, kind, tg = v['hand'], 'aim', v['target']
             else: h, kind, tg = (0 if v['fingers'][0] > v['fingers'][1] else 1), 'present', None
-            qk, info = ik.solve(yi[fe], h, kind, tg)
-            log.append(dict(ci=ci, t=e['t'], kind=kind, hand=int(h), **info))
+            if a.version == '9b':
+                if kind == 'aim': qk, info = ik.solve(yi[fe], h, kind, tg, pen_w=100.0); info['grid'] = 0
+                else:
+                    for gi, off in enumerate(GRID9B):                 # first collision-free grid point (nominal first)
+                        qk, info = ik.solve(yi[fe], h, kind, tg, pen_w=100.0, present_off=off); info['grid'] = gi
+                        if info['pen'] <= 1e-6: break
+            else: qk, info = ik.solve(yi[fe], h, kind, tg)
+            rec = dict(ci=ci, t=e['t'], kind=kind, hand=int(h), **info); log.append(rec)
             if info['pen'] > 1e-6: continue                          # self-penetrating keyframe -> rejected, no insertion (counted)
+            if a.version == '9b':
+                tm = insert9b(yi, qk, h, e['t'], 'aim' if kind == 'aim' else 'finger', a95)
+                if tm: rec.update(tm); spans.append((tm['t_in0'], tm['t_release']))
+                continue
             w, sp = window(T, e['t'], 'aim' if kind == 'aim' else 'finger'); w = w[:, None]; jj = ARM[h]
             yi[:, jj] = (1 - w) * yi[:, jj] + w * qk[jj][None]; spans.append(sp)
         yi = finger_override(yi, tokens_for(by.get(ci, []), a.mode), shapes, ramp=0.3, profile='minjerk').astype(np.float32)
@@ -139,16 +189,19 @@ def release(a):
     p95 = float(np.percentile(ref, 95)); res = dict(_ref=dict(human_p95=p95, human_p50=float(np.median(ref)), frames=len(ref)))
     for spec in a.specs:
         lab, d = spec.split('=', 1); vals = []; jover = []
+        TM = {(x['ci'], round(x['t'], 3)): x for f in Path(d).glob('KEYFRAMES.*.json') for x in json.loads(f.read_text())['events'] if 't_release' in x}
         for f in sorted(Path(d).glob('*.npy'), key=lambda p: int(p.stem)):
             ci = int(f.stem); y = np.load(f); T = len(y)
             for e in by.get(ci, []):
-                kind = 'aim' if e['kind'] == 'aim' else 'finger'; tr = e['t'] + HOLD[kind][1] + RAMP
+                kind = 'aim' if e['kind'] == 'aim' else 'finger'; tr = e['t'] + HOLD[kind][1] + RAMP; tm = TM.get((ci, round(e['t'], 3)))
+                if tm: tr = tm['t_release']                          # 9b: adaptive release end
                 h = e['hand'] if kind == 'aim' else (0 if e['fingers'][0] > e['fingers'][1] else 1)
                 f0, f1 = max(1, int((tr - 0.1) * FPS)), min(T - 1, int((tr + 0.1) * FPS))
                 if f1 - f0 < 3: continue
                 vals.append(float(acc(y[f0 - 1:f1 + 1], ARM[h]).max()))
                 a_, b_ = HOLD[kind]                                   # arm jerk over the limit on the ramp frames (in + out)
-                for r0, r1 in ((e['t'] - a_ - RAMP, e['t'] - a_), (e['t'] + b_, e['t'] + b_ + RAMP)):
+                rr = ((tm['t_in0'], tm['t_hold'][0]), (tm['t_hold'][1], tm['t_release'])) if tm else ((e['t'] - a_ - RAMP, e['t'] - a_), (e['t'] + b_, e['t'] + b_ + RAMP))
+                for r0, r1 in rr:
                     g0, g1 = max(0, int(r0 * FPS)), min(T - 3, int(r1 * FPS))
                     if g1 <= g0: continue
                     jk = np.abs(np.diff(y[g0:g1 + 3, ARM[h]], n=3, axis=0)) * FPS ** 3; jover += list((jk > JLIM[None]).any(1))
@@ -164,7 +217,7 @@ def release(a):
 def main():
     ap = argparse.ArgumentParser(); sub = ap.add_subparsers(dest='cmd', required=True)
     i = sub.add_parser('insert'); i.add_argument('--given', required=True); i.add_argument('--plan', required=True); i.add_argument('--out', required=True)
-    i.add_argument('--mode', default='given', choices=['given', 'shuffle']); i.add_argument('--shard', default='0/1')
+    i.add_argument('--mode', default='given', choices=['given', 'shuffle']); i.add_argument('--shard', default='0/1'); i.add_argument('--version', default='9', choices=['9', '9b'])
     r = sub.add_parser('release'); r.add_argument('--plan', required=True); r.add_argument('--gt-dir', required=True); r.add_argument('--out', required=True); r.add_argument('specs', nargs='+')
     a = ap.parse_args(); dict(insert=insert, release=release)[a.cmd](a)
 
