@@ -963,3 +963,28 @@ fix; frames present0_5.0.png and aim0_6.5.png):
   (9c') the hand lies across the chest with the palm toward the body, as in 9b.
 - aim0 at t + 1.5 s: in 9c' and 9c'' the left hand is up for the next command (a left-hand present at t + 1.53 s), as diagnosed; tok5c
   only changes the fingers there.
+## Palm verdicts voided (root cause row 51); signed re-score of every affected module (median over present events, 3 seeds)
+Signed palm angle to forward (+x) and palm-forward share (≤ 45 deg), offline / psync; the "reported" column is the sign-agnostic number in
+the original result:
+
+| module | reported | signed palm | forward share | verdict |
+|---|---|---|---|---|
+| 8 (czm, m8) | 78 / 77 | 101.0 / 103.2 | 0.00 / 0.00 | FAIL (unchanged) |
+| 8b (sibag, m8b) | 72 / 71 | 71.6 / 71.4 | 0.00 / 0.00 | FAIL (unchanged) |
+| 9 (sibag, m9) | 1.0 / 1.0 | 179.0 / 179.0 | 0.03 / 0.02 | PASS → FAIL |
+| 9 ik row | 1.8 / 1.7 | 178.2 / 178.3 | 0.03 / 0.04 | PASS → FAIL |
+| 9b (enc, m9b) | 2.0 / 2.0 | 178.0 / 178.0 | 0.17 / 0.18 | PASS → FAIL |
+| m9b5c | 2.0 / 2.0 | 178.0 / 178.0 | 0.17 / 0.18 | PASS → FAIL |
+| 9c' quick lane (m9cp) | 2.3 / 2.1 | 177.7 / 177.8 | 0.17 / 0.21 | PASS → FAIL |
+| 9c'' pre-fix quick lane (m9cpT, m9cpTT) | 2.3 / 2.1 | 177.7 / 177.8 | 0.17 / 0.21 | PASS → FAIL |
+| 9c'' with palm fix (m9cpTf) | 3.0 / 3.0 | 3.0 / 3.0 | 1.00 / 1.00 | PASS |
+
+Hand height of the fixed present (quick lane, 53 present events per protocol; IK record wz_minus_sz):
+- Wrist z − shoulder z median: −0.070 / −0.066 m (IQR −0.083 to −0.061 / −0.080 to −0.058) with the fix, vs −0.145 / −0.150 m without it.
+  The registered target is −0.12 m, so the fixed wrist sits 5.0 / 5.4 cm above it, at the 5 cm boundary.
+- IK residual median 0.405 / 0.416 with the fix vs 0.249 / 0.245 without.
+- Cause: the two added unit-vector terms (signed palm forward, fingers up; weight 1, dimensionless) compete with the wrist-position
+  residual (weight 1, metres). Turning the palm forward with the fingers up at a low wrist would need the elbow lower than the
+  collision-free poses allow, so the solver trades about 5 cm of wrist height for orientation.
+- With the fingers up (about 0.2 m of hand), the fingertips reach about shoulder + 0.13 m, near chin / head height, which is what the
+  render shows.
