@@ -103,11 +103,11 @@ def train(a):
             zi = F.normalize(out['e5'][em], dim=-1); zt = te[em]; lg = zi @ zt.T / 0.07; lab_ = torch.arange(len(zi), device=dev)
             le = 0.5 * (F.cross_entropy(lg, lab_) + F.cross_entropy(lg.T, lab_))
         else: le = ((1 - F.cosine_similarity(out['e5'], te, dim=-1)) * em).sum() / em.sum().clamp(min=1)
-        loss = lc + le
+        loss = lc + a.e5_w * le
         opt.zero_grad(set_to_none=True); loss.backward(); torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0); opt.step(); sch.step()
         if step % 250 == 0 or step == a.steps - 1:
             log.append(dict(step=step, cls=round(lc.item(), 4), e5=round(le.item(), 4), s=round(time.time() - t0, 1))); print(json.dumps(log[-1]), flush=True)
-    torch.save(dict(model=model.state_dict(), std=std.tolist(), arch=dict(win=win), seed=a.seed, e5_loss=a.e5_loss,
+    torch.save(dict(model=model.state_dict(), std=std.tolist(), arch=dict(win=win), seed=a.seed, e5_loss=a.e5_loss, e5_w=a.e5_w,
                     e5_mu=None if MU is None else MU.tolist(), steps=a.steps, class_weights=cw.tolist(),
                     train_counts=cnt.tolist(), n_items=len(D['L']), n_nosem=D['nosem'], rule=__doc__.split('\n')[1]), a.out)
     Path(a.out).with_suffix('.log.json').write_text(json.dumps(dict(log=log, args=vars(a)), indent=1))
@@ -171,5 +171,6 @@ if __name__ == '__main__':
     t = sub.add_parser('train'); t.add_argument('--out', required=True); t.add_argument('--win', type=int, default=80)
     t.add_argument('--steps', type=int, default=6000); t.add_argument('--bs', type=int, default=512); t.add_argument('--lr', type=float, default=5e-4)
     t.add_argument('--seed', type=int, default=7); t.add_argument('--e5-loss', default='cos', choices=('cos', 'nce'))
+    t.add_argument('--e5-w', type=float, default=1.0, help='0 = class-only teacher T3 (amendment 3)')
     s = sub.add_parser('sanity'); s.add_argument('--ckpt', required=True); s.add_argument('--out', required=True)
     a = ap.parse_args(); train(a) if a.cmd == 'train' else sanity(a)

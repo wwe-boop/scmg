@@ -21,12 +21,13 @@ dev_env() { export G1_VIEW=$HV G1_BENCH_STEMS=$A/dev_stems.txt REF_DIR=$A/motion
 case $cmd in
   lane)
     lab=$3; st=$4; side=${SIDE:-dev}
-    sc="{$SC, $CSC}"; ${PY:-python} -c "import json,sys; json.loads(sys.argv[1])" "$sc" || exit 2
+    sc="{$SC, $CSC}"; CF0='{"adsc": true}'   # 11-09: LANE_CFG overrides the model cfg (SemREPA); default unchanged
+    ${PY:-python} -c "import json,sys; json.loads(sys.argv[1])" "$sc" || exit 2
     if [ $side = dev ]; then dev_env; INIT=${INIT:-$B/echog-g1-arch-1104/hos-base/best.pt}; export G1_BENCH=${G1_BENCH:-1}
     else INIT=${INIT:-$B/echog-g1-arch-1104/fix-base/best.pt}; export G1_BENCH=${G1_BENCH:-0} WORDS_DIR=$CZ/words-vc; fi
     log "lane $side/$lab steps $st gpu ${GPU:-0} sc $sc init $INIT bench $G1_BENCH protos ${BENCH_PROTOS:-offline psync} seeds ${SEEDS:-0}"
     INIT=$INIT VAE=$DEC CAUSAL_DIR=$CZ/${CAUSAL_SUB:-pre-train-slim} BENCH_PROTOS="${BENCH_PROTOS:-offline psync}" G1_BENCH_SEEDS="${SEEDS:-0}" \
-      bash scripts/r4_lane.sh ${GPU:-0} $O/$side $lab '{"adsc": true}' "$sc" $st > $O/lane-$side-$lab.log 2>&1
+      bash scripts/r4_lane.sh ${GPU:-0} $O/$side $lab "${LANE_CFG:-$CF0}" "$sc" $st > $O/lane-$side-$lab.log 2>&1
     log "LANE_END $side/$lab rc $?";;
   ref)
     dev_env; CK=${REF_CK:-$B/echog-g1-sf-1105/dev/sf0/final.pt}
