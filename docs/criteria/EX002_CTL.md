@@ -1130,3 +1130,25 @@ command time *_5.0.png):
   9c'' (13.5 deg there) vs t + 0.62 s in 9c (1.6 deg).
 - aim2 (left hand, target on the robot's RIGHT, y −1.36 m, i.e. a cross-body point): hold angle 1.8 / 1.9 deg (9c'' / 9c), but the
   detector picks the window start t − 1.0 s in both (53.4 deg); tok5c 63.6 deg at its apex (t + 0.48).
+Module 9d quick lane (disclosed; clips 0 and 1, seed 0, offline / psync; all gate metrics; speech_server CPU). Rule-hand / actual-hand
+present numbers both shown.
+
+| row | STG gain | angle | signed palm (actual) | raised (rule / actual) | hold speed (m/s) | apex-in-hold | present wrist z − shoulder z | release med / p95 / max (dense) |
+|---|---|---|---|---|---|---|---|---|
+| 9c'' (m9cpTf) | +0.220 / +0.113 | 11.2 / 17.2 | 3.0 / 3.0 | 1.00 / 1.00 | 0.131 / 0.112 | 0.13 / 0.17 | −0.070 / −0.066 | 15.4/43/53; 16.1/41/57 |
+| 9d (1) diff-IK | +0.231 / +0.152 | 10.8 / 15.8 | 3.0 / 3.0 | 1.00 / 1.00 | 0.104 / 0.116 | 0.17 / 0.22 | −0.070 / −0.066 | 14.8/43/53; 15.9/41/57 |
+| 9d (1)+(2) | +0.339 / +0.274 | 9.9 / 10.7 | 96.0 / 101.0 | 1.00 / 1.00 | 0.104 / 0.116 | 0.35 / 0.39 | −0.140 / −0.140 | 15.8/49/95; 15.8/60/109 |
+| 9d (1)+(2)+(3) | +0.318 / +0.269 | 9.9 / 12.2 | 90.4 / 98.3 | 0.73 / 0.96; 0.78 / 1.00 | 0.104 / 0.116 | 0.30 / 0.35 | −0.140 / −0.140 | 15.8/50/95; 16.5/60/98 |
+| arbitration only on 9c'' | +0.222 / +0.149 | 13.7 / 19.2 | 3.0 / 3.0 | 0.73 / 0.96; 0.78 / 1.00 | 0.128 / 0.112 | 0.13 / 0.17 | −0.073 / −0.071 | 15.4/44/53; 19.5/55/72 |
+| none + 9d (1)+(2)+(3) | +0.384 / +0.225 | 4.5 / 12.8 | 92.7 / 100.6 | 0.74 / 1.00; 0.71 / 0.96 | 0.242 / 0.192 | 0.48 / 0.35 | −0.140 / −0.140 | 15.7/59/119; 13.8/39/63 |
+
+Arbitration switched 29 % of present events; rejects 2-4 %. Liveliness (protocol guard) PASS for every 9d row.
+KILL (rule written before the run):
+- (1) hold speed 0.104 / 0.116 m/s < 0.2 m/s.
+- (2) the present wrist sits at the box's lower edge (−0.140 m, the edge of −0.12 ± 0.02), and the signed palm goes to 96-101° (palm
+  not forward): worse than 9c'' on both clips and both protocols. With orientation × 0.08 m/rad the palm terms lose to the box and
+  the collision term.
+- (3) arbitration alone does not raise the STG gain (+0.222 / +0.149 vs +0.220 / +0.113) and costs angle (13.7 / 19.2 vs 11.2 / 17.2).
+- 9d is not taken to a full run.
+- Report-only observation: IK insertion on the NO-TOKEN stream (none + 9d) has the largest STG gain on these 2 clips (+0.384 / +0.225)
+  and the smallest offline angle (4.5 deg). That control row inherits the (2) palm failure.
