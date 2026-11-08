@@ -191,12 +191,18 @@ def validate(a):
 
 
 def evaluate(a):
-    P = json.loads(Path(a.plan).read_text())['events']; det = detector(); runs = dict(s.split('=', 1) for s in a.specs); runs = {'none': a.none, **runs}
+    """--plan / --none / every spec dir may be comma lists of equal length (one entry per seed): events are pooled over them and
+    the bootstrap resamples recordings (all seeds of a recording together)."""
+    plans = a.plan.split(','); nones = a.none.split(','); det = detector()
+    runs = {'none': nones, **{k: v.split(',') for k, v in (s.split('=', 1) for s in a.specs)}}
+    P, src = [], []
+    for i, pl in enumerate(plans):
+        for e in json.loads(Path(pl).read_text())['events']: P.append(e); src.append(i)
     hits = {}
-    for lab, d in runs.items():
+    for lab, ds in runs.items():
         h = []
-        for e in P:
-            y = np.load(Path(d) / f"{e['ci']}.npy"); yn = np.load(Path(a.none) / f"{e['ci']}.npy")
+        for e, i in zip(P, src):
+            y = np.load(Path(ds[i]) / f"{e['ci']}.npy"); yn = np.load(Path(nones[i]) / f"{e['ci']}.npy")
             h.append(success(y, e, yn, det))
         hits[lab] = np.array(h)
     cats = sorted({e['cat'] for e in P}); recs = np.array([e['clip'] for e in P]); cat = np.array([e['cat'] for e in P]); res = dict(n=len(P))
