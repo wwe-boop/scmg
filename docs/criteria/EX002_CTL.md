@@ -944,3 +944,22 @@ audit pass.
    - That is the "forearm up" seen from t + 1.0 to t + 2.0 s. tok5b only overrides the fingers for that command.
    - Before the second command, m9b equals tok up to the aim release by construction. The joint path is moderate (joint3 1.08 → 1.50,
      joint7 0.22 → −0.44).
+9c'' quick lane with the palm fix (disclosed; same 2 clips, seed 0, offline / psync; signed palm metric).
+
+| row | palm (signed) | palm-forward share | STG gain | angle | release dense med / p95 / max |
+|---|---|---|---|---|---|
+| m9cp (9c', no fix) | 177.7 / 177.8 | 0.17 / 0.21 | | | |
+| m9cpTf (T + palm fix) | 3.0 / 3.0 | 1.00 / 1.00 | +0.220 / +0.113 | 11.2 / 17.2 | 15.4 / 43 / 53; 16.1 / 41 / 57 |
+| m9cpTTf (T + taper + palm fix) | 3.0 / 3.0 | 1.00 / 1.00 | +0.190 / +0.095 | 11.3 / 16.8 | 15.4 / 43 / 53; 15.4 / 41 / 57 |
+| tok5c | 97 / 104 | | | | |
+
+- Unchanged: presenting hand raised 1.00; finger hit 1.0; executability 1.0; arm ramp 0.015-0.020; both liveliness guards PASS.
+- STG gain / angle without the fix were +0.314 / +0.234 and 11.4 / 13.0. The fix costs STG on these 2 clips; the dense plan alternates aim and
+  present commands about 1.5 s apart, so the raised palm-forward present pose sits inside the next / previous aim's ±1 s apex window
+  (2 clips only, to be confirmed at full scale).
+Render check (qual-1108/ex002-9cpp-check; selection ctl-port 6adf911, the coordinator's two events; panels tok5c / 9c' / 9c'' T + palm
+fix; frames present0_5.0.png and aim0_6.5.png):
+- present0: with the fix the right hand is raised on its own side beside the head, fingers up, palm toward the camera. Without the fix
+  (9c') the hand lies across the chest with the palm toward the body, as in 9b.
+- aim0 at t + 1.5 s: in 9c' and 9c'' the left hand is up for the next command (a left-hand present at t + 1.53 s), as diagnosed; tok5c
+  only changes the fingers there.
