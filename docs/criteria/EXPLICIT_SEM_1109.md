@@ -214,3 +214,7 @@ Other categories unchanged. Side gates: FGD v2 102.81 (a5 103.27, none 106.98); 
 100 % (finger-ramp frames over the jerk limit 1.8 %, measured on the amendment-5 ramp frames).
 Note: shifting the override centre to t + 0.4 changes the sha1 key of the human-library hand shape, so a6 can pick a different
 library exemplar than a5 for the same command.
+Main 11-09 07:1x: amendment 6 adopted as the NUMBER path (visual check: "three" a6 panel, hand raised beside the head, palm forward,
+fingers up, readable). Finger-ramp jerk on the a6 ramp frames (report; override centre t + 0.4, hold 0.6 s, ramp 0.3 s; 546 frames):
+mean 236 rad/s^3, frames over the 1500 rad/s^3 finger limit 3.8 % (a5 on its own ramp frames 0.0 %; the canonical row 3-5 %).
+Executability after CBF 100 %.
