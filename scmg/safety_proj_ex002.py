@@ -74,18 +74,24 @@ class EX002Collision:
         self.n_exact += 1
         return not self.E.min_clearance(np.asarray(q, float))[0]
 
-    def near(self, q, act):
-        """[(grad [16], dist - sDist)] for every WBC pair with dist - sDist < act."""
+    def near(self, q, act, carry=None, carry_act=None, ids=None):
+        """[(grad [16], dist - sDist)] for every WBC pair with dist - sDist < act.
+        11-08 (EX002 3c-5, default off): pairs in `carry` (pair indices) are kept up to dist - sDist < carry_act; `ids` (a list)
+        receives the pair index of every returned row."""
         E, mj = self.E, self.mj
         m, d = E.m, E.d
         E.pose(np.asarray(q, float)); mj.mj_comPos(m, d)
         self.n_lin += 1
         lb = E._lb_centres()
         rows = []
-        for i in np.nonzero(lb < E._mg + act)[0]:
+        big = max(act, carry_act) if carry else act
+        for i in np.nonzero(lb < E._mg + big)[0]:
             a, b, sd = int(E._a[i]), int(E._b[i]), float(E._mg[i])
-            dist = mj.mj_geomDistance(m, d, a, b, sd + act + 0.01, self.ft)
-            if dist >= sd + act:
+            lim_i = carry_act if (carry and int(i) in carry) else act
+            if lb[i] >= E._mg[i] + lim_i:
+                continue
+            dist = mj.mj_geomDistance(m, d, a, b, sd + lim_i + 0.01, self.ft)
+            if dist >= sd + lim_i:
                 continue
             p1, p2 = self.ft[:3].copy(), self.ft[3:].copy()
             v = p2 - p1; nv = np.linalg.norm(v)
@@ -96,6 +102,7 @@ class EX002Collision:
             mj.mj_jac(m, d, self.jp2, None, p2, int(m.geom_bodyid[b]))
             g = nrm @ (self.jp2 - self.jp1) @ self.Mmap
             rows.append((g, float(dist - sd)))
+            if ids is not None: ids.append(int(i))
         return rows
 
 

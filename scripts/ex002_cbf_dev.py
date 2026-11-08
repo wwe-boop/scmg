@@ -16,7 +16,7 @@ def run(a):
     elif a.layer == 'cbf_slack': L, lim, coll = make_slack_3f()
     else:                                    # proj_l2: the C3 chunk projection (module 3c-3)
         from scmg.safety_proj_ex002 import EX002Collision, B_EX
-        lim = EX002RMLimits(); coll = EX002Collision(lim.E); L = S.ProjectionLayer(lim, coll, 'l2', K=K_3F, B=a.B or B_EX, d_safe=1e-3, tail_smooth=a.tail_smooth, recursive=a.recursive, max_iter=a.max_iter); L.start = 'rest'; L.reset()
+        lim = EX002RMLimits(); coll = EX002Collision(lim.E); L = S.ProjectionLayer(lim, coll, 'l2', K=K_3F, B=a.B or B_EX, d_safe=1e-3, tail_smooth=a.tail_smooth, recursive=a.recursive, max_iter=a.max_iter, pred_d=a.pred_d, carry=a.carry); L.start = 'rest'; L.reset()
     src = Path(a.src) / a.proto / f's{a.seed}'; out = Path(a.out) / a.proto / f's{a.seed}'; out.mkdir(parents=True, exist_ok=True)
     for g in (Path(a.src) / a.proto).glob('gt_*.npy'):
         d = Path(a.out) / a.proto / g.name
@@ -28,7 +28,7 @@ def run(a):
             np.save(out / f.name, y.astype(np.float32))
             fo.write(json.dumps(dict(ci=int(f.stem), T=len(q), wall=time.perf_counter() - t, times=st['times'], fallback_frames=st['fallback_frames'],
                                      fallback_chunks=st['fallback_chunks'], rmse=float(np.sqrt(((y - q) ** 2).mean())),
-                                     qp=st.get('qp', 0), qp_fail=st.get('qp_fail', 0))) + '\n')
+                                     qp=st.get('qp', 0), qp_fail=st.get('qp_fail', 0), solves=st.get('solves_per_chunk', [])[-len(st['times']):] if st.get('solves_per_chunk') else [])) + '\n')
     print('CBF_RUN_DONE', a.proto, a.seed, os.getloadavg())
 
 
@@ -58,6 +58,8 @@ if __name__ == '__main__':
     ap = argparse.ArgumentParser(); sp = ap.add_subparsers(dest='cmd', required=True)
     r = sp.add_parser('run'); r.add_argument('--src', required=True); r.add_argument('--out', required=True); r.add_argument('--proto', required=True)
     r.add_argument('--seed', type=int, required=True); r.add_argument('--layer', default='cbf_qp', choices=['cbf_qp', 'cbf_slack', 'proj_l2']); r.add_argument('--B', type=int, default=0)
+    r.add_argument('--pred-d', type=float, default=0.0, help='3c-5: predictive initial rows within act + d (m)')
+    r.add_argument('--carry', action='store_true', help='3c-5: carry the active / cut pairs of chunk k into chunk k+1')
     r.add_argument('--max-iter', type=int, default=4, help='QP solves (cutting-plane rounds) per chunk (3c-4b: 8)')
     r.add_argument('--recursive', action='store_true', help='3c-4: collision rows admit the shifted verified plan (recursive feasibility)')
     r.add_argument('--tail-smooth', type=float, default=1e-3, help='proj_l2 braking-tail velocity weight (11-08: 1e-3, chosen by conditioning)')

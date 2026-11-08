@@ -210,7 +210,7 @@ class G1Collision:
         return rows
 
 
-def lin_rows(coll, q, q_safe, act, bisect=10):
+def lin_rows(coll, q, q_safe, act, bisect=10, **nk):
     """collision rows for pose q. If q is in contact and a contact-free reference q_safe is given, linearise at the
     boundary point of the segment q_safe -> q (bisection on the exact test): distance ~0 there, so the half-space
     d(q_b) + grad . (x - q_b) >= d_safe is the local separating plane; deep-penetration normals at q are unreliable.
@@ -222,8 +222,8 @@ def lin_rows(coll, q, q_safe, act, bisect=10):
             if coll.collides(q_safe + mid * (q - q_safe)): hi = mid
             else: lo = mid
         qb = q_safe + hi * (q - q_safe)                        # just inside the boundary: the touching pair is listed
-        return coll.near(qb, act), qb
-    return coll.near(q, act), q
+        return (coll.near(qb, act, **nk) if nk else coll.near(qb, act)), qb
+    return (coll.near(q, act, **nk) if nk else coll.near(q, act)), q
 
 
 # --------------------------------------------------------------------------------------------------- exact checks
@@ -287,13 +287,15 @@ class ChunkQP:
         self.N, self.H = N, H
         self.crow, self.cl = [], []                 # collision rows (accumulated cutting planes)
         self.xref = None                            # 11-08 (EX002 3c-4): a known feasible candidate [N, J]; collision rows admit it
+        self.cids = []                              # 11-08 (EX002 3c-5): WBC pair index per collision row (-1 = unknown / midpoint)
         self.n_relaxed = 0
 
-    def add_collision(self, t, rows, qlin, d_safe):
+    def add_collision(self, t, rows, qlin, d_safe, ids=None):
         J = self.J
-        for g, dist in rows:
+        for n_, (g, dist) in enumerate(rows):
             r = np.zeros(self.N * J); r[t * J:(t + 1) * J] = g
             self.crow.append(r); self.cl.append(d_safe - dist + g @ qlin)
+            self.cids.append(ids[n_] if ids is not None else -1)
 
     def add_collision_mid(self, t, rows, qlin, d_safe):
         """rows linearised at qlin for the MIDPOINT of frames t-1 and t (frame -1 = last history frame)."""
@@ -302,7 +304,7 @@ class ChunkQP:
             r = np.zeros(self.N * J); r[t * J:(t + 1) * J] = 0.5 * g; c = 0.0
             if t >= 1: r[(t - 1) * J:t * J] = 0.5 * g
             else: c = 0.5 * g @ self.H[-1]
-            self.crow.append(r); self.cl.append(d_safe - dist + g @ qlin - c)
+            self.crow.append(r); self.cl.append(d_safe - dist + g @ qlin - c); self.cids.append(-1)
 
     def matrices(self):
         if self.crow:
@@ -618,7 +620,7 @@ class RuckigLayer(_Base):
 class ProjectionLayer(_Base):
     def __init__(self, lim, coll, objective='l2', K=10, B=10, w=None, d_safe=2e-3, act=0.01, max_iter=4,
                  pos_margin=1e-5, shrink=0.995, encoder=None, window=64, steps=15, lr=None, lam=1.0, mu=1e3, smooth=0.0,
-                 tail_smooth=1e-6, recursive=False):
+                 tail_smooth=1e-6, recursive=False, pred_d=0.0, carry=False):
         assert objective in ('l2', 'perceptual')
         self.lim, self.coll, self.obj, self.n = lim, coll, objective, lim.n
         J = lim.n
@@ -629,6 +631,7 @@ class ProjectionLayer(_Base):
         self.smooth = smooth
         self.tail_smooth = tail_smooth            # 11-08: weight of the braking-tail velocity term (1e-6 = the original; EX002 1e-3)
         self.recursive = recursive                # 11-08 (EX002 3c-4): collision rows admit the shifted verified plan + hold
+        self.pred_d, self.carry = pred_d, carry    # 11-08 (EX002 3c-5): predictive initial rows (act + pred_d) / active-set carry-over
         if objective == 'perceptual' and encoder is None:
             raise ValueError('perceptual objective needs an FGDEncoder')
         self.name = 'proj_l2' if objective == 'l2' else ('proj_perc_s' if smooth else 'proj_perc')
@@ -637,8 +640,8 @@ class ProjectionLayer(_Base):
 
     def reset(self):
         super().reset()
-        self.raw = np.zeros((0, self.n)); self.plan = None
-        self.stats.update(qp_solves=0, coll_iters=0, qp_fail=0, verify_fail=0, perc_reject=0, perc_steps=0,
+        self.raw = np.zeros((0, self.n)); self.plan = None; self.carry_set = frozenset()
+        self.stats.update(solves_per_chunk=[], qp_solves=0, coll_iters=0, qp_fail=0, verify_fail=0, perc_reject=0, perc_steps=0,
                           feat_l2=[], feat_perc=[])
 
     # one projection: chunk targets (k rows) + B free tail rows, verify + re-linearise
@@ -652,11 +655,20 @@ class ProjectionLayer(_Base):
                 qp.xref = ref                       # = the previous verified plan (braking tail to rest) + hold, aligned to this chunk
             lin = np.concatenate([lin_k, np.repeat(lin_k[-1:], self.B, 0)], 0)
             memo = {}                  # 11-08: identical (pose, reference) pairs (the held braking tail) are linearised once;
-            for t in range(N):         # lin_rows is a deterministic function of its inputs, so the rows are bit-identical
+            ext = self.pred_d > 0 or self.carry  # lin_rows is a deterministic function of its inputs, so the rows are bit-identical
+            for t in range(N):
                 key = (lin[t].tobytes(), ref[t].tobytes())
-                if key not in memo: memo[key] = lin_rows(self.coll, lin[t], ref[t], self.act)
-                rows, ql = memo[key]
-                if rows: qp.add_collision(t, rows, ql, self.ds)
+                if key not in memo:
+                    if ext:            # 3c-5: predictive margin act + pred_d; carried pairs (active / cut in the previous chunk) too
+                        ids = []; a_ = self.act + self.pred_d
+                        rr, ql_ = lin_rows(self.coll, lin[t], ref[t], a_, ids=ids,
+                                           **(dict(carry=self.carry_set, carry_act=a_ + 0.05) if self.carry and self.carry_set else {}))
+                        memo[key] = (rr, ql_, ids)
+                    else:
+                        memo[key] = lin_rows(self.coll, lin[t], ref[t], self.act) + (None,)
+                rows, ql, ids = memo[key]
+                if rows: qp.add_collision(t, rows, ql, self.ds, ids=ids)
+            qp.n_init = len(qp.crow)
         tgt = np.full((N, self.n), np.nan); tgt[:k] = target_k
         W = np.tile(self.w, (N, 1))
         for it in range(self.it):
@@ -675,11 +687,18 @@ class ProjectionLayer(_Base):
                 off = 0 if len(H) else 1
                 badm = [t + off for t in range(len(cur)) if self.coll.collides(0.5 * (cur[t] + prev[t]))]
             if not bad and not badm:
+                if self.carry:          # 3c-5: pairs of the active rows (slack <= 1e-6) and of every cut row -> next chunk
+                    C = np.array(qp.crow) if qp.crow else np.zeros((0, N * self.n))
+                    sl = C @ x.reshape(-1) - np.array(qp.cl) if len(C) else np.zeros(0)
+                    self.carry_set = frozenset(int(qp.cids[i]) for i in range(len(qp.cids))
+                                               if qp.cids[i] >= 0 and (sl[i] <= 1e-6 or i >= qp.n_init))
                 return x, qp
             self.stats['coll_iters'] += 1
             for t in bad:
-                rows, ql = lin_rows(self.coll, x[t], ref[t], self.act)
-                if rows: qp.add_collision(t, rows, ql, self.ds)
+                if self.carry:
+                    ids = []; rows, ql = lin_rows(self.coll, x[t], ref[t], self.act, ids=ids)
+                else: rows, ql = lin_rows(self.coll, x[t], ref[t], self.act); ids = None
+                if rows: qp.add_collision(t, rows, ql, self.ds, ids=ids)
             for t in badm:
                 pm = 0.5 * (x[t] + (x[t - 1] if t >= 1 else H[-1]))
                 rm = 0.5 * (ref[t] + (ref[t - 1] if t >= 1 else H[-1]))
@@ -758,7 +777,9 @@ class ProjectionLayer(_Base):
         else:
             ref = static_safe(r[0], self.lim, self.coll, self.ds, self.act)[None]
         ref = np.concatenate([ref, np.repeat(ref[-1:], max(N - len(ref), 0), 0)], 0)[:N]
+        _s0 = self.stats['qp_solves']
         x, qp = self._project(H, r, lin_k, ref)
+        self.stats['solves_per_chunk'].append(self.stats['qp_solves'] - _s0)
         if x is not None and self.obj == 'perceptual':
             if not hasattr(self, 'torch'):
                 import torch; self.torch = torch
