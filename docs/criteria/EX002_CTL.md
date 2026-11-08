@@ -474,3 +474,29 @@ the IK insertion itself (0.3 s ramps, 0.6 s hold) produces arm accelerations ~1.
 Qualitative (qual-1108/ex002-m9; aim0 / aim1 / present0; front + 45 deg): in aim0 the forearm ray (red) runs parallel to the command direction
 (yellow) in the ik / m9 panels; in present0 the right hand comes up to the face / chest with the palm forward but crosses toward the midline and
 partly covers the face in the front view.
+## Module 9b (pre-registered 2026-11-08 ~10:40, before any 9b number; coordinator after the m9 sheets)
+Base: enc-s0 (agent A, exp/duplex 652af8c / b365eaa: sibag recipe + self_force_scope "encoders", selected under the frozen rule, 3 seeds pass
+the liveliness guard). Tokens: control modules trained on enc-s0 with the lane-4 recipe and the true freeze (--train-only ctl_, 2000 steps);
+with no tokens the control model equals enc-s0 bitwise (checked in the job against fresh enc-s0 no-token runs). New fresh plans seed 1112 /
+shuffle 20261112 (dense + sparse); seeds 0-2; offline AND psync.
+Changes vs module 9 (ex002_keyframe.py insert --version 9b; the m9 code path unchanged):
+1. NO latent-inpainting re-conditioning: IK insertion on the generated stream (5b-blended token output). The m9 numbers (sibag-s2, f184a6f) are
+   quoted as the reference row (not re-run).
+2. Adaptive ramps in AND out: per insertion, T = max(0.3, sqrt(5.77 * max_j |Δq_j| / a95_j)) over the commanded arm's joints (Δq = keyframe -
+   the generated pose at the ramp boundary), capped at 0.8 s; a95_j = per-joint p95 of |second difference| x 50^2 over TRAIN-split human items of
+   data-v36_1 (tokens/ARM_ACC_P95.json; never dev). Both ramps are quintic Hermite segments on the arm joints: ramp-in from the generator's state
+   (position, velocity, acceleration) at the ramp start to the keyframe at rest; release from the keyframe at rest to the generator's own state
+   (position, velocity, acceleration) at the ramp end -- not to a frozen pose. Hold as m9 ([t - 0.1, t + 0.6] point, [t - 0.4, t + 0.4] present).
+3. Present target without midline crossing: wrist in front of the SAME-side shoulder, nominal shoulder + (0.30 forward, 0.05 outward, -0.12) m
+   (below the chin: the chin is above the shoulder), palm normal along +-x. Self-collision inside the solve (penetration residual weight 100);
+   fallback grid around the nominal point (outward offset {0.05, 0.10, 0.00} x height {-0.12, -0.06, -0.18} m, tried in that order: never inward
+   of the shoulder); reject only if every grid point leaves penetration > 0 (rejected events still count as failures in every gate). Point: as m9
+   but with the same penetration weight 100 and no grid (the target is a direction).
+Gates (same as m9, per protocol, the enc-s0 tok row = reference for the relative gates): pointing median forearm angular error <= 25 deg,
+|elevation error above-shoulder| <= 5 deg, STG gain >= +0.10 with the shuffle follow; present count hit >= 0.9, presenting hand raised >= 0.80
+of command frames, palm angle <= 45 deg; quality (i) / (ii) <= C + δ (enc-s0 no-token C / δ per protocol); ramp jerk (finger and arm ramps)
+<= tok + 2 pts; executability after CBF 100 %; protocol liveliness guard (decides) + my guard on the sparse given runs, dense report-only;
+release continuity: median peak arm acceleration around the release <= the dev-GT p95 (as m9). Reject share per protocol reported.
+Note: on sibag-s2 the tok row itself failed (ii) on psync (105.8 > 101.07); the enc-s0 tok numbers are reported first.
+Quick check before the DLC run: 3-clip post-processing smoke on existing sibag-s2 m9 tok outputs (disclosed). Renders after: aim + present,
+front + 45 deg, selection rule committed before rendering.
