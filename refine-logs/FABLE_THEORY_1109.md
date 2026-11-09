@@ -137,3 +137,38 @@ Counterfactual token training has a one-line identifiability remark (with swappe
   - B: N1 quick lane A (measurement on sibag-coll-s1, no training); then the G1 encoder-only self-forcing quick lane; after 9c'' / D5.
   - Main: the Theorems 1–2 / Prop. 2 write-up, checked line by line against safety_proj.py.
 - **Base change:** N1 changes the base. It is adopted only if the latency and liveliness gates both pass; otherwise it stays report-only.
+
+## Correction 11-09 (agent A, from the N2 quick lane; coordinator)
+Theorem 3 (yield-or-stop) as written is not proved. Its proof says "a relaxed row admits only x_ref's frames"; the relaxation actually
+used (l <- min(l, x_ref), u <- max(u, x_ref), the same as for the collision rows) widens each tube bound to an interval that CONTAINS
+x_ref, so the QP may follow the raw continuation anywhere inside the widened interval. Measured (N2 quick lane, 41 interruptions):
+tube rows relaxed in 72.5-77.7 % of post-interruption chunks, the accepted plan outside the unrelaxed tube in 67-75 %, behaviour equal
+to B3 + ISC (negatives row 60). Theorems 1-2 are unaffected: their safety claim rests on the exact certificate (GJK test of every frame
+and midpoint) and on the verified plan as the candidate, not on the relaxed rows. A literal yield-or-stop needs hard tube rows with the
+verified plan executed on infeasibility (N2b, quick lane registered in EX002_INTERRUPT_1107.md).
+
+### Corrected Theorem 3 (yield-or-stop, as implemented by N2b; agent A 11-09, checked against the code path)
+Setting: the 3c-4b layer (scmg/safety_proj.py ProjectionLayer, proj_l2, recursive feasibility, cap 8) with N2b tube rows: for every
+frame t >= f of an interruption at f, box rows r_j(t) - e(t) <= x_{t,j} <= r_j(t) + e(t) on the waist + arm joints j (q34 0-1,
+4-17), r = the R0causal trajectory of the event, e(t) = m_0 phi(t - f) + eps; the tube rows are HARD (ChunkQP.matrices: no x_ref
+relaxation when tube['relax'] is False), the collision rows keep the 3c-4b relaxation. Hypotheses of Theorem 1 (verified initial
+plan, exact certificate = GJK test of every frame and midpoint, limits as encoded).
+Statement. At every chunk step after f exactly one of the following holds:
+ (a) the chunk is a newly accepted plan; every frame of it lies inside the tube on the tube joints (to the QP solver's tolerance)
+     and inside the safe set S (exact certificate); or
+ (b) the chunk executes frames of the stored verified plan (the "stop" branch): the previous accepted plan's remaining frames, which
+     end in its braking tail (velocity and acceleration zero at the tail end, terminal rows) followed by a hold.
+Hence the interrupted stream is always in S, and on the waist / arms it is, chunk by chunk, either inside the contracting tube
+(converging to within eps of r(t) by T_f) or braking to a verified standstill; it never leaves the tube with a newly planned motion.
+Proof (code path). _project returns a plan only after (i) qp.solve returns a solution (Clarabel 'Solved'), i.e. a point satisfying
+every row of A x in [l, u], including the hard tube rows, to the solver tolerance; and (ii) pos_ok and diff_ok (limits) and the exact
+collision test of every frame and midpoint pass. If the QP is infeasible (qp.solve -> None) or the certificate still fails after 8
+cutting-plane rounds, _project returns None and step() executes plan[:k] and keeps plan[k:] (padded by its last frame) -- frames of a
+plan that was itself certified when it was accepted (Theorem 1). Tube rows are built in _project for absolute frames >= f only
+(len(hist) minus the 3 unemitted rest-start frames), so the ISC partial chunk at f is covered. A sequence of (b) steps exhausts the
+braking tail and holds its final pose (zero difference rows), which is collision-free (the hold lemma of Theorem 1).
+Limits, stated: (a) is to the solver tolerance (the tube rows are not re-checked exactly after the solve); the tube constrains waist +
+arms only (head and fingers keep the continuation); "stop" is per chunk, not latched: a later chunk may re-enter (a) when the QP is
+feasible again; the guarantee is relative to r(t) (R0causal's trajectory toward the half-B rest pose), not to a human-likeness measure.
+Measured (N2b quick lane, 41 events, T_f 1.8, m_0 0.8): (b) occurred in 35 of 382 post-interruption chunks (9.2 %), in 6 events,
+median 1.12 s after t_i, all from QP infeasibility (qp_fail 35); unsafe frames 0.
