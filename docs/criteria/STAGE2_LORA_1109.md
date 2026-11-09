@@ -15,3 +15,4 @@ Code: exp/glora d8b8e0d (on exp/keyframe 3823be8), scmg/lora_gate.py; tests: scr
 - Latency item: flow-forward overhead +36 % (all instances gated) to +52 % (15 % gated) at M = 1024, bf16 (noisy, launch-bound;
   2 extra small matmuls per wrapped Linear). To be measured on the idle GPU (the latency protocol) only if stage 2 is used.
 - Status: held until A's stage-1 verdict; no runs.
+- Status (11-09): descoped by the user 11-09, never trained. exp/glora left unmerged.
