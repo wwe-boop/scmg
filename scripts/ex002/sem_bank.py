@@ -19,6 +19,8 @@ from g1_lexicon import words as lex_words, EN_MAP
 
 B = '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg'; C = '/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture'
 V = C + '/train-v1-20261101/views/data-v36_1'; EV = B + '/semantic-baseline-1105/ex002-sem/data/EVENTS.json'
+import os
+V = os.environ.get('SCMG_EXPL_VIEW', V)   # 11-09 (default unset = data-v36_1): the test-only view of EVAL_PROTOCOL v1
 FPS = 50; CLS = ('deictic', 'iconic', 'metaphoric')
 
 
