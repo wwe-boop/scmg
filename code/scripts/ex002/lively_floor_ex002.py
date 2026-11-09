@@ -16,6 +16,8 @@ import numpy as np
 import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 VIEW = Path('/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/train-v1-20261101/views/data-v36_1')
+import os as _os
+if _os.environ.get('SCMG_EXPL_VIEW'): VIEW = Path(_os.environ['SCMG_EXPL_VIEW'])   # 11-09 (default unset): test-only view, split test_ids
 NPZ = '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/models/sphere_proxy_vox4e.npz'
 JOINTS = dict(shoulder=(4, 11), elbow=(7, 14), wrist=(10, 17), tip1=(20, 28), tip2=(23, 31), tip3=(25, 33), head=(3, 3))
 _K = {}
@@ -37,7 +39,7 @@ WRIST = (2, 9)                                          # wrist L (group 2) / wr
 
 
 def speech_masks():
-    val = set(json.loads((VIEW / 'SPLIT.json').read_text())['val_ids']); cl = OrderedDict()
+    val = set(json.loads((VIEW / 'SPLIT.json').read_text())['test_ids' if _os.environ.get('SCMG_EXPL_VIEW') else 'val_ids']); cl = OrderedDict()
     for it in json.loads((VIEW / 'train.json').read_text()):
         if it['id'] in val: cl.setdefault(it['clip'], []).append(it)
     out = []

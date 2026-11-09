@@ -1,0 +1,36 @@
+{
+ "devGT_vs_testGT": {
+  "n_clips": 17,
+  "frames": 34768,
+  "FKD": 3.352505462210445,
+  "FGD_v2_seeds": [
+   461.7481030200456,
+   398.68712983585806
+  ],
+  "FGD_v2": 430.21761642795184,
+  "lively": {
+   "clips": 17,
+   "still": 0.015542729850141757,
+   "held_share": 0.0,
+   "stutter": 1.0492039750597975,
+   "wrist_speed": 0.3825255291448412,
+   "wrist_amp": 0.11421572048086322
+  },
+  "lively_gt": {
+   "clips": 17,
+   "still": 0.0061463485597905146,
+   "held_share": 0.0,
+   "stutter": 1.0369002417035107,
+   "wrist_speed": 0.34295829827417085,
+   "wrist_amp": 0.09390065732356832
+  },
+  "lively_gates": {
+   "still": false,
+   "wrist_speed": true,
+   "wrist_amp": true,
+   "held_share": true,
+   "stutter": true,
+   "pass": false
+  }
+ }
+}

@@ -20,6 +20,7 @@ BIG max wrist separation in [t - 0.3, t + 0.9] >= the none run's + 0.15 m; SMALL
     SCMG_J=34 python scripts/ex002/expl_canon.py validate --plan DIR/PLAN_tts.json --gt GTDIR --out V.json
     SCMG_J=34 python scripts/ex002/expl_canon.py eval --plan DIR/PLAN_tts.json --none NONE_DIR --out O.json given=D ..."""
 import argparse, json, sys
+import os
 from pathlib import Path
 import numpy as np
 
@@ -44,8 +45,14 @@ def free_hand(y, t):
 
 def plan(a):
     O = Path(a.out); O.mkdir(parents=True, exist_ok=True); cis = [int(x) for x in a.cis.split(',')]
-    D = json.loads(Path(EV).read_text()); inv = {v: k for k, v in D['meta']['dev_ci'].items()}
-    items = json.loads((Path(V) / 'train.json').read_text()); sp = json.loads((Path(V) / 'SPLIT.json').read_text()); recs = recordings(items, set(sp['val_ids']))
+    items = json.loads((Path(V) / 'train.json').read_text()); sp = json.loads((Path(V) / 'SPLIT.json').read_text())
+    if os.environ.get('SCMG_EXPL_VIEW'):     # 11-09 (default off): test-only view; ci = View.clips order (first appearance of each clip among test items)
+        ids = set(sp['test_ids']); recs = recordings(items, ids); inv = {}
+        for it in items:
+            if it['id'] in ids and it['clip'] not in inv.values(): inv[len(inv)] = it['clip']
+    else:
+        D = json.loads(Path(EV).read_text()); inv = {v: k for k, v in D['meta']['dev_ci'].items()}
+        recs = recordings(items, set(sp['val_ids']))
     ev = []
     for ci in cis:
         stem = inv[ci]; y = np.load(Path(a.none) / f'{ci}.npy'); last = -1e9; used = set()

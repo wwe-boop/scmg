@@ -13,7 +13,7 @@ a = ap.parse_args()
 v = Path(a.view); o = Path(a.out); (o / 'words').mkdir(parents=True, exist_ok=True); (o / 'audio').mkdir(exist_ok=True)
 items = json.loads((v / 'train.json').read_text()); sp = json.loads((v / 'SPLIT.json').read_text())
 keep = set()
-for s in a.splits.split(','): keep |= set(sp['train_ids' if s == 'train' else 'val_ids'])
+for s in a.splits.split(','): keep |= set(sp['train_ids' if s == 'train' else 'test_ids' if s == 'test' else 'val_ids'])   # 11-09: 'test' for the test-only view
 n = dict(items=0, words=0, missing_audio=0, empty=0)
 for it in items:
     if it['id'] not in keep: continue

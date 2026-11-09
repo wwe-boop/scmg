@@ -1,0 +1,32 @@
+2026-11-09T10:14:37+08:00 START commit 
+2026-11-09T10:17:25+08:00 ENC s0
+2026-11-09T10:20:04+08:00 ENC s1
+2026-11-09T10:22:46+08:00 ENC s2
+{"cis": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], "proto": "tts", "rule": "expl_canon.py plan", "per_cat": {"SELF": 58, "YOU": 19, "POINT": 25, "NUMBER": 2, "BIG": 7, "SMALL": 6}}
+{"cis": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], "proto": "psync", "rule": "expl_canon.py plan", "per_cat": {"SELF": 58, "YOU": 18, "POINT": 25, "NUMBER": 2, "BIG": 7, "SMALL": 6}}
+{"cis": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], "proto": "tts", "rule": "expl_canon.py plan", "per_cat": {"SELF": 58, "YOU": 19, "POINT": 25, "NUMBER": 2, "BIG": 7, "SMALL": 6}}
+{"cis": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], "proto": "psync", "rule": "expl_canon.py plan", "per_cat": {"SELF": 58, "YOU": 18, "POINT": 25, "NUMBER": 2, "BIG": 7, "SMALL": 6}}
+{"cis": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], "proto": "tts", "rule": "expl_canon.py plan", "per_cat": {"SELF": 58, "YOU": 19, "POINT": 25, "NUMBER": 2, "BIG": 7, "SMALL": 6}}
+{"cis": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], "proto": "psync", "rule": "expl_canon.py plan", "per_cat": {"SELF": 58, "YOU": 18, "POINT": 25, "NUMBER": 2, "BIG": 7, "SMALL": 6}}
+2026-11-09T10:23:03+08:00 PLANS
+2026-11-09T10:25:49+08:00 GEN tts s0
+2026-11-09T10:28:34+08:00 GEN psync s0
+2026-11-09T10:31:17+08:00 GEN tts s1
+2026-11-09T10:34:01+08:00 GEN psync s1
+2026-11-09T10:36:43+08:00 GEN tts s2
+2026-11-09T10:39:26+08:00 GEN psync s2
+2026-11-09T11:19:17+08:00 POST psync s2
+2026-11-09T11:19:28+08:00 POST tts s0
+2026-11-09T11:19:36+08:00 POST psync s1
+2026-11-09T11:19:37+08:00 POST psync s0
+2026-11-09T11:20:13+08:00 POST tts s2
+2026-11-09T11:20:47+08:00 POST tts s1
+2026-11-09T11:20:54+08:00 A6 INSERTED
+2026-11-09T11:20:55+08:00 PROJ
+2026-11-09T11:21:34+08:00 EVAL tts
+2026-11-09T11:21:34+08:00 EVAL psync
+2026-11-09T11:21:54+08:00 EVAL a6
+2026-11-09T11:21:56+08:00 PRESENT
+2026-11-09T11:22:04+08:00 FGDOUT
+2026-11-09T11:22:22+08:00 EXEC
+2026-11-09T11:22:22+08:00 LANE_DONE

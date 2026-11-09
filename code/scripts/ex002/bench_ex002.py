@@ -68,7 +68,7 @@ def infer(a):
     if a.protocol in ('engine', 'psync'): os.environ['SCMG_TEXT_CAUSAL'] = a.text_causal
     dev = 'cuda'; out = Path(a.out); out.mkdir(parents=True, exist_ok=True)
     st = json.loads(Path(a.stats).read_text()); m, vae = load(a.ckpt, a.vae, dev)
-    view = View(a.view, 'val', a.text_cache, st, mmap=True, tok_cache=a.tok_cache)
+    view = View(a.view, a.split, a.text_cache, st, mmap=True, tok_cache=a.tok_cache)
     qm, qs = np.asarray(st['q_mean'], np.float32), np.asarray(st['q_std'], np.float32)
     if a.protocol == 'psync':
         from scmg import causal_feat as CF
@@ -174,6 +174,7 @@ def main():
     p.add_argument('--mode', default='none', choices=['none', 'given', 'shuffle'])
     p.add_argument('--cis', default=None, help='11-09 (default all): comma list of recording indices to generate')
     p.add_argument('--inpaint-dir', default=None, help='11-08 module 9 (default off): <ci>.npz of ex002_keyframe.py insert -> latent inpainting of the insertion spans')
+    p.add_argument('--split', default='val', choices=['val', 'test'], help='11-09 (default val): test = the test-only view (EVAL_PROTOCOL v1)')
     p.add_argument('--ctl-lookahead', type=float, default=0., help='streaming: commands visible this many s before their time (0 = generate default)')
     p = sub.add_parser('eval'); p.add_argument('--out', required=True); p.add_argument('--gt-as-gen', action='store_true', help='sanity: GT scored as the generation (FGD v2 = 0)')
     p.add_argument('specs', nargs='+')

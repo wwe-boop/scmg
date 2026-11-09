@@ -1,0 +1,41 @@
+{
+ "none": {
+  "hand_raised_share_mean": 0.29268292682926833,
+  "events_hands": 4,
+  "events_hands_raised_ge80": 0.0,
+  "palm_forward_angle_median": 60.95615768432617,
+  "present_hand_raised_share_mean": 0.2682926829268293,
+  "present_hand_raised_ge80": 0.0,
+  "present_hand_palm_angle_median": 61.83521270751953,
+  "present_hand_palm_angle_signed_median": 107.24982452392578,
+  "present_hand_palm_forward_share": 0.0,
+  "actual_hand_raised_share_mean": 0.2682926829268293,
+  "actual_hand_palm_angle_signed_median": 107.24982452392578
+ },
+ "before": {
+  "hand_raised_share_mean": 0.5,
+  "events_hands": 4,
+  "events_hands_raised_ge80": 0.5,
+  "palm_forward_angle_median": 68.76926231384277,
+  "present_hand_raised_share_mean": 0.5,
+  "present_hand_raised_ge80": 0.5,
+  "present_hand_palm_angle_median": 65.29966163635254,
+  "present_hand_palm_angle_signed_median": 104.03789901733398,
+  "present_hand_palm_forward_share": 0.0,
+  "actual_hand_raised_share_mean": 0.5,
+  "actual_hand_palm_angle_signed_median": 104.03789901733398
+ },
+ "a6": {
+  "hand_raised_share_mean": 0.75,
+  "events_hands": 4,
+  "events_hands_raised_ge80": 0.75,
+  "palm_forward_angle_median": 30.3343585729599,
+  "present_hand_raised_share_mean": 1.0,
+  "present_hand_raised_ge80": 1.0,
+  "present_hand_palm_angle_median": 1.8203933238983154,
+  "present_hand_palm_angle_signed_median": 1.8203933238983154,
+  "present_hand_palm_forward_share": 1.0,
+  "actual_hand_raised_share_mean": 1.0,
+  "actual_hand_palm_angle_signed_median": 1.8203933238983154
+ }
+}

@@ -1,11 +1,14 @@
 # SCMG 论文材料
 
-来源：代码仓库 main f3fa4e7（分支 paper/final-1109），整理于 2026-11-09。
+来源：分支 paper/final-1109（code/ 为 e716721），整理于 2026-11-09。数字和生成命令见 RESULTS.md。
 
 ## 目录
 | 路径 | 内容 |
 |---|---|
-| code/ | main f3fa4e7 的代码，由 git archive 导出 |
+| code/ | paper/final-1109 e716721 的代码，由 git archive 导出 |
+| results/g1_bootstrap/ | G1 消融与 czmws 的配对 bootstrap |
+| results/ex002_test/ | EX002 测试集结果（EVAL_PROTOCOL v1） |
+| docs/EVAL_PROTOCOL.md | 评测协议 v1（冻结版） |
 | results/raw/ | 判定脚本读取的结果文件和显式语义 dev 全量结果文件，原样复制，保留原来的相对路径 |
 | results/FILES.txt | results/raw 里每个文件的原始绝对路径 |
 | results/verdicts/ | 三个判定脚本在 f3fa4e7 上的输出（txt 和 json） |
@@ -31,5 +34,4 @@ python scripts/eval/beat_ex002_ctl.py --json /tmp/beat_ex002_ctl.json
 - 子目录 a6/：NUMBER 修订 6 的结果，由 code/scripts/ex002/ex002_expl_a6.sh 生成。
 
 ## 未包含
-- G1 与 czmws 的配对 bootstrap（BOOT_ABL.json）：还在跑。
-- EX002 测试集结果：还没跑。
+- 人评、真机、物理跟踪：都没有跑。
