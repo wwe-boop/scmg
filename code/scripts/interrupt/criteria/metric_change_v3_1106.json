@@ -1,0 +1,12 @@
+{
+ "version": "v3 (final; decided by the coordinator 11-06 after seeing v2 results; no further changes because of results)",
+ "history": {
+  "v1 (11-05, baseline round)": "peak hand jerk on [t_i - 0.1 s, t_i + 2.13 s] above the human post-speech P95 (262 m/s^3). Problem: GT normal speech scores 81 %, so it measures 'as calm as a human after speech', not interruption-induced jerk.",
+  "v2 (11-06, criteria/metric_change_1106.json)": "peak jerk on [t_i, t_i + 0.5 s] above the P95 of the same motion's jerk on the 2.13 s before t_i. Problem: max of ~18 samples vs a P95 of ~60 samples is high even without any interruption (our model 36.4 %, GT 45.6 %, human retraction windows 36.7 %); the 0.5 s window also misses jerks of pins late in the retraction.",
+  "v3 (11-06, this file)": "paired counterfactual: peak hand jerk over the retraction window [t_i, t_i + T_r] of the interrupted motion divided by the same peak of the same method's uninterrupted output (same clip, same inference seed); ratio > 1.5 = abrupt. Baseline without interruption = 0 by construction."},
+ "definition": {"window": "jerk samples ending in [f_i, f_i + 54) (T_r = 1.8 s = human median retraction time = the B2 T_r, the same for every method), clipped to the frames both outputs have",
+                "counterfactual": "B1 / B2 / B2fast / blends: the base uninterrupted output; streaming continuations (B3c, R0, yld*, tr2*, guidance, tail lanes): the same model's --no-interrupt output; GT + B2: the GT motion itself",
+                "threshold": 1.5, "threshold_choice": "a priori, not tuned", "also_reported": "median and P90 of the ratio"},
+ "gate": "abrupt_v3 <= 10 %; other gates unchanged: yield_rate >= 90 %, RKD below B2_p (bootstrap interval of the difference excludes 0), unsafe <= 1 %",
+ "secondary": "v1 (abrupt_rate) and v2 (abrupt_induced) kept in the appendix"
+}

@@ -1,0 +1,110 @@
+{
+ "none": {
+  "fa": {
+   "total_median": 45.554117904921405,
+   "total_mean": 52.559457077209714,
+   "total_p90": 99.45035136806666,
+   "azimuth_median": 31.93346964317478,
+   "elevation_median": -3.749976552178853,
+   "elevation_mean": -3.641016198615297,
+   "elevation_median_target_above_shoulder": -13.972756824638758,
+   "total_median_target_above_shoulder": 41.96617462836391,
+   "elevation_median_target_below_shoulder": 38.05242315360604
+  },
+  "ix": {
+   "total_median": 42.87562893978645,
+   "total_mean": 50.31091902194637,
+   "total_p90": 97.80887999469795,
+   "azimuth_median": 27.920956482216333,
+   "elevation_median": -3.821638034232492,
+   "elevation_mean": -3.9211770164187234,
+   "elevation_median_target_above_shoulder": -13.39186108802005,
+   "total_median_target_above_shoulder": 39.00903925938891,
+   "elevation_median_target_below_shoulder": 39.93436839408422
+  },
+  "events": 1668,
+  "share_target_above_shoulder": 0.7410071942446043,
+  "wrist_minus_shoulder_z_median": -0.2262241542339325
+ },
+ "tok5c": {
+  "fa": {
+   "total_median": 32.669092212922806,
+   "total_mean": 39.00984080916931,
+   "total_p90": 76.78205910054476,
+   "azimuth_median": 24.526685192101194,
+   "elevation_median": 1.3848516508690247,
+   "elevation_mean": 2.7356754009695248,
+   "elevation_median_target_above_shoulder": -3.079611895368579,
+   "total_median_target_above_shoulder": 29.755287647018847,
+   "elevation_median_target_below_shoulder": 28.019129848369467
+  },
+  "ix": {
+   "total_median": 30.30817118926661,
+   "total_mean": 37.9347656499651,
+   "total_p90": 76.86412048171184,
+   "azimuth_median": 22.13928690145326,
+   "elevation_median": 2.7907050488345053,
+   "elevation_mean": 4.0605146104523095,
+   "elevation_median_target_above_shoulder": -1.4665192845965969,
+   "total_median_target_above_shoulder": 26.670424714144374,
+   "elevation_median_target_below_shoulder": 30.46944090644094
+  },
+  "events": 1668,
+  "share_target_above_shoulder": 0.7410071942446043,
+  "wrist_minus_shoulder_z_median": -0.21346434950828552
+ },
+ "m9c": {
+  "fa": {
+   "total_median": 26.528313836943866,
+   "total_mean": 31.44610101187603,
+   "total_p90": 71.39169548365977,
+   "azimuth_median": 15.992198219818166,
+   "elevation_median": 5.370700067180573,
+   "elevation_mean": 12.29571486608422,
+   "elevation_median_target_above_shoulder": 1.8440178846694035,
+   "total_median_target_above_shoulder": 22.75684124358269,
+   "elevation_median_target_below_shoulder": 30.62101356732783
+  },
+  "ix": {
+   "total_median": 32.360843468047236,
+   "total_mean": 40.49716044636911,
+   "total_p90": 83.49812509593673,
+   "azimuth_median": 26.26512691008569,
+   "elevation_median": 7.216235415713889,
+   "elevation_mean": 12.696154604232788,
+   "elevation_median_target_above_shoulder": 4.042356920753598,
+   "total_median_target_above_shoulder": 27.987120686535416,
+   "elevation_median_target_below_shoulder": 32.31601388026051
+  },
+  "events": 1668,
+  "share_target_above_shoulder": 0.7410071942446043,
+  "wrist_minus_shoulder_z_median": -0.1660670042037964
+ },
+ "m9cctl": {
+  "fa": {
+   "total_median": 23.770844131063825,
+   "total_mean": 29.706098603675528,
+   "total_p90": 70.85350739340088,
+   "azimuth_median": 13.480410212835626,
+   "elevation_median": 4.205733482760109,
+   "elevation_mean": 12.149989328505507,
+   "elevation_median_target_above_shoulder": 1.1000623879984115,
+   "total_median_target_above_shoulder": 19.746019404748633,
+   "elevation_median_target_below_shoulder": 30.464857306483022
+  },
+  "ix": {
+   "total_median": 29.597740403871533,
+   "total_mean": 38.70785954249503,
+   "total_p90": 81.80660942442846,
+   "azimuth_median": 24.381455024143506,
+   "elevation_median": 6.531289687556745,
+   "elevation_mean": 12.48586623560911,
+   "elevation_median_target_above_shoulder": 3.4181959201361067,
+   "total_median_target_above_shoulder": 25.699179994907098,
+   "elevation_median_target_below_shoulder": 30.60425626961727
+  },
+  "events": 1668,
+  "share_target_above_shoulder": 0.7410071942446043,
+  "wrist_minus_shoulder_z_median": -0.16189825534820557
+ }
+}

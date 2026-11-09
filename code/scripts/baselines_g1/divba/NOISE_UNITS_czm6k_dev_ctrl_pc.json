@@ -1,0 +1,29 @@
+{
+ "control": "czm6k_dev_ctrl_pc",
+ "inputs": {
+  "psync": [
+   "/home/xr-25b7/bulk/divba-1106/post_pc/zt/ctrl_psync_seed_000/diag.json",
+   "/home/xr-25b7/bulk/divba-1106/post_pc/zt/ctrl_psync_seed_001/diag.json"
+  ],
+  "offline": [
+   "/home/xr-25b7/bulk/divba-1106/post_pc/zt/ctrl_offline_seed_000/diag.json",
+   "/home/xr-25b7/bulk/divba-1106/post_pc/zt/ctrl_offline_seed_001/diag.json"
+  ]
+ },
+ "T1_ba_lift": {
+  "control": 0.0016444243975541986,
+  "unit": 0.0013567377304291085
+ },
+ "T2_shape_l1": {
+  "control": 0.15049575096608064,
+  "unit": 0.03024442160708269
+ },
+ "T3_div_gap": {
+  "control": 0.2166564674272431,
+  "unit": 0.059685770429444375
+ },
+ "div_psync": 1.5800614025799677,
+ "div_offline": 1.3634049351527247,
+ "ba_null_psync": 0.5860343317065122,
+ "total_power_rel_gt_psync": 0.5583181328864709
+}

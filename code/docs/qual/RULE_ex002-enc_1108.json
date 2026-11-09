@@ -1,0 +1,97 @@
+{
+ "base": {
+  "rule": "dev recordings of data-v36_1 val; per language (zh / en) names ranked by sha1(name), first 3; the centred 10 s (f0 = (frames - 500) // 2); panels GT / sibag-s2 / enc-s0, per_clip seed 0, offline and psync videos",
+  "clips": [
+   {
+    "ci": 4,
+    "clip": "beat2-zh-13_lu_2_7_7",
+    "lang": "zh",
+    "f0": 784,
+    "f1": 1284
+   },
+   {
+    "ci": 0,
+    "clip": "beat2-zh-13_lu_2_14_14",
+    "lang": "zh",
+    "f0": 630,
+    "f1": 1130
+   },
+   {
+    "ci": 5,
+    "clip": "beat2-zh-13_lu_2_88_88",
+    "lang": "zh",
+    "f0": 1033,
+    "f1": 1533
+   },
+   {
+    "ci": 6,
+    "clip": "beat2-en-13_lu_0_66_66",
+    "lang": "en",
+    "f0": 922,
+    "f1": 1422
+   },
+   {
+    "ci": 41,
+    "clip": "beat2-en-2_scott_0_96_96",
+    "lang": "en",
+    "f0": 760,
+    "f1": 1260
+   },
+   {
+    "ci": 8,
+    "clip": "beat2-en-13_lu_0_96_96",
+    "lang": "en",
+    "f0": 537,
+    "f1": 1037
+   }
+  ]
+ },
+ "int": {
+  "rule": "interrupts_dev_ex002.json with all four rows present; per language keys ranked by sha1(ci@item@frac), first 2; window [f_i - 150, f_i + 107]; GT tail = half-B tails ranked by sha1(id), k-th for the k-th clip, offset aligned to t_i",
+  "rows": [
+   "B3_ISC",
+   "R0causal_ISC",
+   "Funnel_ISC",
+   "L2diag_ISC"
+  ],
+  "selected": [
+   {
+    "key": "2@beat2-zh-13_lu_2_4_4#13@0.3",
+    "clip": "beat2-zh-13_lu_2_4_4",
+    "ci": 2,
+    "t_i": 11.56,
+    "f_i": 578,
+    "tail": "9_miranda_1_12_12@614.09"
+   },
+   {
+    "key": "5@beat2-zh-13_lu_2_88_88#12@0.5",
+    "clip": "beat2-zh-13_lu_2_88_88",
+    "ci": 5,
+    "t_i": 13.32,
+    "f_i": 666,
+    "tail": "9_miranda_1_3_3@425.43"
+   },
+   {
+    "key": "17@beat2-en-2_scott_0_41_41#3@0.5",
+    "clip": "beat2-en-2_scott_0_41_41",
+    "ci": 17,
+    "t_i": 34.1,
+    "f_i": 1705,
+    "tail": "25_goto_0_12_12@114.84"
+   },
+   {
+    "key": "8@beat2-en-13_lu_0_96_96#6@0.7",
+    "clip": "beat2-en-13_lu_0_96_96",
+    "ci": 8,
+    "t_i": 23.28,
+    "f_i": 1164,
+    "tail": "9_miranda_1_1_1@499.98"
+   }
+  ]
+ },
+ "views": [
+  "front",
+  "q34"
+ ],
+ "subtitles": "word-timed (alignment words of the recording; each word shown from its start to its end + 0.3 s)"
+}

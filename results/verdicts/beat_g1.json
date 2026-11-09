@@ -1,0 +1,27 @@
+{
+ "tables": {
+  "g1_main": {
+   "psync FGD < ECHO-G official, CI excludes 0": {
+    "verdict": "PASS",
+    "reason": "SCMG_psync - ECHOG_offline: -0.335 [-0.514, -0.161] (2000 recording draws)",
+    "expected": "PASS",
+    "match": true
+   },
+   "executability after CBF-QP (ours)": {
+    "verdict": "PASS",
+    "reason": "18 runs, min clean share 1.0000",
+    "expected": "PASS",
+    "match": true
+   }
+  },
+  "g1_stream": {
+   "training match halves the psync-offline gap": {
+    "verdict": "N/A",
+    "reason": "no gap to halve on test: ncws psync - offline -0.023, czmws -0.015 (psync not worse in either)",
+    "expected": null,
+    "match": true
+   }
+  }
+ },
+ "mismatches": []
+}

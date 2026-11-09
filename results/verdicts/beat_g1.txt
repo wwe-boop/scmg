@@ -1,0 +1,17 @@
+
+== B1 MAIN TABLE (G1 test, val_common 349 recordings)  (designs: final recipe czm + 6000 steps + sf0 + w_safe 300 + CBF-QP; baselines EMAGE / GestureLSM / SemTalk + GMR, ECHO-G official 5 seeds, ECHO-G stream_prefix)
+  psync FGD < ECHO-G official, CI excludes 0   PASS   SCMG_psync - ECHOG_offline: -0.335 [-0.514, -0.161] (2000 recording draws) [reported: PASS]
+  executability after CBF-QP (ours)            PASS   18 runs, min clean share 1.0000 [reported: PASS]
+  fairness: SCMG and ECHO-G official are scored on the same 349 val_common recordings with the same official FGD encoder, the same leg handling (train-split mean legs for every method) and the same paired bootstrap, because all predictions go through one bench.sh / boot_main_g1.py call; ECHO-G is offline (not causal) and its executability is raw (no safety layer), stated in the table.
+
+== B2 STREAMING ISOLATION (training match, test)  (designs: czmws vs ncws; offline / psync; chunk / look-ahead sweep is dev only)
+  training match halves the psync-offline gap  N/A    no gap to halve on test: ncws psync - offline -0.023, czmws -0.015 (psync not worse in either)
+  fairness: czmws and ncws have the same data, init, steps, sf0, w_safe and test protocol because ncws is the same recipe with the causal training switches off (abltest-1108 lanes), scored by the same final_table_g1.py call.
+
+== MAIN-TABLE ABLATIONS vs czmws (test)  (designs: ncws, training-level no text / no audio, inference-level no text / no audio; offline + psync)
+  paired bootstrap vs czmws not available yet (BOOT_ABL.json) -> no verdicts printed
+
+== NOT JUDGED HERE
+  B3 G1 interruption test: dropped (user decision 11-08, DUPLEX_1107.md); B5 G1 control: owner B; B4 FGD change after CBF: not in these JSONs (the main table FGD is of the raw generation).
+
+BEAT_G1 ALL VERDICTS REPRODUCED

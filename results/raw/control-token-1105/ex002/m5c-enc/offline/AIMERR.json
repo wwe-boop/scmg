@@ -1,0 +1,56 @@
+{
+ "tok5c": {
+  "fa": {
+   "total_median": 32.669092212922806,
+   "total_mean": 39.00984080916931,
+   "total_p90": 76.78205910054476,
+   "azimuth_median": 24.526685192101194,
+   "elevation_median": 1.3848516508690247,
+   "elevation_mean": 2.7356754009695248,
+   "elevation_median_target_above_shoulder": -3.079611895368579,
+   "total_median_target_above_shoulder": 29.755287647018847,
+   "elevation_median_target_below_shoulder": 28.019129848369467
+  },
+  "ix": {
+   "total_median": 30.30817118926661,
+   "total_mean": 37.9347656499651,
+   "total_p90": 76.86412048171184,
+   "azimuth_median": 22.13928690145326,
+   "elevation_median": 2.7907050488345053,
+   "elevation_mean": 4.0605146104523095,
+   "elevation_median_target_above_shoulder": -1.4665192845965969,
+   "total_median_target_above_shoulder": 26.670424714144374,
+   "elevation_median_target_below_shoulder": 30.46944090644094
+  },
+  "events": 1668,
+  "share_target_above_shoulder": 0.7410071942446043,
+  "wrist_minus_shoulder_z_median": -0.21346434950828552
+ },
+ "m9b5c": {
+  "fa": {
+   "total_median": 28.291621189775324,
+   "total_mean": 33.355579637458014,
+   "total_p90": 71.31565192920036,
+   "azimuth_median": 18.604794112190582,
+   "elevation_median": 5.797071920130753,
+   "elevation_mean": 10.6657830720808,
+   "elevation_median_target_above_shoulder": 1.4177812431151695,
+   "total_median_target_above_shoulder": 25.07862347012966,
+   "elevation_median_target_below_shoulder": 29.682127712291436
+  },
+  "ix": {
+   "total_median": 34.05785642784278,
+   "total_mean": 41.751018828440486,
+   "total_p90": 83.96691292870283,
+   "azimuth_median": 27.560281624136508,
+   "elevation_median": 8.41803182901868,
+   "elevation_mean": 12.807297937503256,
+   "elevation_median_target_above_shoulder": 3.9537911329372033,
+   "total_median_target_above_shoulder": 30.238985365832697,
+   "elevation_median_target_below_shoulder": 31.584151188252505
+  },
+  "events": 1668,
+  "share_target_above_shoulder": 0.7410071942446043,
+  "wrist_minus_shoulder_z_median": -0.17478346824645996
+ }
+}

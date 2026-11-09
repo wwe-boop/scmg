@@ -1,0 +1,210 @@
+{
+  "rows": [
+    {
+      "key": "0_mean_4_0_q0",
+      "first_max_deg": 10.204501152038574,
+      "steady_max_deg": 10.167576789855957
+    },
+    {
+      "key": "0_gt_start_4_0_q0",
+      "first_max_deg": 11.05412483215332,
+      "steady_max_deg": 10.62486457824707
+    },
+    {
+      "key": "0_other_real_4_0_q0",
+      "first_max_deg": 14.03779411315918,
+      "steady_max_deg": 14.023921966552734
+    },
+    {
+      "key": "0_arms_plus_03_4_0_q0",
+      "first_max_deg": 26.92848777770996,
+      "steady_max_deg": 27.6751708984375
+    },
+    {
+      "key": "0_arms_minus_03_4_0_q0",
+      "first_max_deg": 11.87894058227539,
+      "steady_max_deg": 12.06501579284668
+    },
+    {
+      "key": "0_random_in_limits_4_0_q0",
+      "first_max_deg": 79.03729248046875,
+      "steady_max_deg": 74.35395050048828
+    },
+    {
+      "key": "1_mean_4_0_q0",
+      "first_max_deg": 10.204501152038574,
+      "steady_max_deg": 10.167576789855957
+    },
+    {
+      "key": "1_gt_start_4_0_q0",
+      "first_max_deg": 11.71912956237793,
+      "steady_max_deg": 11.537063598632812
+    },
+    {
+      "key": "1_other_real_4_0_q0",
+      "first_max_deg": 9.168770790100098,
+      "steady_max_deg": 8.654821395874023
+    },
+    {
+      "key": "1_arms_plus_03_4_0_q0",
+      "first_max_deg": 26.92848777770996,
+      "steady_max_deg": 27.6751708984375
+    },
+    {
+      "key": "1_arms_minus_03_4_0_q0",
+      "first_max_deg": 11.87894058227539,
+      "steady_max_deg": 12.06501579284668
+    },
+    {
+      "key": "1_random_in_limits_4_0_q0",
+      "first_max_deg": 26.548242568969727,
+      "steady_max_deg": 27.319555282592773
+    },
+    {
+      "key": "2_mean_4_0_q0",
+      "first_max_deg": 10.204501152038574,
+      "steady_max_deg": 10.167576789855957
+    },
+    {
+      "key": "2_gt_start_4_0_q0",
+      "first_max_deg": 8.088521957397461,
+      "steady_max_deg": 8.202797889709473
+    },
+    {
+      "key": "2_other_real_4_0_q0",
+      "first_max_deg": 29.436668395996094,
+      "steady_max_deg": 28.716083526611328
+    },
+    {
+      "key": "2_arms_plus_03_4_0_q0",
+      "first_max_deg": 26.92848777770996,
+      "steady_max_deg": 27.6751708984375
+    },
+    {
+      "key": "2_arms_minus_03_4_0_q0",
+      "first_max_deg": 11.87894058227539,
+      "steady_max_deg": 12.06501579284668
+    },
+    {
+      "key": "2_random_in_limits_4_0_q0",
+      "first_max_deg": 92.3544692993164,
+      "steady_max_deg": 89.89263916015625
+    },
+    {
+      "key": "3_mean_4_0_q0",
+      "first_max_deg": 10.204501152038574,
+      "steady_max_deg": 10.167576789855957
+    },
+    {
+      "key": "3_gt_start_4_0_q0",
+      "first_max_deg": 7.345178604125977,
+      "steady_max_deg": 7.552987098693848
+    },
+    {
+      "key": "3_other_real_4_0_q0",
+      "first_max_deg": 31.83635139465332,
+      "steady_max_deg": 32.06801986694336
+    },
+    {
+      "key": "3_arms_plus_03_4_0_q0",
+      "first_max_deg": 26.92848777770996,
+      "steady_max_deg": 27.6751708984375
+    },
+    {
+      "key": "3_arms_minus_03_4_0_q0",
+      "first_max_deg": 11.87894058227539,
+      "steady_max_deg": 12.06501579284668
+    },
+    {
+      "key": "3_random_in_limits_4_0_q0",
+      "first_max_deg": 70.84171295166016,
+      "steady_max_deg": 68.05902099609375
+    },
+    {
+      "key": "4_mean_4_0_q0",
+      "first_max_deg": 10.204501152038574,
+      "steady_max_deg": 10.167576789855957
+    },
+    {
+      "key": "4_gt_start_4_0_q0",
+      "first_max_deg": 12.097784996032715,
+      "steady_max_deg": 12.189750671386719
+    },
+    {
+      "key": "4_other_real_4_0_q0",
+      "first_max_deg": 7.946260929107666,
+      "steady_max_deg": 8.432222366333008
+    },
+    {
+      "key": "4_arms_plus_03_4_0_q0",
+      "first_max_deg": 26.92848777770996,
+      "steady_max_deg": 27.6751708984375
+    },
+    {
+      "key": "4_arms_minus_03_4_0_q0",
+      "first_max_deg": 11.87894058227539,
+      "steady_max_deg": 12.06501579284668
+    },
+    {
+      "key": "4_random_in_limits_4_0_q0",
+      "first_max_deg": 164.01730346679688,
+      "steady_max_deg": 165.0937957763672
+    },
+    {
+      "key": "5_mean_4_0_q0",
+      "first_max_deg": 10.204501152038574,
+      "steady_max_deg": 10.167576789855957
+    },
+    {
+      "key": "5_gt_start_4_0_q0",
+      "first_max_deg": 8.283121109008789,
+      "steady_max_deg": 8.620108604431152
+    },
+    {
+      "key": "5_other_real_4_0_q0",
+      "first_max_deg": 9.013581275939941,
+      "steady_max_deg": 9.129144668579102
+    },
+    {
+      "key": "5_arms_plus_03_4_0_q0",
+      "first_max_deg": 26.92848777770996,
+      "steady_max_deg": 27.6751708984375
+    },
+    {
+      "key": "5_arms_minus_03_4_0_q0",
+      "first_max_deg": 11.87894058227539,
+      "steady_max_deg": 12.06501579284668
+    },
+    {
+      "key": "5_random_in_limits_4_0_q0",
+      "first_max_deg": 111.27986145019531,
+      "steady_max_deg": 109.5466537475586
+    }
+  ],
+  "summary": {
+    "mean": {
+      "n": 6,
+      "steady_arm_max_deg_median": 10.167576789855957
+    },
+    "gt_start": {
+      "n": 6,
+      "steady_arm_max_deg_median": 9.622486591339111
+    },
+    "other_real": {
+      "n": 6,
+      "steady_arm_max_deg_median": 11.576533317565918
+    },
+    "arms_plus_03": {
+      "n": 6,
+      "steady_arm_max_deg_median": 27.6751708984375
+    },
+    "arms_minus_03": {
+      "n": 6,
+      "steady_arm_max_deg_median": 12.06501579284668
+    },
+    "random_in_limits": {
+      "n": 6,
+      "steady_arm_max_deg_median": 82.12329483032227
+    }
+  }
+}

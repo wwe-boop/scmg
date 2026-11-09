@@ -1,0 +1,28 @@
+{
+ "m9c": {
+  "hand_raised_share_mean": 0.558768656716418,
+  "events_hands": 3216,
+  "events_hands_raised_ge80": 0.5304726368159204,
+  "palm_forward_angle_median": 37.46217155456543,
+  "present_hand_raised_share_mean": 0.9968905472636815,
+  "present_hand_raised_ge80": 0.9968905472636815,
+  "present_hand_palm_angle_median": 1.9665247797966003,
+  "present_hand_palm_angle_signed_median": 178.03028869628906,
+  "present_hand_palm_forward_share": 0.1828358208955224,
+  "actual_hand_raised_share_mean": 0.9968905472636815,
+  "actual_hand_palm_angle_signed_median": 178.03028869628906
+ },
+ "m9cctl": {
+  "hand_raised_share_mean": 0.5588293289649314,
+  "events_hands": 3216,
+  "events_hands_raised_ge80": 0.5307835820895522,
+  "palm_forward_angle_median": 37.46217155456543,
+  "present_hand_raised_share_mean": 0.9968905472636815,
+  "present_hand_raised_ge80": 0.9968905472636815,
+  "present_hand_palm_angle_median": 1.9665247797966003,
+  "present_hand_palm_angle_signed_median": 178.03028869628906,
+  "present_hand_palm_forward_share": 0.1828358208955224,
+  "actual_hand_raised_share_mean": 0.9968905472636815,
+  "actual_hand_palm_angle_signed_median": 178.03028869628906
+ }
+}

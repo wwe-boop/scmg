@@ -1,0 +1,83 @@
+{
+ "none": {
+  "fa": {
+   "total_median": 45.554117904921405,
+   "total_mean": 52.559457077209714,
+   "total_p90": 99.45035136806666,
+   "azimuth_median": 31.93346964317478,
+   "elevation_median": -3.749976552178853,
+   "elevation_mean": -3.641016198615297,
+   "elevation_median_target_above_shoulder": -13.972756824638758,
+   "total_median_target_above_shoulder": 41.96617462836391,
+   "elevation_median_target_below_shoulder": 38.05242315360604
+  },
+  "ix": {
+   "total_median": 42.87562893978645,
+   "total_mean": 50.31091902194637,
+   "total_p90": 97.80887999469795,
+   "azimuth_median": 27.920956482216333,
+   "elevation_median": -3.821638034232492,
+   "elevation_mean": -3.9211770164187234,
+   "elevation_median_target_above_shoulder": -13.39186108802005,
+   "total_median_target_above_shoulder": 39.00903925938891,
+   "elevation_median_target_below_shoulder": 39.93436839408422
+  },
+  "events": 1668,
+  "share_target_above_shoulder": 0.7410071942446043,
+  "wrist_minus_shoulder_z_median": -0.2262241542339325
+ },
+ "tok": {
+  "fa": {
+   "total_median": 33.18479299569176,
+   "total_mean": 39.674105176735296,
+   "total_p90": 78.62760338038392,
+   "azimuth_median": 24.834283108595912,
+   "elevation_median": 1.3110756537286248,
+   "elevation_mean": 2.358855427673664,
+   "elevation_median_target_above_shoulder": -3.501019467339008,
+   "total_median_target_above_shoulder": 30.245787524062635,
+   "elevation_median_target_below_shoulder": 28.5492410667824
+  },
+  "ix": {
+   "total_median": 31.168259525210303,
+   "total_mean": 38.53549936119839,
+   "total_p90": 78.65156656594974,
+   "azimuth_median": 22.448936859126995,
+   "elevation_median": 2.461611647674353,
+   "elevation_mean": 3.5686151732449147,
+   "elevation_median_target_above_shoulder": -2.2751560596834794,
+   "total_median_target_above_shoulder": 26.98372216769838,
+   "elevation_median_target_below_shoulder": 30.975139936086933
+  },
+  "events": 1668,
+  "share_target_above_shoulder": 0.7410071942446043,
+  "wrist_minus_shoulder_z_median": -0.2126561403274536
+ },
+ "m9b": {
+  "fa": {
+   "total_median": 28.95166302844637,
+   "total_mean": 34.316185707698835,
+   "total_p90": 73.09711395804138,
+   "azimuth_median": 19.119473295412092,
+   "elevation_median": 5.8924881131794,
+   "elevation_mean": 10.584399663400035,
+   "elevation_median_target_above_shoulder": 1.4630372073339393,
+   "total_median_target_above_shoulder": 25.59734103438234,
+   "elevation_median_target_below_shoulder": 30.858548681273515
+  },
+  "ix": {
+   "total_median": 35.06427414640747,
+   "total_mean": 42.29609887110423,
+   "total_p90": 84.10966475849604,
+   "azimuth_median": 28.076901241126038,
+   "elevation_median": 8.424775125079243,
+   "elevation_mean": 12.410894441578185,
+   "elevation_median_target_above_shoulder": 3.5241091258169366,
+   "total_median_target_above_shoulder": 31.097339842628777,
+   "elevation_median_target_below_shoulder": 33.59472696952303
+  },
+  "events": 1668,
+  "share_target_above_shoulder": 0.7410071942446043,
+  "wrist_minus_shoulder_z_median": -0.1718471646308899
+ }
+}

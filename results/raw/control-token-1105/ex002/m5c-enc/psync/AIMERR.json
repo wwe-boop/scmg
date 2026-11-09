@@ -1,0 +1,56 @@
+{
+ "tok5c": {
+  "fa": {
+   "total_median": 34.42371945391641,
+   "total_mean": 40.60811997990351,
+   "total_p90": 77.93128110138571,
+   "azimuth_median": 25.372062051943118,
+   "elevation_median": -2.48006932674173,
+   "elevation_mean": 0.5484064878694732,
+   "elevation_median_target_above_shoulder": -8.766499784574592,
+   "total_median_target_above_shoulder": 30.312212233312998,
+   "elevation_median_target_below_shoulder": 33.8706247258976
+  },
+  "ix": {
+   "total_median": 31.96339059416906,
+   "total_mean": 39.359670033778045,
+   "total_p90": 81.31062646789435,
+   "azimuth_median": 22.50228897360299,
+   "elevation_median": 0.9643153321430249,
+   "elevation_mean": 4.055847029925736,
+   "elevation_median_target_above_shoulder": -4.835288098753141,
+   "total_median_target_above_shoulder": 28.153126831125284,
+   "elevation_median_target_below_shoulder": 35.38112596595752
+  },
+  "events": 1668,
+  "share_target_above_shoulder": 0.7410071942446043,
+  "wrist_minus_shoulder_z_median": -0.23315557837486267
+ },
+ "m9b5c": {
+  "fa": {
+   "total_median": 27.73547701005814,
+   "total_mean": 33.21887717380461,
+   "total_p90": 72.812338369084,
+   "azimuth_median": 17.131120994619152,
+   "elevation_median": 3.153336507195341,
+   "elevation_mean": 10.305305077953355,
+   "elevation_median_target_above_shoulder": -0.7867986731068166,
+   "total_median_target_above_shoulder": 23.596288506551474,
+   "elevation_median_target_below_shoulder": 35.27190440893199
+  },
+  "ix": {
+   "total_median": 36.88232278605524,
+   "total_mean": 44.09726555172424,
+   "total_p90": 86.80280105644148,
+   "azimuth_median": 30.906019422825853,
+   "elevation_median": 8.82918172747567,
+   "elevation_mean": 14.723815153807337,
+   "elevation_median_target_above_shoulder": 4.087006595716998,
+   "total_median_target_above_shoulder": 31.5413749272903,
+   "elevation_median_target_below_shoulder": 38.232695694130456
+  },
+  "events": 1668,
+  "share_target_above_shoulder": 0.7410071942446043,
+  "wrist_minus_shoulder_z_median": -0.1878422498703003
+ }
+}

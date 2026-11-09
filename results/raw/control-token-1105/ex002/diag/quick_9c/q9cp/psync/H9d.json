@@ -1,0 +1,65 @@
+{
+ "m9cpTf": {
+  "events": 23,
+  "hold_angle_median": 0.783423309493269,
+  "apex_in_hold_share": 0.17391304347826086,
+  "hold_speed_median": 0.11242161272093654,
+  "hold_speed_q25": 0.06267887656576931,
+  "hold_speed_q75": 0.2612101030535996
+ },
+ "d1": {
+  "events": 23,
+  "hold_angle_median": 0.4680073900731706,
+  "apex_in_hold_share": 0.21739130434782608,
+  "hold_speed_median": 0.11607416672632098,
+  "hold_speed_q25": 0.055968062952160835,
+  "hold_speed_q75": 0.2950770314782858
+ },
+ "d12": {
+  "events": 23,
+  "hold_angle_median": 0.46071603597219046,
+  "apex_in_hold_share": 0.391304347826087,
+  "hold_speed_median": 0.11607416672632098,
+  "hold_speed_q25": 0.055968062952160835,
+  "hold_speed_q75": 0.2683457685634494
+ },
+ "d123": {
+  "events": 23,
+  "hold_angle_median": 0.46071603597219046,
+  "apex_in_hold_share": 0.34782608695652173,
+  "hold_speed_median": 0.11607416672632098,
+  "hold_speed_q25": 0.055968062952160835,
+  "hold_speed_q75": 0.2683457685634494
+ },
+ "arbonly": {
+  "events": 23,
+  "hold_angle_median": 0.783423309493269,
+  "apex_in_hold_share": 0.17391304347826086,
+  "hold_speed_median": 0.11242161272093654,
+  "hold_speed_q25": 0.06267887656576931,
+  "hold_speed_q75": 0.2612101030535996
+ },
+ "none123": {
+  "events": 23,
+  "hold_angle_median": 0.7086661288893363,
+  "apex_in_hold_share": 0.34782608695652173,
+  "hold_speed_median": 0.19168074941262603,
+  "hold_speed_q25": 0.1266481471247971,
+  "hold_speed_q75": 0.33273068256676197
+ },
+ "_train_pool": {
+  "point": {
+   "n": 1060,
+   "speed_median": 0.28108924627304077,
+   "speed_q25": 0.14954034239053726,
+   "speed_q75": 0.438047356903553
+  },
+  "control": {
+   "n": 2947,
+   "speed_median": 0.259866327047348,
+   "speed_q25": 0.11701349914073944,
+   "speed_q75": 0.4233657121658325,
+   "disp_end_median": 0.0961914137005806
+  }
+ }
+}

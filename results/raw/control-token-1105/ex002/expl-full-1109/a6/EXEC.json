@@ -1,0 +1,28 @@
+{
+ "a5": {
+  "clips": 43,
+  "exec_after_cbf": 1.0,
+  "raw_violation_any": 0.4272815994898704,
+  "post_pos": 0.0,
+  "post_vel": 0.0,
+  "post_acc": 0.0,
+  "post_jerk": 0.06842521555259401,
+  "cbf_mean_abs_rad": 0.012918576452159472,
+  "ramp_finger_jerk_mean": 163.04026236474115,
+  "ramp_frames_over_finger_jerk_limit": 0.0,
+  "ramp_frames": 271
+ },
+ "a6": {
+  "clips": 43,
+  "exec_after_cbf": 1.0,
+  "raw_violation_any": 0.42640254954693596,
+  "post_pos": 0.0,
+  "post_vel": 0.0,
+  "post_acc": 0.0,
+  "post_jerk": 0.06825422081040941,
+  "cbf_mean_abs_rad": 0.012912823332270862,
+  "ramp_finger_jerk_mean": 152.48049222829843,
+  "ramp_frames_over_finger_jerk_limit": 0.01845018450184502,
+  "ramp_frames": 271
+ }
+}

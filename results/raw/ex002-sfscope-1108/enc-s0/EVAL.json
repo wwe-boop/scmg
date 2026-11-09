@@ -1,0 +1,206 @@
+{
+ "offline-s0": {
+  "n_clips": 43,
+  "frames": 97184,
+  "FKD": 1.5352257172123238,
+  "FGD_v2_seeds": [
+   87.13242328268643,
+   88.17174184326905
+  ],
+  "FGD_v2": 87.65208256297774,
+  "lively": {
+   "clips": 43,
+   "still": 0.025004115903852486,
+   "held_share": 0.0,
+   "stutter": 1.0530285086814848,
+   "wrist_speed": 0.3128119258823886,
+   "wrist_amp": 0.09303936055725298
+  },
+  "lively_gt": {
+   "clips": 43,
+   "still": 0.01663854132367468,
+   "held_share": 0.023255813953488372,
+   "stutter": 1.0262346194031742,
+   "wrist_speed": 0.41114834881613926,
+   "wrist_amp": 0.12030317457809855
+  },
+  "lively_gates": {
+   "still": true,
+   "wrist_speed": true,
+   "wrist_amp": true,
+   "held_share": true,
+   "stutter": true,
+   "pass": true
+  }
+ },
+ "offline-s1": {
+  "n_clips": 43,
+  "frames": 97184,
+  "FKD": 1.4799246722421167,
+  "FGD_v2_seeds": [
+   85.41576585825453,
+   82.74221650322977
+  ],
+  "FGD_v2": 84.07899118074215,
+  "lively": {
+   "clips": 43,
+   "still": 0.02396485018109977,
+   "held_share": 0.0,
+   "stutter": 1.0507734472366077,
+   "wrist_speed": 0.3183700436472886,
+   "wrist_amp": 0.0968161063027676
+  },
+  "lively_gt": {
+   "clips": 43,
+   "still": 0.01663854132367468,
+   "held_share": 0.023255813953488372,
+   "stutter": 1.0262346194031742,
+   "wrist_speed": 0.41114834881613926,
+   "wrist_amp": 0.12030317457809855
+  },
+  "lively_gates": {
+   "still": true,
+   "wrist_speed": true,
+   "wrist_amp": true,
+   "held_share": true,
+   "stutter": true,
+   "pass": true
+  }
+ },
+ "offline-s2": {
+  "n_clips": 43,
+  "frames": 97184,
+  "FKD": 1.5025037164769817,
+  "FGD_v2_seeds": [
+   85.991719049131,
+   88.26330228803442
+  ],
+  "FGD_v2": 87.12751066858272,
+  "lively": {
+   "clips": 43,
+   "still": 0.022153852486005928,
+   "held_share": 0.0,
+   "stutter": 1.0646023245232341,
+   "wrist_speed": 0.31712909988605864,
+   "wrist_amp": 0.09587238933312096
+  },
+  "lively_gt": {
+   "clips": 43,
+   "still": 0.01663854132367468,
+   "held_share": 0.023255813953488372,
+   "stutter": 1.0262346194031742,
+   "wrist_speed": 0.41114834881613926,
+   "wrist_amp": 0.12030317457809855
+  },
+  "lively_gates": {
+   "still": true,
+   "wrist_speed": true,
+   "wrist_amp": true,
+   "held_share": true,
+   "stutter": true,
+   "pass": true
+  }
+ },
+ "psync-s0": {
+  "n_clips": 43,
+  "frames": 97184,
+  "FKD": 1.507057734325297,
+  "FGD_v2_seeds": [
+   99.03946347387603,
+   114.92383614895618
+  ],
+  "FGD_v2": 106.9816498114161,
+  "lively": {
+   "clips": 43,
+   "still": 0.03531445505432993,
+   "held_share": 0.023255813953488372,
+   "stutter": 1.05118948288741,
+   "wrist_speed": 0.3198440967557619,
+   "wrist_amp": 0.09413702669516645
+  },
+  "lively_gt": {
+   "clips": 43,
+   "still": 0.01663854132367468,
+   "held_share": 0.023255813953488372,
+   "stutter": 1.0262346194031742,
+   "wrist_speed": 0.41114834881613926,
+   "wrist_amp": 0.12030317457809855
+  },
+  "lively_gates": {
+   "still": false,
+   "wrist_speed": true,
+   "wrist_amp": true,
+   "held_share": true,
+   "stutter": true,
+   "pass": false
+  }
+ },
+ "psync-s1": {
+  "n_clips": 43,
+  "frames": 97184,
+  "FKD": 1.5561492566452166,
+  "FGD_v2_seeds": [
+   100.91500783557126,
+   115.21540124360536
+  ],
+  "FGD_v2": 108.06520453958831,
+  "lively": {
+   "clips": 43,
+   "still": 0.027483947974975304,
+   "held_share": 0.0,
+   "stutter": 1.0464554265595487,
+   "wrist_speed": 0.32192275965292755,
+   "wrist_amp": 0.09546716778465632
+  },
+  "lively_gt": {
+   "clips": 43,
+   "still": 0.01663854132367468,
+   "held_share": 0.023255813953488372,
+   "stutter": 1.0262346194031742,
+   "wrist_speed": 0.41114834881613926,
+   "wrist_amp": 0.12030317457809855
+  },
+  "lively_gates": {
+   "still": true,
+   "wrist_speed": true,
+   "wrist_amp": true,
+   "held_share": true,
+   "stutter": true,
+   "pass": true
+  }
+ },
+ "psync-s2": {
+  "n_clips": 43,
+  "frames": 97184,
+  "FKD": 1.550371069009456,
+  "FGD_v2_seeds": [
+   104.2230496797165,
+   119.83208234052586
+  ],
+  "FGD_v2": 112.02756601012118,
+  "lively": {
+   "clips": 43,
+   "still": 0.02452049720118538,
+   "held_share": 0.0,
+   "stutter": 1.0621657201422792,
+   "wrist_speed": 0.32686911136523256,
+   "wrist_amp": 0.09475953110235352
+  },
+  "lively_gt": {
+   "clips": 43,
+   "still": 0.01663854132367468,
+   "held_share": 0.023255813953488372,
+   "stutter": 1.0262346194031742,
+   "wrist_speed": 0.41114834881613926,
+   "wrist_amp": 0.12030317457809855
+  },
+  "lively_gates": {
+   "still": true,
+   "wrist_speed": true,
+   "wrist_amp": true,
+   "held_share": true,
+   "stutter": true,
+   "pass": true
+  }
+ }
+}

@@ -1,0 +1,51 @@
+{
+  "path": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/dlc-scmg-train-r4-1102/main-peft/best.pt",
+  "step": 2500,
+  "stage": "peft",
+  "ema_sha256": "6d8fb61bd3f65ebd166576332819b0331dec4d953ca910b2dc3f6a6cbb0675ad",
+  "vae_path": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/trained/vae-r3/final.pt",
+  "vae_ema_sha256": "6edbf4f0ec20a5933a5f960f0ccbe81bb202430b309241a8e6fc70b451310c72",
+  "config": {
+    "z": 16,
+    "d": 512,
+    "heads": 8,
+    "audio_layers": 4,
+    "planner_layers": 8,
+    "flow_layers": 6,
+    "ctx": 4,
+    "stride": 4,
+    "flow_audio_back": 4,
+    "mtc": true,
+    "style": true,
+    "style_z": 8,
+    "state": false,
+    "state_dim": 104,
+    "planner": "chunk",
+    "lm_lr_scale": 0.1,
+    "lora_r": 16,
+    "drop_text": 0.1,
+    "drop_audio": 0.1,
+    "drop_spk": 0.2,
+    "drop_ref": 0.5,
+    "drop_time": 0.5
+  },
+  "sc": {
+    "p_stream": 0.0,
+    "horizons": [
+      0,
+      2,
+      4,
+      8
+    ],
+    "outpaint": false,
+    "p_noctx": 0.1,
+    "w_aux": 0.1,
+    "w_cont": 0.0,
+    "w_rhy": 0.0,
+    "w_kl": 0.05,
+    "free_bits": 0.05,
+    "p_state": 0.0,
+    "state_hist_measured": false,
+    "sigma_tf": 0.2
+  }
+}

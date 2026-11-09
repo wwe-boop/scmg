@@ -1,0 +1,13 @@
+{
+ "m8": {
+  "hand_raised_share_mean": 0.6254860374690703,
+  "events_hands": 3174,
+  "events_hands_raised_ge80": 0.4064272211720227,
+  "palm_forward_angle_median": 77.75455474853516,
+  "present_hand_raised_share_mean": 0.6343922418430235,
+  "present_hand_raised_ge80": 0.4505356017643352,
+  "present_hand_palm_angle_median": 78.3540267944336,
+  "present_hand_palm_angle_signed_median": 100.96100616455078,
+  "present_hand_palm_forward_share": 0.0
+ }
+}

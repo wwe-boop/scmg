@@ -1,0 +1,65 @@
+{
+ "m9cpTf": {
+  "events": 23,
+  "hold_angle_median": 0.9154158939156605,
+  "apex_in_hold_share": 0.13043478260869565,
+  "hold_speed_median": 0.1313894521445036,
+  "hold_speed_q25": 0.0720703712431714,
+  "hold_speed_q75": 0.2785454853437841
+ },
+ "d1": {
+  "events": 23,
+  "hold_angle_median": 0.557731315018547,
+  "apex_in_hold_share": 0.17391304347826086,
+  "hold_speed_median": 0.10427429806441069,
+  "hold_speed_q25": 0.06072690011933446,
+  "hold_speed_q75": 0.29493847396224737
+ },
+ "d12": {
+  "events": 23,
+  "hold_angle_median": 0.557731315018547,
+  "apex_in_hold_share": 0.34782608695652173,
+  "hold_speed_median": 0.10427429806441069,
+  "hold_speed_q25": 0.06072690011933446,
+  "hold_speed_q75": 0.26033163303509355
+ },
+ "d123": {
+  "events": 23,
+  "hold_angle_median": 0.557731315018547,
+  "apex_in_hold_share": 0.30434782608695654,
+  "hold_speed_median": 0.10427429806441069,
+  "hold_speed_q25": 0.06072690011933446,
+  "hold_speed_q75": 0.26033163303509355
+ },
+ "arbonly": {
+  "events": 23,
+  "hold_angle_median": 0.9154158939156605,
+  "apex_in_hold_share": 0.13043478260869565,
+  "hold_speed_median": 0.12814757646992803,
+  "hold_speed_q25": 0.0720703712431714,
+  "hold_speed_q75": 0.2555523067712784
+ },
+ "none123": {
+  "events": 23,
+  "hold_angle_median": 0.8517530867789546,
+  "apex_in_hold_share": 0.4782608695652174,
+  "hold_speed_median": 0.24215213488787413,
+  "hold_speed_q25": 0.0861111533595249,
+  "hold_speed_q75": 0.30207622330635786
+ },
+ "_train_pool": {
+  "point": {
+   "n": 1060,
+   "speed_median": 0.28108924627304077,
+   "speed_q25": 0.14954034239053726,
+   "speed_q75": 0.438047356903553
+  },
+  "control": {
+   "n": 2947,
+   "speed_median": 0.259866327047348,
+   "speed_q25": 0.11701349914073944,
+   "speed_q75": 0.4233657121658325,
+   "disp_end_median": 0.0961914137005806
+  }
+ }
+}

@@ -1,0 +1,200 @@
+"""Text-only semantic-intent predictor (11-06, BJ50 intent head analogue, deployable: inference sees text only).
+Per e5 token of the PREFIX-CAUSAL cache (what a streaming system has when the word arrives): features = token feature +
+mean of the previous 3 tokens; label = BEAT2 annotated semantic class (deictic / iconic / metaphoric) whose token time
+(g1_ctl_tokens.py: keyword-anchored) is nearest to this token within 0.25 s, else none. Trained on TRAIN-split items only
+(MLP, class-balanced CE, CPU). Dev is used only to pick the insertion threshold (selection), never for fitting.
+Output PRED.json {dev stem: [token]} in the CTL.json token format (type = class, t = token time, a = t, b = t + 1, split dev,
+p = probability), non-maximum-suppressed (>= MIN_GAP s apart); consumed by infer_test.py --ctl-mode pred / predlex.
+    python scripts/semantic/g1_sem_predictor.py --ctl <CTL dir> --text <causal e5 cache> --view <hos view> --out <dir>
+"""
+import argparse, json
+from pathlib import Path
+import numpy as np
+import torch, torch.nn as nn, torch.nn.functional as F
+
+CLS = ['none', 'deictic', 'iconic', 'metaphoric']; TID = {1: 1, 2: 2, 3: 3}; NEAR = 0.25; MIN_GAP = 1.0
+
+
+LOOKAHEAD = None    # (bidirectional e5 cache, look-ahead s): 11-06 anticipatory variant (TTS text arrives ahead of the audio)
+PROSODY = None      # (train_feat memmap, items by id, mode 'add' | 'only'): 11-06 audio prosody around the token (causal, H = 160 ms)
+PCOLS = list(range(80, 88)); PBINS = [(-0.66, -0.33), (-0.33, -0.165), (-0.165, 0.0), (0.0, 0.16)]
+CONTENT = None      # (items, view): 11-06 content-word flag of the word containing the token (not a function word)
+MOTION = None       # (train_q memmap, items, generated q50 dir for dev or None): 11-06 motion-phase features from the motion HISTORY
+STOP = set('''a an the and or but if of to in on at by for with from as is are was were be been being am do does did have has had
+i me my we our you your he him his she her it its they them their this that these those there here what which who whom whose
+not no so too very just than then also can could would should will shall may might must um uh like yeah oh well'''.split())
+ARMS = list(range(25, 39)); MBINS = [(-0.66, -0.33), (-0.33, -0.1), (-0.1, 0.0)]
+
+
+def content_flag(stem, tt):
+    import sys; sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from g1_lexicon import words, load_align
+    items, view = CONTENT; it = items[stem]; ws = words(it['text'], load_align(view, stem), it['lang'])
+    out = np.zeros((len(tt), 1), np.float32)
+    for i, t in enumerate(tt):
+        w = [x for x in ws if x[2] - 0.05 <= t <= x[3] + 0.05]
+        if w: out[i, 0] = float(w[0][0].lower().strip("'") not in STOP)
+    return out
+
+
+def motion_hist(stem, tt, split):
+    Q, items, gen = MOTION; it = items[stem]
+    if split == 'dev' and gen is not None: q = np.load(Path(gen) / f'{stem}.q50.npy')[:, ARMS]
+    else: q = np.asarray(Q[it['offset']:it['offset'] + it['frames']][:, ARMS], np.float32)
+    sp = np.zeros(len(q), np.float32); sp[1:] = np.linalg.norm(np.diff(q, axis=0), axis=-1) * 50
+    out = np.zeros((len(tt), 2 * len(MBINS) + 2), np.float32)
+    for i, t in enumerate(tt):
+        if not np.isfinite(t): continue
+        f = int(t * 50); row = []
+        for lo, hi in MBINS:
+            a, b = max(0, f + int(lo * 50)), max(0, min(len(sp), f + int(hi * 50)))
+            w = sp[a:b] if b > a else np.zeros(1, np.float32); row += [w.mean(), w.max()]
+        past = sp[max(0, f - 33):max(1, f)]
+        row += [float(past.min()) if len(past) else 0., float(len(past) - 1 - int(np.argmin(past))) / 33. if len(past) else 0.]
+        out[i] = row
+    return out
+
+
+def prosody(stem, tt):
+    F_, items, _ = PROSODY; it = items[stem]; o, n = it['offset'], it['frames']
+    f = np.asarray(F_[o:o + n][:, PCOLS], np.float32); out = np.zeros((len(tt), 2 * len(PCOLS) * len(PBINS)), np.float32)
+    for i, t in enumerate(tt):
+        if not np.isfinite(t): continue
+        row = []
+        for lo, hi in PBINS:
+            a, b = int(max(0, (t + lo) * 50)), int(min(n, (t + hi) * 50))
+            w = f[a:b] if b > a else np.zeros((1, len(PCOLS)), np.float32)
+            row += [w.mean(0), w.max(0)]
+        out[i] = np.concatenate(row)
+    return out
+
+
+def feats(X, k0, kn, tt=None):
+    x = np.asarray(X[k0:k0 + kn], np.float32)
+    ctx = np.zeros_like(x)
+    for i in range(kn):
+        j = max(0, i - 3)
+        if i > j: ctx[i] = x[j:i].mean(0)
+    if LOOKAHEAD is None: return np.concatenate([x, ctx], 1)
+    Xb, la = LOOKAHEAD; xb = np.asarray(Xb[k0:k0 + kn], np.float32); fut = np.zeros_like(x)
+    for i in range(kn):
+        m = (tt > tt[i]) & (tt <= tt[i] + la)
+        if np.isfinite(tt[i]) and m.any(): fut[i] = xb[m].mean(0)
+    return np.concatenate([x, ctx, fut], 1)
+
+
+def build(raw, X, T, ix, split):
+    xs, ys, meta = [], [], []
+    for s, ts in raw.items():
+        if not ts or ts[0]['split'] != split or s not in ix: continue
+        ann = [t for t in ts if t['type'] in TID]
+        if split == 'train' and not any(t['type'] <= 4 for t in ts): continue          # items with BEAT2 annotation only
+        k0, kn = ix[s]; tt = np.asarray(T[k0:k0 + kn], np.float64); y = np.zeros(kn, np.int64)
+        for t in ann:
+            ok = np.isfinite(tt)
+            if not ok.any(): continue
+            d = np.where(ok, np.abs(tt - t['t']), 1e9); i = int(d.argmin())
+            if d[i] <= NEAR: y[i] = TID[t['type']]
+        x = feats(X, k0, kn, tt)
+        if PROSODY is not None:
+            pr = prosody(s, tt); x = pr if PROSODY[2] == 'only' else np.concatenate([x, pr], 1)
+        if CONTENT is not None: x = np.concatenate([x, content_flag(s, tt)], 1)
+        if MOTION is not None: x = np.concatenate([x, motion_hist(s, tt, split)], 1)
+        xs.append(x); ys.append(y); meta.append((s, tt))
+    return xs, ys, meta
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    for k in ('ctl', 'text', 'view', 'out'): ap.add_argument('--' + k, required=True)
+    ap.add_argument('--epochs', type=int, default=6)
+    ap.add_argument('--lookahead-text', default=None, help='bidirectional e5 cache (row-aligned): add the mean feature of the words of the next '
+                    '--lookahead s (anticipatory protocol: the TTS text of upcoming words has arrived)')
+    ap.add_argument('--lookahead', type=float, default=1.0)
+    ap.add_argument('--prosody-view', default=None, help='view dir (train_feat.npy, train.json): add audio prosody features (8 prosody columns, '
+                    'mean / max in 4 bins of [t - 0.66, t + 0.16] s: causal with the engine 160 ms audio look-ahead)')
+    ap.add_argument('--prosody-only', action='store_true', help='prosody features only (no text): the audio-only localization baseline')
+    ap.add_argument('--prosody-la', type=float, default=0.16, help='audio look-ahead of the prosody bins (s): 0.16 engine (P-sync); '
+                    '1.0 = TTS protocol (the robot TTS synthesises the audio before playing it)')
+    ap.add_argument('--content', action='store_true', help='content-word flag of the word containing the token')
+    ap.add_argument('--motion-gen', default=None, help='motion-history phase features: train = GT history of train items, dev = the '
+                    "MODEL'S OWN generated history (<dir>/<stem>.q50.npy, e.g. the sf0 offline outputs)")
+    a = ap.parse_args(); torch.manual_seed(0); torch.set_num_threads(4)
+    global LOOKAHEAD
+    if a.lookahead_text: LOOKAHEAD = (np.load(Path(a.lookahead_text) / 'TEXT_FEAT.npy', mmap_mode='r'), a.lookahead)
+    global PROSODY, PBINS, CONTENT, MOTION
+    if a.prosody_la > 0.16 + 1e-6:
+        PBINS = PBINS + [(0.16, 0.5), (0.5, a.prosody_la)]
+    if a.content:
+        CONTENT = ({it['id']: it for it in json.loads((Path(a.view) / 'train.json').read_text())}, Path(a.view))
+    if a.motion_gen:
+        MOTION = (np.load(Path(a.view) / 'train_q.npy', mmap_mode='r'), {it['id']: it for it in json.loads((Path(a.view) / 'train.json').read_text())},
+                  a.motion_gen)
+    if a.prosody_view:
+        pv = Path(a.prosody_view)
+        PROSODY = (np.load(pv / 'train_feat.npy', mmap_mode='r'), {it['id']: it for it in json.loads((pv / 'train.json').read_text())},
+                   'only' if a.prosody_only else 'add')
+    raw = json.loads((Path(a.ctl) / 'CTL.json').read_text())
+    X = np.load(Path(a.text) / 'TEXT_FEAT.npy', mmap_mode='r'); T = np.load(Path(a.text) / 'TEXT_TIME.npy')
+    ix = json.loads((Path(a.text) / 'TEXT_INDEX.json').read_text())
+    xtr, ytr, _ = build(raw, X, T, ix, 'train'); xdv, ydv, mdv = build(raw, X, T, ix, 'dev')
+    Xtr, Ytr = torch.tensor(np.concatenate(xtr)), torch.tensor(np.concatenate(ytr))
+    mu, sd = Xtr.mean(0), Xtr.std(0) + 1e-4
+    cnt = torch.bincount(Ytr, minlength=4).float(); w = (cnt.sum() / (4 * cnt.clamp(min=1))).clamp(max=50)
+    net = nn.Sequential(nn.Linear(Xtr.shape[1], 256), nn.GELU(), nn.Dropout(0.2), nn.Linear(256, 4))
+    opt = torch.optim.AdamW(net.parameters(), 1e-3, weight_decay=1e-2)
+    for ep in range(a.epochs):
+        perm = torch.randperm(len(Xtr)); tot = 0.
+        for i in range(0, len(perm), 1024):
+            b = perm[i:i + 1024]; loss = F.cross_entropy(net((Xtr[b] - mu) / sd), Ytr[b], weight=w)
+            opt.zero_grad(); loss.backward(); opt.step(); tot += float(loss) * len(b)
+        print('epoch', ep, round(tot / len(perm), 4), flush=True)
+    net.eval()
+    with torch.no_grad():
+        P = [torch.softmax(net((torch.tensor(x) - mu) / sd), -1).numpy() for x in xdv]
+    n_ann = int(sum((y > 0).sum() for y in ydv))
+    # threshold on dev (selection): max-class probability of non-none; choose tau so that the NMS'd count ~= annotation count
+    def predict(tau, rand=None):
+        out = {}
+        for (s, tt), p in zip(mdv, P):
+            pn = 1 - p[:, 0]
+            if rand is not None: pn = rand.random(len(pn))
+            cand = [i for i in np.argsort(-pn) if pn[i] >= tau and np.isfinite(tt[i])]; keep = []
+            for i in cand:
+                if all(abs(tt[i] - tt[j]) >= MIN_GAP for j in keep): keep.append(i)
+            out[s] = [dict(type=int(np.argmax(p[i, 1:]) + 1), cls=CLS[int(np.argmax(p[i, 1:]) + 1)], t=round(float(tt[i]), 3),
+                           a=round(float(tt[i]), 3), b=round(float(tt[i]) + 1.0, 3), split='dev', p=round(float(pn[i]), 4))
+                      for i in sorted(keep)]
+        return out
+    def score(out):
+        tp = 0; tpc = 0; n = sum(len(v) for v in out.values())
+        for (s, tt), y in zip(mdv, ydv):
+            gt = [(tt[i], y[i]) for i in np.nonzero(y)[0]]
+            for t in out.get(s, []):
+                m = [c for (g, c) in gt if abs(g - t['t']) <= 0.5]
+                tp += bool(m); tpc += t['type'] in m
+        return dict(n_pred=n, precision=tp / max(n, 1), recall_any=tp / max(n_ann, 1), class_precision=tpc / max(n, 1))
+    rep = {}
+    def chance(n_target):            # random scores, same 1 s NMS, threshold set to hit the same total count
+        rng = np.random.default_rng(0); best = None
+        for q in np.linspace(0.0, 0.99, 100):
+            r = score(predict(q, np.random.default_rng(0)))
+            if best is None or abs(r['n_pred'] - n_target) < abs(best['n_pred'] - n_target): best = r
+        return best
+    for tau in (0.5, 0.6, 0.7, 0.8, 0.9):
+        rep[tau] = score(predict(tau)); rep[tau]['chance_same_density'] = chance(rep[tau]['n_pred'])['precision']
+        print(tau, rep[tau], flush=True)
+    tau = min(rep, key=lambda t: abs(rep[t]['n_pred'] - n_ann))
+    out = predict(tau); o = Path(a.out); o.mkdir(parents=True, exist_ok=True)
+    (o / 'PRED.json').write_text(json.dumps(out))
+    # base rate: lexicon rule (every LEX2SEM word) scored the same way
+    (o / 'PRED_INFO.json').write_text(json.dumps(dict(lookahead=(a.lookahead if a.lookahead_text else None),
+                                                      prosody=(PROSODY[2] if PROSODY else None), prosody_bins=PBINS if PROSODY else None,
+                                                      content=bool(CONTENT), motion_gen=a.motion_gen, tau=tau, n_dev_annotations=n_ann, sweep={str(k): v for k, v in rep.items()},
+                                                      train_tokens=int(len(Ytr)), train_pos=cnt.tolist(), near_s=NEAR, min_gap_s=MIN_GAP), indent=1))
+    torch.save(dict(net=net.state_dict(), mu=mu, sd=sd), o / 'predictor.pt')
+    print('TAU', tau, rep[tau])
+
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,85 @@
+"""VoxCPM-style global planner (cfg.planner = 'voxcpm'): replaces the from-scratch chunk transformer.
+
+  sequence = [speaker tok | ref-style tok | text tokens (pretrained LM embeddings) | chunk_0 ... chunk_{K-1}]
+  chunk_k input = LocEnc(latents of chunk k-1) + proj(visible audio of chunk k)
+  TSLM  = pretrained Qwen2.5-0.5B (text-semantic LM), causal; text precedes the motion chunks in ONE sequence
+  FSQ   = finite scalar quantisation of the TSLM output at chunk positions (semi-discrete semantic/rhythm skeleton,
+          straight-through gradients)
+  RALM  = small causal residual LM over chunk positions: input FSQ(h_k) + LocEnc(prev) + audio, output r_k
+  plan h_k = proj(FSQ(h_k)) + r_k  -> conditions the Local Motion Flow (LocDiT) exactly like the default planner
+"""
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from .common import CHUNK, SPK
+from .nn import Encoder, sincos
+
+LM = '/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/models/scmg/Qwen2.5-0.5B'
+
+
+class FSQ(nn.Module):
+    def __init__(self, dim=8, levels=9):
+        super().__init__()
+        self.dim, self.half = dim, (levels - 1) / 2
+
+    def forward(self, x):
+        z = torch.tanh(x) * self.half
+        q = z + (torch.round(z) - z).detach()                       # straight-through rounding
+        return q / self.half
+
+
+class LocEnc(nn.Module):
+    """Chunk latents [.., CHUNK, z] -> one vector (CLS token of a 2-layer encoder)."""
+
+    def __init__(self, z, d, heads):
+        super().__init__()
+        self.inp = nn.Linear(z, d); self.cls = nn.Parameter(torch.zeros(1, 1, d)); self.enc = Encoder(d, heads, 2)
+        self.pos = nn.Parameter(torch.zeros(1, CHUNK + 1, d))
+
+    def forward(self, lat):
+        sh = lat.shape[:-2]
+        x = self.inp(lat.reshape(-1, CHUNK, lat.shape[-1]))
+        x = torch.cat([self.cls.expand(x.shape[0], -1, -1), x], 1) + self.pos
+        return self.enc(x)[:, 0].reshape(*sh, -1)
+
+
+class VoxPlanner(nn.Module):
+    def __init__(self, cfg, lm_path=LM, fsq_dim=8, fsq_levels=9, ralm_layers=4):
+        super().__init__()
+        from transformers import AutoModel
+        d = cfg.d
+        self.lm = AutoModel.from_pretrained(lm_path, torch_dtype=torch.float32, attn_implementation='sdpa')
+        H = self.lm.config.hidden_size; self.H = H
+        self.locenc = LocEnc(cfg.z, d, cfg.heads)
+        self.start = nn.Parameter(torch.zeros(d))
+        self.chunk_in = nn.Linear(d, H); self.audio_in = nn.Linear(d, d)
+        self.spk_in = nn.Linear(d, H); self.ref_in = nn.Linear(d, H)
+        self.fsq_in = nn.Linear(H, fsq_dim); self.fsq = FSQ(fsq_dim, fsq_levels); self.fsq_out = nn.Linear(fsq_dim, d)
+        self.ralm_in = nn.Linear(3 * d, d)
+        self.ralm = Encoder(d, cfg.heads, ralm_layers)
+        self.d = d
+
+    def forward(self, lat, pooled_audio, tids, tidm, g, sref=None):
+        """lat [B, K, CHUNK, z] (teacher forcing: chunk k's input is chunk k-1); pooled_audio [B, K, d] visible audio
+        of each chunk; tids/tidm [B, Kt] LM token ids + mask; g [B, d] global speaker/source cond; sref [B, d] or None.
+        Returns h [B, K, d] and the quantised skeleton codes [B, K, fsq_dim]."""
+        B, K = lat.shape[:2]
+        prev = torch.cat([self.start.expand(B, 1, -1), self.locenc(lat[:, :-1])], 1)          # [B, K, d]
+        au = self.audio_in(pooled_audio)
+        emb = self.lm.get_input_embeddings()
+        text = emb(tids.clamp(min=0))                                                         # [B, Kt, H]
+        pre = [self.spk_in(g)[:, None]]
+        if sref is not None: pre.append(self.ref_in(sref)[:, None])
+        chunks = self.chunk_in(prev + au)                                                     # [B, K, H]
+        x = torch.cat(pre + [text.to(chunks.dtype), chunks], 1)
+        m = torch.cat([torch.ones(B, len(pre), dtype=torch.bool, device=x.device), tidm,
+                       torch.ones(B, K, dtype=torch.bool, device=x.device)], 1)
+        pos = (m.long().cumsum(1) - 1).clamp(min=0)
+        hs = self.lm(inputs_embeds=x, attention_mask=m.long(), position_ids=pos).last_hidden_state[:, -K:]
+        q = self.fsq(self.fsq_in(hs))
+        base = self.fsq_out(q)
+        r_in = self.ralm_in(torch.cat([base, prev, au], -1)) + sincos(torch.arange(K, device=x.device), self.d)[None]
+        causal = torch.ones(K, K, dtype=torch.bool, device=x.device).tril()[None]
+        r = self.ralm(r_in, causal)
+        return base + r, q

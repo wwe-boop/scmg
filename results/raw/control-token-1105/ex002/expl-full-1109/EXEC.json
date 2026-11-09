@@ -1,0 +1,80 @@
+{
+ "tts_s0": {
+  "clips": 43,
+  "exec_after_cbf": 1.0,
+  "raw_violation_any": 0.4260647824138134,
+  "post_pos": 0.0,
+  "post_vel": 0.0,
+  "post_acc": 0.0,
+  "post_jerk": 0.06868136043554898,
+  "cbf_mean_abs_rad": 0.013002663296848347,
+  "ramp_finger_jerk_mean": 196.78919806563277,
+  "ramp_frames_over_finger_jerk_limit": 0.030612244897959183,
+  "ramp_frames": 490
+ },
+ "tts_s1": {
+  "clips": 43,
+  "exec_after_cbf": 1.0,
+  "raw_violation_any": 0.4140519686972668,
+  "post_pos": 0.0,
+  "post_vel": 0.0,
+  "post_acc": 0.0,
+  "post_jerk": 0.06623066212789698,
+  "cbf_mean_abs_rad": 0.012384005500606218,
+  "ramp_finger_jerk_mean": 200.37331283971554,
+  "ramp_frames_over_finger_jerk_limit": 0.030612244897959183,
+  "ramp_frames": 490
+ },
+ "tts_s2": {
+  "clips": 43,
+  "exec_after_cbf": 1.0,
+  "raw_violation_any": 0.4110794007050213,
+  "post_pos": 0.0,
+  "post_vel": 0.0,
+  "post_acc": 0.0,
+  "post_jerk": 0.06302621363848131,
+  "cbf_mean_abs_rad": 0.012181807997401813,
+  "ramp_finger_jerk_mean": 185.48027122849408,
+  "ramp_frames_over_finger_jerk_limit": 0.036734693877551024,
+  "ramp_frames": 490
+ },
+ "psync_s0": {
+  "clips": 43,
+  "exec_after_cbf": 1.0,
+  "raw_violation_any": 0.4357060208449873,
+  "post_pos": 0.0,
+  "post_vel": 0.0,
+  "post_acc": 0.0,
+  "post_jerk": 0.07046629859036108,
+  "cbf_mean_abs_rad": 0.013193402936698965,
+  "ramp_finger_jerk_mean": 158.55557837628055,
+  "ramp_frames_over_finger_jerk_limit": 0.05102040816326531,
+  "ramp_frames": 490
+ },
+ "psync_s1": {
+  "clips": 43,
+  "exec_after_cbf": 1.0,
+  "raw_violation_any": 0.4244826092626778,
+  "post_pos": 0.0,
+  "post_vel": 0.0,
+  "post_acc": 0.0,
+  "post_jerk": 0.06764080959988239,
+  "cbf_mean_abs_rad": 0.012694110169816395,
+  "ramp_finger_jerk_mean": 152.7647259443219,
+  "ramp_frames_over_finger_jerk_limit": 0.05510204081632653,
+  "ramp_frames": 490
+ },
+ "psync_s2": {
+  "clips": 43,
+  "exec_after_cbf": 1.0,
+  "raw_violation_any": 0.42092686597238255,
+  "post_pos": 0.0,
+  "post_vel": 0.0,
+  "post_acc": 0.0,
+  "post_jerk": 0.06477765913443044,
+  "cbf_mean_abs_rad": 0.012295498334302879,
+  "ramp_finger_jerk_mean": 147.2069534986299,
+  "ramp_frames_over_finger_jerk_limit": 0.044897959183673466,
+  "ramp_frames": 490
+ }
+}

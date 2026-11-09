@@ -1,0 +1,11 @@
+{
+  "hostname": "dsw-457999-8588f7b48b-wq9f5",
+  "environment": "PAI DSW",
+  "torch": "2.3.1+cu121",
+  "cuda": "12.1",
+  "gpu": "A800-SXM4-80GB",
+  "physical_gpu": 1,
+  "precision": "float32; no autocast",
+  "integration_steps": 10,
+  "state_checkpoint_available": false
+}

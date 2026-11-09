@@ -1,0 +1,51 @@
+{
+ "tails_A": {
+  "n": 154,
+  "n_needed": 29,
+  "v4_needed": 0.6206896551724138,
+  "v4": 0.8636363636363636,
+  "activity": 0.961038961038961,
+  "withdrawal": 0.8961038961038961,
+  "latency_median": 0.0,
+  "yield3d_all": 0.17532467532467533,
+  "yield3d_needed": 0.04580152671755725
+ },
+ "tails_B": {
+  "n": 151,
+  "n_needed": 42,
+  "v4_needed": 0.38095238095238093,
+  "v4": 0.7549668874172185,
+  "activity": 0.9337748344370861,
+  "withdrawal": 0.8013245033112583,
+  "latency_median": 0.0,
+  "yield3d_all": 0.16556291390728478,
+  "yield3d_needed": 0.10071942446043165
+ },
+ "GT_speech": {
+  "n": 476,
+  "n_needed": 397,
+  "v4_needed": 0.07556675062972293,
+  "v4": 0.08823529411764706,
+  "activity": 0.40756302521008403,
+  "withdrawal": 0.22478991596638656,
+  "latency_median": 0.62
+ },
+ "FRONT": {
+  "n": 476,
+  "n_needed": 308,
+  "v4_needed": 0.0,
+  "v4": 0.0,
+  "activity": 1.0,
+  "withdrawal": 0.0,
+  "latency_median": null
+ },
+ "B1": {
+  "n": 476,
+  "n_needed": 304,
+  "v4_needed": 0.0,
+  "v4": 0.36134453781512604,
+  "activity": 1.0,
+  "withdrawal": 0.36134453781512604,
+  "latency_median": 0.0
+ }
+}

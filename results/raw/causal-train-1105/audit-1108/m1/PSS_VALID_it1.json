@@ -1,0 +1,48 @@
+{
+ "tails_B": {
+  "n": 151,
+  "excluded_short_pre": 0,
+  "pass_rate": 0.847682119205298
+ },
+ "mismatched_ref_B": {
+  "n": 151,
+  "pass_rate": 0.8609271523178808,
+  "delta_pp": 1.3245033112582738
+ },
+ "fresh": {
+  "n": 33,
+  "excluded_short_pre": 0,
+  "pass_rate": 0.6666666666666666,
+  "per_speaker": {
+   "13_lu": {
+    "n": 13,
+    "pass_rate": 1.0
+   },
+   "2_scott": {
+    "n": 20,
+    "pass_rate": 0.45
+   }
+  }
+ },
+ "GT_speech": {
+  "n": 476,
+  "pass_rate": 0.25630252100840334
+ },
+ "gates": {
+  "g1": false,
+  "g2": false,
+  "g3": true,
+  "all": false
+ },
+ "params": {
+  "vs": 0.5846087758307414,
+  "vs_pct": 70.0,
+  "rmin": 0.5434782608695652,
+  "A_rate_p10": 0.0,
+  "A_zero_rate_share": 0.7597402597402597,
+  "skip": 0.5,
+  "n_A": 154,
+  "A_pass": 0.8831168831168831,
+  "source": "half-A tails (seg_halfA)"
+ }
+}

@@ -1,0 +1,123 @@
+{
+ "curve": {
+  "flow": [
+   0.67711,
+   0.60441,
+   0.60897,
+   0.69854,
+   0.61293,
+   0.61259,
+   0.64892,
+   0.61186,
+   0.63445,
+   0.55065,
+   0.59304,
+   0.55977
+  ],
+  "loss": [
+   2.22623,
+   1.43354,
+   1.1203,
+   1.1485,
+   0.9965,
+   0.97491,
+   0.99436,
+   0.95647,
+   0.97193,
+   0.82013,
+   0.83994,
+   0.84612
+  ],
+  "gn": [
+   2.64731,
+   2.09643,
+   1.35322,
+   1.21759,
+   1.24337,
+   1.17014,
+   1.12435,
+   1.13494,
+   1.16025,
+   0.99315,
+   0.97752,
+   1.05826
+  ],
+  "self_forced": [
+   0.56,
+   0.36,
+   0.4,
+   0.72,
+   0.44,
+   0.52,
+   0.64,
+   0.56,
+   0.56,
+   0.32,
+   0.52,
+   0.4
+  ]
+ },
+ "steps": [
+  25,
+  50,
+  75,
+  100,
+  125,
+  150,
+  175,
+  200,
+  225,
+  250,
+  275,
+  300
+ ],
+ "band": {
+  "flow": 0.6136395340495638,
+  "gn": 1.1199518950780234
+ },
+ "dev_flow": 0.6787408292293549,
+ "skipped": 0,
+ "motion": {
+  "clips": 11,
+  "still": 0.06898148148148148,
+  "wrist_speed": 0.17625931825342625,
+  "wrist_amp": 0.05763067909200643,
+  "held_share": 0.0,
+  "stutter": 1.023110918399036
+ },
+ "motion_gt": {
+  "clips": 11,
+  "still": 0.014351851851851852,
+  "wrist_speed": 0.3920572786049584,
+  "wrist_amp": 0.11261010067332991,
+  "held_share": 0.0,
+  "stutter": 1.035727994358304
+ },
+ "lively_gates": {
+  "still": false,
+  "wrist_speed": false,
+  "wrist_amp": false,
+  "held_share": true,
+  "stutter": true,
+  "pass": false
+ },
+ "recipe": {
+  "init": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/dlc-scmg-train-r4-1102/base/best.pt",
+  "cfg": "{\"adsc\": true, \"intent_aux\": true}",
+  "sc": "{\"p_stream\": 0.67, \"p_async\": 1.0, \"p_async_seg\": 0.0, \"w_int\": 0.3, \"sem_w\": 2.0, \"self_force_cfg\": 0.0, \"self_force_mix\": 0.0, \"self_force_noise\": 0.0, \"self_force_p\": 0.5, \"self_force_steps\": 4, \"self_force_rounds\": 1}",
+  "self_force_p": 0.5,
+  "bagger_share": 0.33,
+  "semsynth_share": 0.6,
+  "steps": 300,
+  "seed": 0,
+  "batch": 64,
+  "lr": 0.0001
+ },
+ "tol": {
+  "curve": 0.005,
+  "dev": 0.002,
+  "still": 0.003,
+  "wrist": 0.02
+ },
+ "commit": "5d6f017"
+}

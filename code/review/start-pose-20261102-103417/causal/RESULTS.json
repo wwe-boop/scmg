@@ -1,0 +1,205 @@
+{
+  "model": {
+    "path": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/dlc-scmg-train-r4-1102/nomtc-causal/best.pt",
+    "step": 3500,
+    "stage": "causal",
+    "ema_sha256": "30bc91682b445c7931393d30e45afb25e443d6952240ee848562543a7cc3c162",
+    "vae_path": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/trained/vae-r3/final.pt",
+    "vae_ema_sha256": "6edbf4f0ec20a5933a5f960f0ccbe81bb202430b309241a8e6fc70b451310c72",
+    "config": {
+      "z": 16,
+      "d": 512,
+      "heads": 8,
+      "audio_layers": 4,
+      "planner_layers": 8,
+      "flow_layers": 6,
+      "ctx": 4,
+      "stride": 4,
+      "flow_audio_back": 4,
+      "mtc": false,
+      "style": true,
+      "style_z": 8,
+      "state": false,
+      "state_dim": 104,
+      "planner": "chunk",
+      "lm_lr_scale": 0.1,
+      "lora_r": 16,
+      "drop_text": 0.1,
+      "drop_audio": 0.1,
+      "drop_spk": 0.2,
+      "drop_ref": 0.5,
+      "drop_time": 0.5
+    },
+    "sc": {
+      "p_stream": 0.67,
+      "horizons": [
+        0,
+        2,
+        4,
+        8
+      ],
+      "outpaint": true,
+      "p_noctx": 0.1,
+      "w_aux": 0.1,
+      "w_cont": 1.0,
+      "w_rhy": 0.1,
+      "w_kl": 0.05,
+      "free_bits": 0.05,
+      "p_state": 0.0,
+      "state_hist_measured": false,
+      "sigma_tf": 0.2
+    }
+  },
+  "args": {
+    "ckpt": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/dlc-scmg-train-r4-1102/nomtc-causal/best.pt",
+    "vae": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/trained/vae-r3/final.pt",
+    "out": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/review/start-pose-20261102-103417/causal",
+    "n": 6,
+    "chunks": 6,
+    "steps": 10,
+    "view": "/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/train-v1-20261101/views/data-v36_1",
+    "data": "/mnt/cpfs/zbl-cpfs-new/dataset/zehan/gesture/scmg"
+  },
+  "trials": 108,
+  "seconds": 84.57949876785278,
+  "all_finite": true,
+  "summary": [
+    {
+      "H": 4,
+      "pose": "mean",
+      "n": 12,
+      "first_arm_max_deg_median": 10.323826789855957,
+      "first_arm_max_deg_max": 10.773160934448242,
+      "first_speed_pass": 0,
+      "startup_va_pass": 0,
+      "startup_jerk_pass": 0,
+      "diagnostic_decode_history_first_arm_max_deg_median": 10.195290088653564
+    },
+    {
+      "H": 4,
+      "pose": "gt_start",
+      "n": 12,
+      "first_arm_max_deg_median": 9.092319965362549,
+      "first_arm_max_deg_max": 24.14323616027832,
+      "first_speed_pass": 0,
+      "startup_va_pass": 0,
+      "startup_jerk_pass": 0,
+      "diagnostic_decode_history_first_arm_max_deg_median": 9.568067073822021
+    },
+    {
+      "H": 4,
+      "pose": "other_real",
+      "n": 12,
+      "first_arm_max_deg_median": 14.255078315734863,
+      "first_arm_max_deg_max": 33.319313049316406,
+      "first_speed_pass": 0,
+      "startup_va_pass": 0,
+      "startup_jerk_pass": 0,
+      "diagnostic_decode_history_first_arm_max_deg_median": 11.610930442810059
+    },
+    {
+      "H": 4,
+      "pose": "arms_plus_03",
+      "n": 12,
+      "first_arm_max_deg_median": 31.230440139770508,
+      "first_arm_max_deg_max": 33.45248031616211,
+      "first_speed_pass": 0,
+      "startup_va_pass": 0,
+      "startup_jerk_pass": 0,
+      "diagnostic_decode_history_first_arm_max_deg_median": 28.21865463256836
+    },
+    {
+      "H": 4,
+      "pose": "arms_minus_03",
+      "n": 12,
+      "first_arm_max_deg_median": 11.7833890914917,
+      "first_arm_max_deg_max": 13.221234321594238,
+      "first_speed_pass": 0,
+      "startup_va_pass": 0,
+      "startup_jerk_pass": 0,
+      "diagnostic_decode_history_first_arm_max_deg_median": 12.000769138336182
+    },
+    {
+      "H": 4,
+      "pose": "random_in_limits",
+      "n": 12,
+      "first_arm_max_deg_median": 91.88248062133789,
+      "first_arm_max_deg_max": 162.71153259277344,
+      "first_speed_pass": 0,
+      "startup_va_pass": 0,
+      "startup_jerk_pass": 0,
+      "diagnostic_decode_history_first_arm_max_deg_median": 83.22751998901367
+    },
+    {
+      "H": "inf",
+      "pose": "mean",
+      "n": 6,
+      "first_arm_max_deg_median": 10.457821369171143,
+      "first_arm_max_deg_max": 10.7022705078125,
+      "first_speed_pass": 0,
+      "startup_va_pass": 0,
+      "startup_jerk_pass": 0,
+      "diagnostic_decode_history_first_arm_max_deg_median": 10.22496747970581
+    },
+    {
+      "H": "inf",
+      "pose": "gt_start",
+      "n": 6,
+      "first_arm_max_deg_median": 8.93443489074707,
+      "first_arm_max_deg_max": 11.457423210144043,
+      "first_speed_pass": 0,
+      "startup_va_pass": 0,
+      "startup_jerk_pass": 0,
+      "diagnostic_decode_history_first_arm_max_deg_median": 9.538349151611328
+    },
+    {
+      "H": "inf",
+      "pose": "other_real",
+      "n": 6,
+      "first_arm_max_deg_median": 12.345562934875488,
+      "first_arm_max_deg_max": 33.323184967041016,
+      "first_speed_pass": 0,
+      "startup_va_pass": 0,
+      "startup_jerk_pass": 0,
+      "diagnostic_decode_history_first_arm_max_deg_median": 11.59458589553833
+    },
+    {
+      "H": "inf",
+      "pose": "arms_plus_03",
+      "n": 6,
+      "first_arm_max_deg_median": 31.0844144821167,
+      "first_arm_max_deg_max": 33.7791633605957,
+      "first_speed_pass": 0,
+      "startup_va_pass": 0,
+      "startup_jerk_pass": 0,
+      "diagnostic_decode_history_first_arm_max_deg_median": 28.196582794189453
+    },
+    {
+      "H": "inf",
+      "pose": "arms_minus_03",
+      "n": 6,
+      "first_arm_max_deg_median": 11.872691631317139,
+      "first_arm_max_deg_max": 12.767724990844727,
+      "first_speed_pass": 0,
+      "startup_va_pass": 0,
+      "startup_jerk_pass": 0,
+      "diagnostic_decode_history_first_arm_max_deg_median": 12.015274047851562
+    },
+    {
+      "H": "inf",
+      "pose": "random_in_limits",
+      "n": 6,
+      "first_arm_max_deg_median": 87.98416900634766,
+      "first_arm_max_deg_max": 163.08340454101562,
+      "first_speed_pass": 0,
+      "startup_va_pass": 0,
+      "startup_jerk_pass": 0,
+      "diagnostic_decode_history_first_arm_max_deg_median": 82.34646606445312
+    }
+  ],
+  "caveats": [
+    "Joint-range-valid random poses are not collision-validated.",
+    "Startup is measured from a stationary pose, 50 Hz, raw unfiltered commands.",
+    "Finite tests cannot establish support for every possible initial pose."
+  ]
+}

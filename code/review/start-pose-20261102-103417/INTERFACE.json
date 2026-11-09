@@ -1,0 +1,16 @@
+{
+  "streamer_signature": "(model, vae, feat, cond, stats, H=1000000, steps=10, temperature=1.0, n_future=0, seed=0, standby=None, device='cuda', hist_measured=False, ctx_t=1.0, cfg_w=1.0)",
+  "generate_tick_state_inputs": [
+    {
+      "q_is_none": true,
+      "dq_is_none": true,
+      "history_is_none": true
+    },
+    {
+      "q_is_none": false,
+      "dq_is_none": false,
+      "history_is_none": false
+    }
+  ],
+  "observation": "generate() does not read the initial robot q/dq before the first tick; standby supplies pose-only repeated history."
+}

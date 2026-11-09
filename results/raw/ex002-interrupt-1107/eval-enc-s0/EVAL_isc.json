@@ -1,0 +1,125 @@
+{
+ "B3_isc": {
+  "n": 476,
+  "n_need": 176,
+  "yield_rate": 0.75,
+  "yield_s": 1.079431818181818,
+  "n_need3d": 383,
+  "yield3d_rate": 0.31592689295039167,
+  "yield3d_s": 1.7174412532637076,
+  "yield3d_rate_all": 0.3802521008403361,
+  "react_s": 0.3207563025210084,
+  "abrupt_v3": 0.031512605042016806,
+  "v3_ratio_med": 0.9657755409840939,
+  "unsafe_pos": 0.0,
+  "unsafe_vel": 0.0,
+  "unsafe_coll": 0.0,
+  "unsafe_any": 0.0,
+  "unsafe_coll_scene": 0.5777310924369747,
+  "unsafe_any_scene": 0.5777310924369747,
+  "rkd_post": 0.47544607320018734,
+  "rkd_post_per_feature": [
+   0.17779988574224662,
+   0.41188561839977994,
+   0.5749873074544538,
+   0.8601917970849163,
+   0.35236575731953984
+  ],
+  "rkd_retract": null,
+  "jerk_median": 203.98741039233545
+ },
+ "R0causal_isc": {
+  "n": 476,
+  "n_need": 176,
+  "yield_rate": 0.9829545454545454,
+  "yield_s": 0.5944318181818182,
+  "n_need3d": 383,
+  "yield3d_rate": 0.9817232375979112,
+  "yield3d_s": 0.5856919060052219,
+  "yield3d_rate_all": 0.9810924369747899,
+  "react_s": 0.17079831932773112,
+  "abrupt_v3": 0.004201680672268907,
+  "v3_ratio_med": 0.7428191865417346,
+  "unsafe_pos": 0.0,
+  "unsafe_vel": 0.0,
+  "unsafe_coll": 0.0,
+  "unsafe_any": 0.0,
+  "unsafe_coll_scene": 0.2542016806722689,
+  "unsafe_any_scene": 0.2542016806722689,
+  "rkd_post": 0.5508676800171346,
+  "rkd_post_per_feature": [
+   0.22405847200825418,
+   0.7920903347136504,
+   0.5783186875740532,
+   0.7240422781218301,
+   0.4358286276678852
+  ],
+  "rkd_retract": null,
+  "jerk_median": 156.61518834250683
+ },
+ "Funnel_isc": {
+  "n": 476,
+  "n_need": 176,
+  "yield_rate": 1.0,
+  "yield_s": 0.8986363636363635,
+  "n_need3d": 383,
+  "yield3d_rate": 0.9112271540469974,
+  "yield3d_s": 1.1853263707571802,
+  "yield3d_rate_all": 0.9222689075630253,
+  "react_s": 0.21697478991596642,
+  "abrupt_v3": 0.04411764705882353,
+  "v3_ratio_med": 0.9126544483660608,
+  "unsafe_pos": 0.0,
+  "unsafe_vel": 0.0,
+  "unsafe_coll": 0.0,
+  "unsafe_any": 0.0,
+  "unsafe_coll_scene": 0.2542016806722689,
+  "unsafe_any_scene": 0.2542016806722689,
+  "rkd_post": 0.5189960902604212,
+  "rkd_post_per_feature": [
+   0.17733594502743097,
+   0.5171670098555236,
+   0.5277333234631666,
+   1.0238174215023974,
+   0.34892675145358676
+  ],
+  "rkd_retract": null,
+  "jerk_median": 192.62801028666297
+ },
+ "_meta": {
+  "T_r": 1.8,
+  "T_r_source": "override",
+  "T_r_ex002_human": 0.5800000000000001,
+  "collision_primary": "retargeter WBC clearance (ours): release06 smplx2ex002_3f EX002.clearance, runtime-rm003 349 rows",
+  "collision_scene": "MuJoCo scene, structural-contact-limited: scene.xml contacts minus parent-child links minus pairs in >= 50 % of dev GT frames",
+  "collision_stride": 1,
+  "n_interrupts": 476,
+  "n_human_windows": 305,
+  "n_human_retract": 6,
+  "rkd_post_half_split": 0.14163397785413842,
+  "rkd_retract_half_split": null,
+  "rkd_note": "RKD-post (all post-speech windows) is not comparable with the G1 retraction-window RKD",
+  "yield_primary": "3D: both wrists within 10 cm of the human rest wrist positions, held >= 0.5 s (icommon_ex002.yield3d); height-only = secondary",
+  "rest_wrists": [
+   [
+    0.26716381311416626,
+    0.20178678631782532,
+    0.8974831104278564
+   ],
+   [
+    0.27500197291374207,
+    -0.24014951288700104,
+    0.9032976627349854
+   ]
+  ],
+  "front_control": {
+   "ci": 37,
+   "frame": 1200,
+   "min_wrist_dist_to_rest_m": 0.4983671073589607
+  },
+  "adjacent_pairs": 116,
+  "structural_pairs": 13,
+  "prefix": "executed",
+  "rule": "EX002 interruption metrics (port of scripts/interrupt/eval_interrupt.py; criteria docs/criteria/EX002_INTERRUPT_1107.md)."
+ }
+}

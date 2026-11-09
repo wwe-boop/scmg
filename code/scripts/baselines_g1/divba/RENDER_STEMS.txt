@@ -1,0 +1,6 @@
+english_2_scott_0_103_103_utt_0000
+english_2_scott_0_103_103_utt_0003
+english_2_scott_0_10_10_utt_0000
+english_6_carla_0_100_100_utt_0002
+english_6_carla_0_103_103_utt_0003
+english_6_carla_0_115_115_utt_0005

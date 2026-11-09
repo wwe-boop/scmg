@@ -1,0 +1,80 @@
+{
+ "offline-s0": {
+  "frames": 97184,
+  "hold_frames": 10,
+  "hold_pct": 0.010289759631215015,
+  "jerk_over_limit_frames_pct": 0.0,
+  "raw_jerk_over_limit_frames_pct": 10.915460306012054,
+  "jerk_ratio_at_hold_onsets_p50": 0.09941558043162028,
+  "jerk_ratio_at_hold_onsets_p95": 0.41475143128385145,
+  "jerk_ratio_all_p95": 0.994950532913208,
+  "acc_ratio_at_hold_onsets_p95": 0.0,
+  "acc_ratio_all_p95": 0.9949877858161926,
+  "hold_onset_jerk_over_limit": 0
+ },
+ "offline-s1": {
+  "frames": 97184,
+  "hold_frames": 0,
+  "hold_pct": 0.0,
+  "jerk_over_limit_frames_pct": 0.0,
+  "raw_jerk_over_limit_frames_pct": 10.68672402246149,
+  "jerk_ratio_at_hold_onsets_p50": null,
+  "jerk_ratio_at_hold_onsets_p95": null,
+  "jerk_ratio_all_p95": 0.9949356317520142,
+  "acc_ratio_at_hold_onsets_p95": null,
+  "acc_ratio_all_p95": 0.9949877858161926,
+  "hold_onset_jerk_over_limit": 0
+ },
+ "offline-s2": {
+  "frames": 97184,
+  "hold_frames": 0,
+  "hold_pct": 0.0,
+  "jerk_over_limit_frames_pct": 0.0,
+  "raw_jerk_over_limit_frames_pct": 10.681572304363506,
+  "jerk_ratio_at_hold_onsets_p50": null,
+  "jerk_ratio_at_hold_onsets_p95": null,
+  "jerk_ratio_all_p95": 0.994950532913208,
+  "acc_ratio_at_hold_onsets_p95": null,
+  "acc_ratio_all_p95": 0.9949877858161926,
+  "hold_onset_jerk_over_limit": 0
+ },
+ "psync-s0": {
+  "frames": 97184,
+  "hold_frames": 0,
+  "hold_pct": 0.0,
+  "jerk_over_limit_frames_pct": 0.0,
+  "raw_jerk_over_limit_frames_pct": 8.5250631085467,
+  "jerk_ratio_at_hold_onsets_p50": null,
+  "jerk_ratio_at_hold_onsets_p95": null,
+  "jerk_ratio_all_p95": 0.9947021802266439,
+  "acc_ratio_at_hold_onsets_p95": null,
+  "acc_ratio_all_p95": 0.9779892861843099,
+  "hold_onset_jerk_over_limit": 0
+ },
+ "psync-s1": {
+  "frames": 97184,
+  "hold_frames": 21,
+  "hold_pct": 0.02160849522555153,
+  "jerk_over_limit_frames_pct": 0.0,
+  "raw_jerk_over_limit_frames_pct": 8.99696048632219,
+  "jerk_ratio_at_hold_onsets_p50": 0.12676464393734932,
+  "jerk_ratio_at_hold_onsets_p95": 0.43158865688989556,
+  "jerk_ratio_all_p95": 0.9947518507639567,
+  "acc_ratio_at_hold_onsets_p95": 0.0,
+  "acc_ratio_all_p95": 0.9859634252885976,
+  "hold_onset_jerk_over_limit": 0
+ },
+ "psync-s2": {
+  "frames": 97184,
+  "hold_frames": 0,
+  "hold_pct": 0.0,
+  "jerk_over_limit_frames_pct": 0.0,
+  "raw_jerk_over_limit_frames_pct": 8.90319921693885,
+  "jerk_ratio_at_hold_onsets_p50": null,
+  "jerk_ratio_at_hold_onsets_p95": null,
+  "jerk_ratio_all_p95": 0.9947270154953003,
+  "acc_ratio_at_hold_onsets_p95": null,
+  "acc_ratio_all_p95": 0.987879931926727,
+  "hold_onset_jerk_over_limit": 0
+ }
+}

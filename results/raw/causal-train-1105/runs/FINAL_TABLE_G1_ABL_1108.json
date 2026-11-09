@@ -1,0 +1,2282 @@
+[
+ {
+  "label": "SCMG offline (final recipe)",
+  "runs": [
+   {
+    "FGD": 1.936517909725266,
+    "dDiv": 0.19698911951248443,
+    "dBA": 0.03595519287610893,
+    "dJerkW": 3.8214159691602205,
+    "foot": 0.00974126477622724,
+    "slide": 0.06329950615177637,
+    "n": 3242,
+    "exec_raw_clean": 0.9310344827586207,
+    "exec_raw_any": 0.0019854703826376564,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/final3-1106-perclip/test/czmws-s0/final-test/offline/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 1.9346879921350926,
+    "dDiv": 0.18974958998213554,
+    "dBA": 0.03314580982933257,
+    "dJerkW": 3.7718419492251414,
+    "foot": 0.0097507548207571,
+    "slide": 0.06296642705077682,
+    "n": 3242,
+    "exec_raw_clean": 0.9384236453201971,
+    "exec_raw_any": 0.0016926821234468498,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/final3-1106-perclip/test/czmws-s0/final-test/offline/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 1.9872280574020529,
+    "dDiv": 0.19985976980462805,
+    "dBA": 0.04214119030698138,
+    "dJerkW": 3.7090099782073693,
+    "foot": 0.009512167494530632,
+    "slide": 0.06746990287982106,
+    "n": 3242,
+    "exec_raw_clean": 0.9261083743842364,
+    "exec_raw_any": 0.002049517814335645,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/final3-1106-perclip/test/czmws-s1/final-test/offline/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 1.9949932283044278,
+    "dDiv": 0.2029863243243315,
+    "dBA": 0.044015771218677835,
+    "dJerkW": 3.4960005188494634,
+    "foot": 0.009635944681115505,
+    "slide": 0.06854610771680783,
+    "n": 3242,
+    "exec_raw_clean": 0.9433497536945813,
+    "exec_raw_any": 0.0019214229509396674,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/final3-1106-perclip/test/czmws-s1/final-test/offline/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 1.9582483822145669,
+    "dDiv": 0.22936672831895355,
+    "dBA": 0.042306517857229387,
+    "dJerkW": 3.056412379182099,
+    "foot": 0.009790397467057347,
+    "slide": 0.06870820514230376,
+    "n": 3242,
+    "exec_raw_clean": 0.9236453201970444,
+    "exec_raw_any": 0.002113565246033634,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/final3-1106-perclip/test/czmws-s2/final-test/offline/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 1.9561371363264595,
+    "dDiv": 0.23112312075931407,
+    "dBA": 0.04466596841238346,
+    "dJerkW": 2.8280183564418238,
+    "foot": 0.009949540009794132,
+    "slide": 0.0693599821107415,
+    "n": 3242,
+    "exec_raw_clean": 0.9261083743842364,
+    "exec_raw_any": 0.0016469339579482862,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/final3-1106-perclip/test/czmws-s2/final-test/offline/benchmark_seed_001.json"
+   }
+  ],
+  "n_runs": 6,
+  "FGD": {
+   "mean": 1.9613021176846444,
+   "ci95": [
+    1.9348954463725179,
+    1.9877087889967708
+   ],
+   "min": 1.9346879921350926,
+   "max": 1.9949932283044278,
+   "n": 6
+  },
+  "dDiv": {
+   "mean": 0.20834577545030786,
+   "ci95": [
+    0.1899508978181942,
+    0.22674065308242153
+   ],
+   "min": 0.18974958998213554,
+   "max": 0.23112312075931407,
+   "n": 6
+  },
+  "dBA": {
+   "mean": 0.04037174175011893,
+   "ci95": [
+    0.03544243996965714,
+    0.04530104353058072
+   ],
+   "min": 0.03314580982933257,
+   "max": 0.04466596841238346,
+   "n": 6
+  },
+  "dJerkW": {
+   "mean": 3.447116525177686,
+   "ci95": [
+    3.0137982659613605,
+    3.8804347843940117
+   ],
+   "min": 2.8280183564418238,
+   "max": 3.8214159691602205,
+   "n": 6
+  },
+  "foot": {
+   "mean": 0.009730011541580326,
+   "ci95": [
+    0.009575277083568482,
+    0.00988474599959217
+   ],
+   "min": 0.009512167494530632,
+   "max": 0.009949540009794132,
+   "n": 6
+  },
+  "slide": {
+   "mean": 0.0667250218420379,
+   "ci95": [
+    0.06373428029746625,
+    0.06971576338660954
+   ],
+   "min": 0.06296642705077682,
+   "max": 0.0693599821107415,
+   "n": 6
+  },
+  "exec_raw_clean": {
+   "mean": 0.9314449917898194,
+   "ci95": [
+    0.9232032487895444,
+    0.9396867347900945
+   ],
+   "min": 0.9236453201970444,
+   "max": 0.9433497536945813,
+   "n": 6
+  },
+  "exec_raw_any": {
+   "mean": 0.0019015987458902896,
+   "ci95": [
+    0.0017009738729060247,
+    0.0021022236188745543
+   ],
+   "min": 0.0016469339579482862,
+   "max": 0.002113565246033634,
+   "n": 6
+  },
+  "exec_cbf_clean": {
+   "mean": 1.0,
+   "ci95": [
+    1.0,
+    1.0
+   ],
+   "min": 1.0,
+   "max": 1.0,
+   "n": 6
+  },
+  "exec_cbf_any": {
+   "mean": 0.0,
+   "ci95": [
+    0.0,
+    0.0
+   ],
+   "min": 0.0,
+   "max": 0.0,
+   "n": 6
+  }
+ },
+ {
+  "label": "SCMG psync (final recipe)",
+  "runs": [
+   {
+    "FGD": 1.971966894143165,
+    "dDiv": 0.4749061544054285,
+    "dBA": 0.05112628873315328,
+    "dJerkW": 1.9112863520344305,
+    "foot": 0.009511333303585128,
+    "slide": 0.07605910062833582,
+    "n": 3242,
+    "exec_raw_clean": 0.9039408866995073,
+    "exec_raw_any": 0.003312167182095998,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/final3-1106-perclip/test/czmws-s0/final-test/psync/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 1.967512663197427,
+    "dDiv": 0.45952142070972757,
+    "dBA": 0.048522344480298685,
+    "dJerkW": 1.9857959082278,
+    "foot": 0.009462064430207516,
+    "slide": 0.07468920395514807,
+    "n": 3242,
+    "exec_raw_clean": 0.9039408866995073,
+    "exec_raw_any": 0.00328471828279686,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/final3-1106-perclip/test/czmws-s0/final-test/psync/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 1.9046597536139664,
+    "dDiv": 0.4615994130222303,
+    "dBA": 0.05294895574418235,
+    "dJerkW": 2.1230022371071016,
+    "foot": 0.009623491432778205,
+    "slide": 0.07998642085733686,
+    "n": 3242,
+    "exec_raw_clean": 0.916256157635468,
+    "exec_raw_any": 0.0050048493055428475,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/final3-1106-perclip/test/czmws-s1/final-test/psync/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 1.9134903405062005,
+    "dDiv": 0.464693724758902,
+    "dBA": 0.054251489032137834,
+    "dJerkW": 1.9562553620697756,
+    "foot": 0.00946048986742367,
+    "slide": 0.07936121565924657,
+    "n": 3242,
+    "exec_raw_clean": 0.9113300492610837,
+    "exec_raw_any": 0.0035134591102896776,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/final3-1106-perclip/test/czmws-s1/final-test/psync/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 1.961279830458989,
+    "dDiv": 0.5016835619332778,
+    "dBA": 0.054390306276289935,
+    "dJerkW": 1.6962630247746375,
+    "foot": 0.009761338046492091,
+    "slide": 0.08314566907572303,
+    "n": 3242,
+    "exec_raw_clean": 0.8990147783251231,
+    "exec_raw_any": 0.004565666916756638,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/final3-1106-perclip/test/czmws-s2/final-test/psync/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 1.9595895123481561,
+    "dDiv": 0.49643115311677577,
+    "dBA": 0.05416948922172993,
+    "dJerkW": 1.5858376704894184,
+    "foot": 0.009710273337958122,
+    "slide": 0.08333244264691167,
+    "n": 3242,
+    "exec_raw_clean": 0.8768472906403941,
+    "exec_raw_any": 0.004675462513953191,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/final3-1106-perclip/test/czmws-s2/final-test/psync/benchmark_seed_001.json"
+   }
+  ],
+  "n_runs": 6,
+  "FGD": {
+   "mean": 1.9464164990446509,
+   "ci95": [
+    1.9155692476892636,
+    1.977263750400038
+   ],
+   "min": 1.9046597536139664,
+   "max": 1.971966894143165,
+   "n": 6
+  },
+  "dDiv": {
+   "mean": 0.47647257132439025,
+   "ci95": [
+    0.4572150054577068,
+    0.49573013719107367
+   ],
+   "min": 0.45952142070972757,
+   "max": 0.5016835619332778,
+   "n": 6
+  },
+  "dBA": {
+   "mean": 0.052568145581298666,
+   "ci95": [
+    0.05011548672411386,
+    0.05502080443848347
+   ],
+   "min": 0.048522344480298685,
+   "max": 0.054390306276289935,
+   "n": 6
+  },
+  "dJerkW": {
+   "mean": 1.876406759117194,
+   "ci95": [
+    1.6679676729984474,
+    2.084845845235941
+   ],
+   "min": 1.5858376704894184,
+   "max": 2.1230022371071016,
+   "n": 6
+  },
+  "foot": {
+   "mean": 0.009588165069740787,
+   "ci95": [
+    0.009451938209828767,
+    0.009724391929652807
+   ],
+   "min": 0.00946048986742367,
+   "max": 0.009761338046492091,
+   "n": 6
+  },
+  "slide": {
+   "mean": 0.07942900880378367,
+   "ci95": [
+    0.07569833685101028,
+    0.08315968075655707
+   ],
+   "min": 0.07468920395514807,
+   "max": 0.08333244264691167,
+   "n": 6
+  },
+  "exec_raw_clean": {
+   "mean": 0.9018883415435139,
+   "ci95": [
+    0.8875044299460724,
+    0.9162722531409555
+   ],
+   "min": 0.8768472906403941,
+   "max": 0.916256157635468,
+   "n": 6
+  },
+  "exec_raw_any": {
+   "mean": 0.004059387218572535,
+   "ci95": [
+    0.0032483623754072845,
+    0.004870412061737786
+   ],
+   "min": 0.00328471828279686,
+   "max": 0.0050048493055428475,
+   "n": 6
+  },
+  "exec_cbf_clean": {
+   "mean": 1.0,
+   "ci95": [
+    1.0,
+    1.0
+   ],
+   "min": 1.0,
+   "max": 1.0,
+   "n": 6
+  },
+  "exec_cbf_any": {
+   "mean": 0.0,
+   "ci95": [
+    0.0,
+    0.0
+   ],
+   "min": 0.0,
+   "max": 0.0,
+   "n": 6
+  }
+ },
+ {
+  "label": "no causal training match (ncws) offline",
+  "runs": [
+   {
+    "FGD": 2.0496982696813095,
+    "dDiv": 0.2032478254583343,
+    "dBA": 0.06304694780092457,
+    "dJerkW": 2.2078009390997124,
+    "foot": 0.009015197186345256,
+    "slide": 0.07037197336592446,
+    "n": 3242,
+    "exec_raw_clean": 0.9433497536945813,
+    "exec_raw_any": 0.002580196534118982,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/ncws-s0/final-test/offline/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 2.0461910533654297,
+    "dDiv": 0.19231859688921205,
+    "dBA": 0.06245942265466031,
+    "dJerkW": 2.1518720829491897,
+    "foot": 0.008994757942036509,
+    "slide": 0.06997863152325796,
+    "n": 3242,
+    "exec_raw_clean": 0.9408866995073891,
+    "exec_raw_any": 0.0017109813896462752,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/ncws-s0/final-test/offline/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 2.083623385181184,
+    "dDiv": 0.2215659203422562,
+    "dBA": 0.0580160896721722,
+    "dJerkW": 3.732903498165136,
+    "foot": 0.0090550258948214,
+    "slide": 0.06559499966544843,
+    "n": 3242,
+    "exec_raw_clean": 0.9236453201970444,
+    "exec_raw_any": 0.0030834263546031804,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/ncws-s1/final-test/offline/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 2.093536046949059,
+    "dDiv": 0.21968564756978615,
+    "dBA": 0.05835465817914853,
+    "dJerkW": 3.703238873027459,
+    "foot": 0.009061722848124315,
+    "slide": 0.064970503674095,
+    "n": 3242,
+    "exec_raw_clean": 0.9384236453201971,
+    "exec_raw_any": 0.0026899921313155344,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/ncws-s1/final-test/offline/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 2.073596123741199,
+    "dDiv": 0.23221898502366067,
+    "dBA": 0.05649725285425211,
+    "dJerkW": 3.5497059961013306,
+    "foot": 0.009394375892320953,
+    "slide": 0.064920311373412,
+    "n": 3242,
+    "exec_raw_clean": 0.9433497536945813,
+    "exec_raw_any": 0.002086116346734496,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/ncws-s2/final-test/offline/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 2.0849647150796624,
+    "dDiv": 0.24204510695662385,
+    "dBA": 0.05594719808510584,
+    "dJerkW": 3.504041852351669,
+    "foot": 0.009298095217607808,
+    "slide": 0.06486831349105258,
+    "n": 3242,
+    "exec_raw_clean": 0.9507389162561576,
+    "exec_raw_any": 0.0023240068073270264,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/ncws-s2/final-test/offline/benchmark_seed_001.json"
+   }
+  ],
+  "n_runs": 6,
+  "FGD": {
+   "mean": 2.071934932332974,
+   "ci95": [
+    2.0513008853984016,
+    2.0925689792675466
+   ],
+   "min": 2.0461910533654297,
+   "max": 2.093536046949059,
+   "n": 6
+  },
+  "dDiv": {
+   "mean": 0.2185136803733122,
+   "ci95": [
+    0.19932603713729977,
+    0.23770132360932464
+   ],
+   "min": 0.19231859688921205,
+   "max": 0.24204510695662385,
+   "n": 6
+  },
+  "dBA": {
+   "mean": 0.05905359487437726,
+   "ci95": [
+    0.0558949489063906,
+    0.06221224084236392
+   ],
+   "min": 0.05594719808510584,
+   "max": 0.06304694780092457,
+   "n": 6
+  },
+  "dJerkW": {
+   "mean": 3.1415938736157494,
+   "ci95": [
+    2.3542324921306763,
+    3.9289552551008224
+   ],
+   "min": 2.1518720829491897,
+   "max": 3.732903498165136,
+   "n": 6
+  },
+  "foot": {
+   "mean": 0.009136529163542706,
+   "ci95": [
+    0.008961146004381894,
+    0.009311912322703519
+   ],
+   "min": 0.008994757942036509,
+   "max": 0.009394375892320953,
+   "n": 6
+  },
+  "slide": {
+   "mean": 0.06678412218219841,
+   "ci95": [
+    0.06401055673298471,
+    0.06955768763141211
+   ],
+   "min": 0.06486831349105258,
+   "max": 0.07037197336592446,
+   "n": 6
+  },
+  "exec_raw_clean": {
+   "mean": 0.9400656814449917,
+   "ci95": [
+    0.9305801901282208,
+    0.9495511727617626
+   ],
+   "min": 0.9236453201970444,
+   "max": 0.9507389162561576,
+   "n": 6
+  },
+  "exec_raw_any": {
+   "mean": 0.0024124532606242493,
+   "ci95": [
+    0.0019065965725331621,
+    0.0029183099487153363
+   ],
+   "min": 0.0017109813896462752,
+   "max": 0.0030834263546031804,
+   "n": 6
+  },
+  "exec_cbf_clean": {
+   "mean": 1.0,
+   "ci95": [
+    1.0,
+    1.0
+   ],
+   "min": 1.0,
+   "max": 1.0,
+   "n": 6
+  },
+  "exec_cbf_any": {
+   "mean": 0.0,
+   "ci95": [
+    0.0,
+    0.0
+   ],
+   "min": 0.0,
+   "max": 0.0,
+   "n": 6
+  }
+ },
+ {
+  "label": "no causal training match (ncws) psync",
+  "runs": [
+   {
+    "FGD": 2.023585630014968,
+    "dDiv": 0.6504494939741607,
+    "dBA": 0.07589543717409453,
+    "dJerkW": 0.5417141037417892,
+    "foot": 0.008898255588824207,
+    "slide": 0.08135016254545233,
+    "n": 3242,
+    "exec_raw_clean": 0.8275862068965517,
+    "exec_raw_any": 0.00829871722143942,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/ncws-s0/final-test/psync/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 2.0258966039653057,
+    "dDiv": 0.6493683999567932,
+    "dBA": 0.07763215290080028,
+    "dJerkW": 0.42892077496836833,
+    "foot": 0.008899587000760689,
+    "slide": 0.08154957936668768,
+    "n": 3242,
+    "exec_raw_clean": 0.7980295566502463,
+    "exec_raw_any": 0.008554906948231376,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/ncws-s0/final-test/psync/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 2.0340019305098966,
+    "dDiv": 0.6248955018486242,
+    "dBA": 0.05562878720186992,
+    "dJerkW": 3.589160054852151,
+    "foot": 0.008359062063441,
+    "slide": 0.0715252314656881,
+    "n": 3242,
+    "exec_raw_clean": 0.854679802955665,
+    "exec_raw_any": 0.009003238970117297,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/ncws-s1/final-test/psync/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 2.0434416951399683,
+    "dDiv": 0.6269141905292663,
+    "dBA": 0.056366637595721136,
+    "dJerkW": 3.27359046841989,
+    "foot": 0.008338345200881336,
+    "slide": 0.07261728504781809,
+    "n": 3242,
+    "exec_raw_clean": 0.8768472906403941,
+    "exec_raw_any": 0.004931652240745146,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/ncws-s1/final-test/psync/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 2.093460626068035,
+    "dDiv": 0.721729318529712,
+    "dBA": 0.07144751664580318,
+    "dJerkW": 1.4109466350110722,
+    "foot": 0.009339365444789978,
+    "slide": 0.07664331988409107,
+    "n": 3242,
+    "exec_raw_clean": 0.7931034482758621,
+    "exec_raw_any": 0.009744359251194027,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/ncws-s2/final-test/psync/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 2.07586975206347,
+    "dDiv": 0.7185075852122293,
+    "dBA": 0.07519777511397263,
+    "dJerkW": 1.1471783429228424,
+    "foot": 0.009366913899288825,
+    "slide": 0.0773939325294373,
+    "n": 3242,
+    "exec_raw_clean": 0.8029556650246306,
+    "exec_raw_any": 0.00931432649550753,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/ncws-s2/final-test/psync/benchmark_seed_001.json"
+   }
+  ],
+  "n_runs": 6,
+  "FGD": {
+   "mean": 2.0493760396269405,
+   "ci95": [
+    2.019202706831516,
+    2.079549372422365
+   ],
+   "min": 2.023585630014968,
+   "max": 2.093460626068035,
+   "n": 6
+  },
+  "dDiv": {
+   "mean": 0.6653107483417977,
+   "ci95": [
+    0.6193371740002453,
+    0.7112843226833501
+   ],
+   "min": 0.6248955018486242,
+   "max": 0.721729318529712,
+   "n": 6
+  },
+  "dBA": {
+   "mean": 0.06869471777204361,
+   "ci95": [
+    0.058155375449373894,
+    0.07923406009471333
+   ],
+   "min": 0.05562878720186992,
+   "max": 0.07763215290080028,
+   "n": 6
+  },
+  "dJerkW": {
+   "mean": 1.7319183966526854,
+   "ci95": [
+    0.29412016288171716,
+    3.169716630423654
+   ],
+   "min": 0.42892077496836833,
+   "max": 3.589160054852151,
+   "n": 6
+  },
+  "foot": {
+   "mean": 0.008866921532997672,
+   "ci95": [
+    0.008394661817208663,
+    0.00933918124878668
+   ],
+   "min": 0.008338345200881336,
+   "max": 0.009366913899288825,
+   "n": 6
+  },
+  "slide": {
+   "mean": 0.07684658513986242,
+   "ci95": [
+    0.07242037825638767,
+    0.08127279202333718
+   ],
+   "min": 0.0715252314656881,
+   "max": 0.08154957936668768,
+   "n": 6
+  },
+  "exec_raw_clean": {
+   "mean": 0.8255336617405583,
+   "ci95": [
+    0.7897765096541548,
+    0.8612908138269618
+   ],
+   "min": 0.7931034482758621,
+   "max": 0.8768472906403941,
+   "n": 6
+  },
+  "exec_raw_any": {
+   "mean": 0.008307866854539133,
+   "ci95": [
+    0.006488982567238201,
+    0.010126751141840064
+   ],
+   "min": 0.004931652240745146,
+   "max": 0.009744359251194027,
+   "n": 6
+  },
+  "exec_cbf_clean": {
+   "mean": 1.0,
+   "ci95": [
+    1.0,
+    1.0
+   ],
+   "min": 1.0,
+   "max": 1.0,
+   "n": 6
+  },
+  "exec_cbf_any": {
+   "mean": 0.0,
+   "ci95": [
+    0.0,
+    0.0
+   ],
+   "min": 0.0,
+   "max": 0.0,
+   "n": 6
+  }
+ },
+ {
+  "label": "training-level no text (czmws-nt) offline",
+  "runs": [
+   {
+    "FGD": 1.8402218761822935,
+    "dDiv": 0.20428507953436492,
+    "dBA": 0.01688326960495712,
+    "dJerkW": 4.7832574283113445,
+    "foot": 0.009020625652750493,
+    "slide": 0.0599443864071297,
+    "n": 3242,
+    "exec_raw_clean": 0.9039408866995073,
+    "exec_raw_any": 0.003248119750398009,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-nt-s0/final-test/offline/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 1.8432615591723334,
+    "dDiv": 0.20503803471334803,
+    "dBA": 0.017478736426926544,
+    "dJerkW": 4.729553092160785,
+    "foot": 0.009071503919872784,
+    "slide": 0.05991476618257948,
+    "n": 3242,
+    "exec_raw_clean": 0.8916256157635468,
+    "exec_raw_any": 0.003659853239885081,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-nt-s0/final-test/offline/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 1.9081876335102113,
+    "dDiv": 0.2246480667470634,
+    "dBA": 0.008846921896635274,
+    "dJerkW": 5.723188635394266,
+    "foot": 0.009054470848621307,
+    "slide": 0.05665303207790269,
+    "n": 3242,
+    "exec_raw_clean": 0.9310344827586207,
+    "exec_raw_any": 0.002662543232016396,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-nt-s1/final-test/offline/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 1.9359839364539928,
+    "dDiv": 0.2352903582551884,
+    "dBA": 0.012158512456439619,
+    "dJerkW": 5.511469764237766,
+    "foot": 0.009071246844582957,
+    "slide": 0.05746702456480279,
+    "n": 3242,
+    "exec_raw_clean": 0.9088669950738916,
+    "exec_raw_any": 0.002433802404523579,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-nt-s1/final-test/offline/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 1.8065358274281724,
+    "dDiv": 0.276928709905776,
+    "dBA": 0.01976104476358953,
+    "dJerkW": 4.73843277287726,
+    "foot": 0.009191012188001732,
+    "slide": 0.060733731721173384,
+    "n": 3242,
+    "exec_raw_clean": 0.8645320197044335,
+    "exec_raw_any": 0.004766958844950317,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-nt-s2/final-test/offline/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 1.821315928357576,
+    "dDiv": 0.29019198338880003,
+    "dBA": 0.019212794308322345,
+    "dJerkW": 4.608387613861176,
+    "foot": 0.009392681110259387,
+    "slide": 0.061792043782311006,
+    "n": 3242,
+    "exec_raw_clean": 0.8669950738916257,
+    "exec_raw_any": 0.005901513349314692,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-nt-s2/final-test/offline/benchmark_seed_001.json"
+   }
+  ],
+  "n_runs": 6,
+  "FGD": {
+   "mean": 1.8592511268507632,
+   "ci95": [
+    1.8054969343665097,
+    1.9130053193350167
+   ],
+   "min": 1.8065358274281724,
+   "max": 1.9359839364539928,
+   "n": 6
+  },
+  "dDiv": {
+   "mean": 0.23939703875742346,
+   "ci95": [
+    0.2011637475976808,
+    0.27763032991716613
+   ],
+   "min": 0.20428507953436492,
+   "max": 0.29019198338880003,
+   "n": 6
+  },
+  "dBA": {
+   "mean": 0.01572354657614507,
+   "ci95": [
+    0.011200020611481069,
+    0.020247072540809073
+   ],
+   "min": 0.008846921896635274,
+   "max": 0.01976104476358953,
+   "n": 6
+  },
+  "dJerkW": {
+   "mean": 5.015714884473766,
+   "ci95": [
+    4.517919886967651,
+    5.513509881979881
+   ],
+   "min": 4.608387613861176,
+   "max": 5.723188635394266,
+   "n": 6
+  },
+  "foot": {
+   "mean": 0.009133590094014776,
+   "ci95": [
+    0.008987279310142936,
+    0.009279900877886615
+   ],
+   "min": 0.009020625652750493,
+   "max": 0.009392681110259387,
+   "n": 6
+  },
+  "slide": {
+   "mean": 0.059417497455983175,
+   "ci95": [
+    0.0573534176480895,
+    0.061481577263876847
+   ],
+   "min": 0.05665303207790269,
+   "max": 0.061792043782311006,
+   "n": 6
+  },
+  "exec_raw_clean": {
+   "mean": 0.8944991789819375,
+   "ci95": [
+    0.8675665947030098,
+    0.9214317632608653
+   ],
+   "min": 0.8645320197044335,
+   "max": 0.9310344827586207,
+   "n": 6
+  },
+  "exec_raw_any": {
+   "mean": 0.0037787984701813456,
+   "ci95": [
+    0.002383941972398569,
+    0.005173654967964122
+   ],
+   "min": 0.002433802404523579,
+   "max": 0.005901513349314692,
+   "n": 6
+  },
+  "exec_cbf_clean": {
+   "mean": 1.0,
+   "ci95": [
+    1.0,
+    1.0
+   ],
+   "min": 1.0,
+   "max": 1.0,
+   "n": 6
+  },
+  "exec_cbf_any": {
+   "mean": 0.0,
+   "ci95": [
+    0.0,
+    0.0
+   ],
+   "min": 0.0,
+   "max": 0.0,
+   "n": 6
+  }
+ },
+ {
+  "label": "training-level no text (czmws-nt) psync",
+  "runs": [
+   {
+    "FGD": 1.9277910308405497,
+    "dDiv": 0.3506735387933011,
+    "dBA": 0.02982060562045885,
+    "dJerkW": 3.3337261228579678,
+    "foot": 0.009690393654456831,
+    "slide": 0.07384193712330661,
+    "n": 3242,
+    "exec_raw_clean": 0.9088669950738916,
+    "exec_raw_any": 0.004391823887862097,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-nt-s0/final-test/psync/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 1.8929782282445116,
+    "dDiv": 0.3610010613553125,
+    "dBA": 0.03150288552516012,
+    "dJerkW": 3.1807616311614595,
+    "foot": 0.009601029298288644,
+    "slide": 0.07451843646013699,
+    "n": 3242,
+    "exec_raw_clean": 0.9088669950738916,
+    "exec_raw_any": 0.0037239006715830696,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-nt-s0/final-test/psync/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 1.9872335078432801,
+    "dDiv": 0.3448115202016466,
+    "dBA": 0.029632074931001284,
+    "dJerkW": 3.8696674420272785,
+    "foot": 0.009353759980034002,
+    "slide": 0.07194358375834682,
+    "n": 3242,
+    "exec_raw_clean": 0.9088669950738916,
+    "exec_raw_any": 0.003998389664574451,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-nt-s1/final-test/psync/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 1.9705969372111802,
+    "dDiv": 0.36532709633690796,
+    "dBA": 0.031338873962916014,
+    "dJerkW": 3.7275388426712937,
+    "foot": 0.009346452255483915,
+    "slide": 0.07193217847242327,
+    "n": 3242,
+    "exec_raw_clean": 0.9088669950738916,
+    "exec_raw_any": 0.00284553589401065,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-nt-s1/final-test/psync/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 1.9494004034182009,
+    "dDiv": 0.38167029294422616,
+    "dBA": 0.028982716737785186,
+    "dJerkW": 2.889853588799035,
+    "foot": 0.009775468457267457,
+    "slide": 0.0785835652286388,
+    "n": 3242,
+    "exec_raw_clean": 0.8842364532019704,
+    "exec_raw_any": 0.004794407744249456,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-nt-s2/final-test/psync/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 1.935004883823181,
+    "dDiv": 0.38087109504611383,
+    "dBA": 0.03121552141148709,
+    "dJerkW": 2.77994185333025,
+    "foot": 0.009817585218065908,
+    "slide": 0.07883743332718475,
+    "n": 3242,
+    "exec_raw_clean": 0.8645320197044335,
+    "exec_raw_any": 0.004940801873844859,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-nt-s2/final-test/psync/benchmark_seed_001.json"
+   }
+  ],
+  "n_runs": 6,
+  "FGD": {
+   "mean": 1.9438341652301505,
+   "ci95": [
+    1.9088629239816413,
+    1.9788054064786598
+   ],
+   "min": 1.8929782282445116,
+   "max": 1.9872335078432801,
+   "n": 6
+  },
+  "dDiv": {
+   "mean": 0.36405910077958464,
+   "ci95": [
+    0.34812011635650125,
+    0.37999808520266803
+   ],
+   "min": 0.3448115202016466,
+   "max": 0.38167029294422616,
+   "n": 6
+  },
+  "dBA": {
+   "mean": 0.030415446364801424,
+   "ci95": [
+    0.02929538994168249,
+    0.031535502787920354
+   ],
+   "min": 0.028982716737785186,
+   "max": 0.03150288552516012,
+   "n": 6
+  },
+  "dJerkW": {
+   "mean": 3.2969149134745472,
+   "ci95": [
+    2.8367666090938757,
+    3.757063217855219
+   ],
+   "min": 2.77994185333025,
+   "max": 3.8696674420272785,
+   "n": 6
+  },
+  "foot": {
+   "mean": 0.009597448143932793,
+   "ci95": [
+    0.00938177131692782,
+    0.009813124970937765
+   ],
+   "min": 0.009346452255483915,
+   "max": 0.009817585218065908,
+   "n": 6
+  },
+  "slide": {
+   "mean": 0.07494285572833954,
+   "ci95": [
+    0.07169555306984635,
+    0.07819015838683274
+   ],
+   "min": 0.07193217847242327,
+   "max": 0.07883743332718475,
+   "n": 6
+  },
+  "exec_raw_clean": {
+   "mean": 0.8973727422003283,
+   "ci95": [
+    0.8775745524568399,
+    0.9171709319438166
+   ],
+   "min": 0.8645320197044335,
+   "max": 0.9088669950738916,
+   "n": 6
+  },
+  "exec_raw_any": {
+   "mean": 0.004115809956020764,
+   "ci95": [
+    0.0033031554393555783,
+    0.00492846447268595
+   ],
+   "min": 0.00284553589401065,
+   "max": 0.004940801873844859,
+   "n": 6
+  },
+  "exec_cbf_clean": {
+   "mean": 1.0,
+   "ci95": [
+    1.0,
+    1.0
+   ],
+   "min": 1.0,
+   "max": 1.0,
+   "n": 6
+  },
+  "exec_cbf_any": {
+   "mean": 0.0,
+   "ci95": [
+    0.0,
+    0.0
+   ],
+   "min": 0.0,
+   "max": 0.0,
+   "n": 6
+  }
+ },
+ {
+  "label": "training-level no audio (czmws-na) offline",
+  "runs": [
+   {
+    "FGD": 2.1387109622519667,
+    "dDiv": 0.18357545400799635,
+    "dBA": 0.012841030153675326,
+    "dJerkW": 6.054642193390919,
+    "foot": 0.009416386687682908,
+    "slide": 0.06310997860903181,
+    "n": 3242,
+    "exec_raw_clean": 0.9359605911330049,
+    "exec_raw_any": 0.0030376781891046168,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-na-s0/final-test/offline/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 2.132963136344121,
+    "dDiv": 0.17945709042146252,
+    "dBA": 0.013027211176630193,
+    "dJerkW": 5.861065833235763,
+    "foot": 0.009453872217042799,
+    "slide": 0.06356266842991858,
+    "n": 3242,
+    "exec_raw_clean": 0.9458128078817734,
+    "exec_raw_any": 0.0016194850586491482,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-na-s0/final-test/offline/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 2.202643576271141,
+    "dDiv": 0.23955763483725656,
+    "dBA": 0.02535290661036327,
+    "dJerkW": 5.310932953692522,
+    "foot": 0.00894897025303307,
+    "slide": 0.06611615530531773,
+    "n": 3242,
+    "exec_raw_clean": 0.9458128078817734,
+    "exec_raw_any": 0.0035043094771899648,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-na-s1/final-test/offline/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 2.1867942323773963,
+    "dDiv": 0.23874773054332055,
+    "dBA": 0.024370155275097338,
+    "dJerkW": 5.300933431041713,
+    "foot": 0.009158047691533873,
+    "slide": 0.0662398967104243,
+    "n": 3242,
+    "exec_raw_clean": 0.9507389162561576,
+    "exec_raw_any": 0.002141014145332772,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-na-s1/final-test/offline/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 2.152523883909951,
+    "dDiv": 0.22406268001612584,
+    "dBA": 0.025290144207399612,
+    "dJerkW": 5.558170257650431,
+    "foot": 0.009076624974482092,
+    "slide": 0.06527322639563546,
+    "n": 3242,
+    "exec_raw_clean": 0.9532019704433498,
+    "exec_raw_any": 0.0037147510384833568,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-na-s2/final-test/offline/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 2.1293298760052037,
+    "dDiv": 0.22125138703052238,
+    "dBA": 0.025088558460871435,
+    "dJerkW": 5.644544690052243,
+    "foot": 0.009160573387759047,
+    "slide": 0.06530373373941015,
+    "n": 3242,
+    "exec_raw_clean": 0.9507389162561576,
+    "exec_raw_any": 0.002415503138324153,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-na-s2/final-test/offline/benchmark_seed_001.json"
+   }
+  ],
+  "n_runs": 6,
+  "FGD": {
+   "mean": 2.15716094452663,
+   "ci95": [
+    2.1250928012886283,
+    2.1892290877646317
+   ],
+   "min": 2.1293298760052037,
+   "max": 2.202643576271141,
+   "n": 6
+  },
+  "dDiv": {
+   "mean": 0.2144419961427807,
+   "ci95": [
+    0.1865294683046675,
+    0.2423545239808939
+   ],
+   "min": 0.17945709042146252,
+   "max": 0.23955763483725656,
+   "n": 6
+  },
+  "dBA": {
+   "mean": 0.020995000980672862,
+   "ci95": [
+    0.014431850444193671,
+    0.027558151517152053
+   ],
+   "min": 0.012841030153675326,
+   "max": 0.02535290661036327,
+   "n": 6
+  },
+  "dJerkW": {
+   "mean": 5.621714893177265,
+   "ci95": [
+    5.307318196946756,
+    5.9361115894077745
+   ],
+   "min": 5.300933431041713,
+   "max": 6.054642193390919,
+   "n": 6
+  },
+  "foot": {
+   "mean": 0.00920241253525563,
+   "ci95": [
+    0.008996342725715327,
+    0.009408482344795932
+   ],
+   "min": 0.00894897025303307,
+   "max": 0.009453872217042799,
+   "n": 6
+  },
+  "slide": {
+   "mean": 0.064934276531623,
+   "ci95": [
+    0.06356097951812802,
+    0.06630757354511797
+   ],
+   "min": 0.06310997860903181,
+   "max": 0.0662398967104243,
+   "n": 6
+  },
+  "exec_raw_clean": {
+   "mean": 0.9470443349753693,
+   "ci95": [
+    0.9405564961798927,
+    0.953532173770846
+   ],
+   "min": 0.9359605911330049,
+   "max": 0.9532019704433498,
+   "n": 6
+  },
+  "exec_raw_any": {
+   "mean": 0.002738790174514002,
+   "ci95": [
+    0.001880746016073204,
+    0.0035968343329547997
+   ],
+   "min": 0.0016194850586491482,
+   "max": 0.0037147510384833568,
+   "n": 6
+  },
+  "exec_cbf_clean": {
+   "mean": 1.0,
+   "ci95": [
+    1.0,
+    1.0
+   ],
+   "min": 1.0,
+   "max": 1.0,
+   "n": 6
+  },
+  "exec_cbf_any": {
+   "mean": 0.0,
+   "ci95": [
+    0.0,
+    0.0
+   ],
+   "min": 0.0,
+   "max": 0.0,
+   "n": 6
+  }
+ },
+ {
+  "label": "training-level no audio (czmws-na) psync",
+  "runs": [
+   {
+    "FGD": 2.075395976669509,
+    "dDiv": 0.3504349978549315,
+    "dBA": 0.018962483701897015,
+    "dJerkW": 8.352670873145026,
+    "foot": 0.007371749714955757,
+    "slide": 0.054251140638218384,
+    "n": 3242,
+    "exec_raw_clean": 0.9679802955665024,
+    "exec_raw_any": 0.0015737368931505846,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-na-s0/final-test/psync/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 2.1021083833169385,
+    "dDiv": 0.32816755990341995,
+    "dBA": 0.014764003084988708,
+    "dJerkW": 8.530416968682694,
+    "foot": 0.007247882686378213,
+    "slide": 0.053390018173271096,
+    "n": 3242,
+    "exec_raw_clean": 0.9630541871921182,
+    "exec_raw_any": 0.0011894523029626512,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-na-s0/final-test/psync/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 2.1126090190118987,
+    "dDiv": 0.3772404690029527,
+    "dBA": 0.026599574813971794,
+    "dJerkW": 8.206730913965927,
+    "foot": 0.0074169084607188015,
+    "slide": 0.056575994926834,
+    "n": 3242,
+    "exec_raw_clean": 0.9605911330049262,
+    "exec_raw_any": 0.0021684630446319104,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-na-s1/final-test/psync/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 2.1261508139750536,
+    "dDiv": 0.3659420691762403,
+    "dBA": 0.025223887814298407,
+    "dJerkW": 8.1378086625522,
+    "foot": 0.007382372919156226,
+    "slide": 0.05619219292867596,
+    "n": 3242,
+    "exec_raw_clean": 0.9753694581280788,
+    "exec_raw_any": 0.0009607114754698337,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-na-s1/final-test/psync/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 2.0823094796103616,
+    "dDiv": 0.38803275258358383,
+    "dBA": 0.027079016857446625,
+    "dJerkW": 7.82542470557787,
+    "foot": 0.007278191125558581,
+    "slide": 0.05520175715717662,
+    "n": 3242,
+    "exec_raw_clean": 0.9334975369458128,
+    "exec_raw_any": 0.0029919300236060536,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-na-s2/final-test/psync/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 2.0844023605021045,
+    "dDiv": 0.37475123509436714,
+    "dBA": 0.026762636278389595,
+    "dJerkW": 7.6238004183503705,
+    "foot": 0.007349248249059022,
+    "slide": 0.05564678449701934,
+    "n": 3242,
+    "exec_raw_clean": 0.9556650246305419,
+    "exec_raw_any": 0.0023697549728255896,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-na-s2/final-test/psync/benchmark_seed_001.json"
+   }
+  ],
+  "n_runs": 6,
+  "FGD": {
+   "mean": 2.097162672180978,
+   "ci95": [
+    2.0763817584992323,
+    2.1179435858627236
+   ],
+   "min": 2.075395976669509,
+   "max": 2.1261508139750536,
+   "n": 6
+  },
+  "dDiv": {
+   "mean": 0.3640948472692493,
+   "ci95": [
+    0.34139129262702095,
+    0.38679840191147763
+   ],
+   "min": 0.32816755990341995,
+   "max": 0.38803275258358383,
+   "n": 6
+  },
+  "dBA": {
+   "mean": 0.02323193375849869,
+   "ci95": [
+    0.017829452751247435,
+    0.028634414765749946
+   ],
+   "min": 0.014764003084988708,
+   "max": 0.027079016857446625,
+   "n": 6
+  },
+  "dJerkW": {
+   "mean": 8.112808757045682,
+   "ci95": [
+    7.760631049845776,
+    8.46498646424559
+   ],
+   "min": 7.6238004183503705,
+   "max": 8.530416968682694,
+   "n": 6
+  },
+  "foot": {
+   "mean": 0.0073410588593044316,
+   "ci95": [
+    0.007272880813757354,
+    0.007409236904851509
+   ],
+   "min": 0.007247882686378213,
+   "max": 0.0074169084607188015,
+   "n": 6
+  },
+  "slide": {
+   "mean": 0.05520964805353256,
+   "ci95": [
+    0.05394567802943052,
+    0.0564736180776346
+   ],
+   "min": 0.053390018173271096,
+   "max": 0.056575994926834,
+   "n": 6
+  },
+  "exec_raw_clean": {
+   "mean": 0.9593596059113301,
+   "ci95": [
+    0.9443098441624195,
+    0.9744093676602407
+   ],
+   "min": 0.9334975369458128,
+   "max": 0.9753694581280788,
+   "n": 6
+  },
+  "exec_raw_any": {
+   "mean": 0.0018756747854411038,
+   "ci95": [
+    0.0010661670972852083,
+    0.0026851824735969992
+   ],
+   "min": 0.0009607114754698337,
+   "max": 0.0029919300236060536,
+   "n": 6
+  },
+  "exec_cbf_clean": {
+   "mean": 1.0,
+   "ci95": [
+    1.0,
+    1.0
+   ],
+   "min": 1.0,
+   "max": 1.0,
+   "n": 6
+  },
+  "exec_cbf_any": {
+   "mean": 0.0,
+   "ci95": [
+    0.0,
+    0.0
+   ],
+   "min": 0.0,
+   "max": 0.0,
+   "n": 6
+  }
+ },
+ {
+  "label": "inference-level no text offline",
+  "runs": [
+   {
+    "FGD": 1.8939030921105617,
+    "dDiv": 0.23538927079045213,
+    "dBA": 0.004300593652480367,
+    "dJerkW": 5.024456579566049,
+    "foot": 0.008859404564050221,
+    "slide": 0.0561695131654222,
+    "n": 3242,
+    "exec_raw_clean": 0.874384236453202,
+    "exec_raw_any": 0.004236280125166981,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/textuse-final-1107/test/czmws-s0-notext/final-test/offline/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 1.9150704768316942,
+    "dDiv": 0.25287175204018664,
+    "dBA": 0.0019960932951136323,
+    "dJerkW": 4.920230852220584,
+    "foot": 0.008941374216336354,
+    "slide": 0.05525750510525567,
+    "n": 3242,
+    "exec_raw_clean": 0.9187192118226601,
+    "exec_raw_any": 0.0037330503046827824,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/textuse-final-1107/test/czmws-s0-notext/final-test/offline/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 1.9303167034416244,
+    "dDiv": 0.25342465953950377,
+    "dBA": 0.014514433839778018,
+    "dJerkW": 3.840814321050722,
+    "foot": 0.008736063949944289,
+    "slide": 0.06337786930625285,
+    "n": 3242,
+    "exec_raw_clean": 0.874384236453202,
+    "exec_raw_any": 0.004748659578750892,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-s1-notext/final-test/offline/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 1.9424137423896521,
+    "dDiv": 0.24633872255364753,
+    "dBA": 0.013882491524190188,
+    "dJerkW": 4.059712243624112,
+    "foot": 0.008845789772181424,
+    "slide": 0.06312403290197575,
+    "n": 3242,
+    "exec_raw_clean": 0.9261083743842364,
+    "exec_raw_any": 0.0033945138799934124,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-s1-notext/final-test/offline/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 1.8511318494804758,
+    "dDiv": 0.2196738965489513,
+    "dBA": 0.0012199901756593245,
+    "dJerkW": 4.436206054605449,
+    "foot": 0.009092372141534726,
+    "slide": 0.06281706440147015,
+    "n": 3242,
+    "exec_raw_clean": 0.9039408866995073,
+    "exec_raw_any": 0.0026991417644152468,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-s2-notext/final-test/offline/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 1.8744295418417236,
+    "dDiv": 0.2359438313633404,
+    "dBA": 0.00165300723769779,
+    "dJerkW": 4.512751279713129,
+    "foot": 0.00920515918800884,
+    "slide": 0.06315618288949738,
+    "n": 3242,
+    "exec_raw_clean": 0.8916256157635468,
+    "exec_raw_any": 0.0042728786575658316,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-s2-notext/final-test/offline/benchmark_seed_001.json"
+   }
+  ],
+  "n_runs": 6,
+  "FGD": {
+   "mean": 1.9012109010159552,
+   "ci95": [
+    1.8648105594241418,
+    1.9376112426077687
+   ],
+   "min": 1.8511318494804758,
+   "max": 1.9424137423896521,
+   "n": 6
+  },
+  "dDiv": {
+   "mean": 0.24060702213934695,
+   "ci95": [
+    0.22704748647836492,
+    0.254166557800329
+   ],
+   "min": 0.2196738965489513,
+   "max": 0.25342465953950377,
+   "n": 6
+  },
+  "dBA": {
+   "mean": 0.006261101620819887,
+   "ci95": [
+    -0.00029067733595738304,
+    0.012812880577597156
+   ],
+   "min": 0.0012199901756593245,
+   "max": 0.014514433839778018,
+   "n": 6
+  },
+  "dJerkW": {
+   "mean": 4.4656952217966746,
+   "ci95": [
+    3.9785944729186724,
+    4.952795970674677
+   ],
+   "min": 3.840814321050722,
+   "max": 5.024456579566049,
+   "n": 6
+  },
+  "foot": {
+   "mean": 0.008946693972009308,
+   "ci95": [
+    0.008764792654755082,
+    0.009128595289263535
+   ],
+   "min": 0.008736063949944289,
+   "max": 0.00920515918800884,
+   "n": 6
+  },
+  "slide": {
+   "mean": 0.060650361294979,
+   "ci95": [
+    0.056621485253265755,
+    0.06467923733669224
+   ],
+   "min": 0.05525750510525567,
+   "max": 0.06337786930625285,
+   "n": 6
+  },
+  "exec_raw_clean": {
+   "mean": 0.8981937602627258,
+   "ci95": [
+    0.8751516487648704,
+    0.9212358717605812
+   ],
+   "min": 0.874384236453202,
+   "max": 0.9261083743842364,
+   "n": 6
+  },
+  "exec_raw_any": {
+   "mean": 0.0038474207184291914,
+   "ci95": [
+    0.003078934636898824,
+    0.004615906799959559
+   ],
+   "min": 0.0026991417644152468,
+   "max": 0.004748659578750892,
+   "n": 6
+  },
+  "exec_cbf_clean": {
+   "mean": 1.0,
+   "ci95": [
+    1.0,
+    1.0
+   ],
+   "min": 1.0,
+   "max": 1.0,
+   "n": 6
+  },
+  "exec_cbf_any": {
+   "mean": 0.0,
+   "ci95": [
+    0.0,
+    0.0
+   ],
+   "min": 0.0,
+   "max": 0.0,
+   "n": 6
+  }
+ },
+ {
+  "label": "inference-level no text psync",
+  "runs": [
+   {
+    "FGD": 2.018606402492585,
+    "dDiv": 0.4075331341562023,
+    "dBA": 0.026612487932423656,
+    "dJerkW": 2.7937133900159026,
+    "foot": 0.009390940820035588,
+    "slide": 0.07325226716199668,
+    "n": 3242,
+    "exec_raw_clean": 0.9285714285714286,
+    "exec_raw_any": 0.0025618972679195564,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/textuse-final-1107/test/czmws-s0-notext/final-test/psync/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 2.0084375827655894,
+    "dDiv": 0.4072589987053201,
+    "dBA": 0.027045476289505932,
+    "dJerkW": 2.641605045163139,
+    "foot": 0.009233449526766257,
+    "slide": 0.07171272009554826,
+    "n": 3242,
+    "exec_raw_clean": 0.9088669950738916,
+    "exec_raw_any": 0.0035500576426885284,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/textuse-final-1107/test/czmws-s0-notext/final-test/psync/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 1.960354859412039,
+    "dDiv": 0.4090970147602928,
+    "dBA": 0.03806010454618425,
+    "dJerkW": 2.158980165349206,
+    "foot": 0.00938473016235361,
+    "slide": 0.08079977244377724,
+    "n": 3242,
+    "exec_raw_clean": 0.9261083743842364,
+    "exec_raw_any": 0.003998389664574451,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-s1-notext/final-test/psync/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 1.9532441897906168,
+    "dDiv": 0.4078188057858314,
+    "dBA": 0.03668764035700467,
+    "dJerkW": 2.4640251660245838,
+    "foot": 0.009265502134486538,
+    "slide": 0.07971903475554158,
+    "n": 3242,
+    "exec_raw_clean": 0.9137931034482759,
+    "exec_raw_any": 0.0028546855271103628,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-s1-notext/final-test/psync/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 1.983768558092013,
+    "dDiv": 0.43984231152714304,
+    "dBA": 0.039246340979339656,
+    "dJerkW": 1.9754399644142424,
+    "foot": 0.009644495768662473,
+    "slide": 0.08434815576787232,
+    "n": 3242,
+    "exec_raw_clean": 0.916256157635468,
+    "exec_raw_any": 0.003705601405383644,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-s2-notext/final-test/psync/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 1.9721967219861085,
+    "dDiv": 0.43890888927232297,
+    "dBA": 0.039226535903671755,
+    "dJerkW": 1.869185325502535,
+    "foot": 0.009465962507411883,
+    "slide": 0.08445871276074284,
+    "n": 3242,
+    "exec_raw_clean": 0.8940886699507389,
+    "exec_raw_any": 0.002909583325708639,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-s2-notext/final-test/psync/benchmark_seed_001.json"
+   }
+  ],
+  "n_runs": 6,
+  "FGD": {
+   "mean": 1.9827680524231586,
+   "ci95": [
+    1.9552813482212796,
+    2.0102547566250375
+   ],
+   "min": 1.9532441897906168,
+   "max": 2.018606402492585,
+   "n": 6
+  },
+  "dDiv": {
+   "mean": 0.4184098590345188,
+   "ci95": [
+    0.4013514154255516,
+    0.43546830264348607
+   ],
+   "min": 0.4072589987053201,
+   "max": 0.43984231152714304,
+   "n": 6
+  },
+  "dBA": {
+   "mean": 0.03447976433468832,
+   "ci95": [
+    0.028181256154949694,
+    0.04077827251442695
+   ],
+   "min": 0.026612487932423656,
+   "max": 0.039246340979339656,
+   "n": 6
+  },
+  "dJerkW": {
+   "mean": 2.317158176078268,
+   "ci95": [
+    1.925502988648629,
+    2.708813363507907
+   ],
+   "min": 1.869185325502535,
+   "max": 2.7937133900159026,
+   "n": 6
+  },
+  "foot": {
+   "mean": 0.009397513486619392,
+   "ci95": [
+    0.009241690061713439,
+    0.009553336911525346
+   ],
+   "min": 0.009233449526766257,
+   "max": 0.009644495768662473,
+   "n": 6
+  },
+  "slide": {
+   "mean": 0.07904844383091315,
+   "ci95": [
+    0.07333343456322584,
+    0.08476345309860046
+   ],
+   "min": 0.07171272009554826,
+   "max": 0.08445871276074284,
+   "n": 6
+  },
+  "exec_raw_clean": {
+   "mean": 0.9146141215106732,
+   "ci95": [
+    0.9014679283595675,
+    0.927760314661779
+   ],
+   "min": 0.8940886699507389,
+   "max": 0.9285714285714286,
+   "n": 6
+  },
+  "exec_raw_any": {
+   "mean": 0.0032633691388975297,
+   "ci95": [
+    0.002669298772438579,
+    0.0038574395053564805
+   ],
+   "min": 0.0025618972679195564,
+   "max": 0.003998389664574451,
+   "n": 6
+  },
+  "exec_cbf_clean": {
+   "mean": 1.0,
+   "ci95": [
+    1.0,
+    1.0
+   ],
+   "min": 1.0,
+   "max": 1.0,
+   "n": 6
+  },
+  "exec_cbf_any": {
+   "mean": 0.0,
+   "ci95": [
+    0.0,
+    0.0
+   ],
+   "min": 0.0,
+   "max": 0.0,
+   "n": 6
+  }
+ },
+ {
+  "label": "inference-level no audio offline",
+  "runs": [
+   {
+    "FGD": 2.0712337048468923,
+    "dDiv": 0.21004578965189258,
+    "dBA": 0.015776288836092056,
+    "dJerkW": 5.24350612846419,
+    "foot": 0.00938868627017274,
+    "slide": 0.06623608796879704,
+    "n": 3242,
+    "exec_raw_clean": 0.9384236453201971,
+    "exec_raw_any": 0.0028363862609109376,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-s0-noaudio/final-test/offline/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 2.0638137403533605,
+    "dDiv": 0.1965530728677709,
+    "dBA": 0.015807749770371804,
+    "dJerkW": 5.312863162313036,
+    "foot": 0.009336798542843016,
+    "slide": 0.06657144815513358,
+    "n": 3242,
+    "exec_raw_clean": 0.9458128078817734,
+    "exec_raw_any": 0.001070507072666386,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-s0-noaudio/final-test/offline/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 2.144847628096599,
+    "dDiv": 0.22461465275356862,
+    "dBA": 0.021323453782183255,
+    "dJerkW": 5.093613295719422,
+    "foot": 0.009371186576573575,
+    "slide": 0.06815355766235973,
+    "n": 3242,
+    "exec_raw_clean": 0.9556650246305419,
+    "exec_raw_any": 0.0016926821234468498,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-s1-noaudio/final-test/offline/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 2.141151458293903,
+    "dDiv": 0.22156534700205333,
+    "dBA": 0.022418495702299146,
+    "dJerkW": 5.047765557709731,
+    "foot": 0.009348950505872713,
+    "slide": 0.06797398212362933,
+    "n": 3242,
+    "exec_raw_clean": 0.9334975369458128,
+    "exec_raw_any": 0.0033762146137939868,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-s1-noaudio/final-test/offline/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 2.1089053035951437,
+    "dDiv": 0.2142515900705706,
+    "dBA": 0.019639499999244747,
+    "dJerkW": 4.874736988974746,
+    "foot": 0.009590640093611776,
+    "slide": 0.06736574201648717,
+    "n": 3242,
+    "exec_raw_clean": 0.9408866995073891,
+    "exec_raw_any": 0.0018207769868428276,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-s2-noaudio/final-test/offline/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 2.1115969501268905,
+    "dDiv": 0.2209723794375813,
+    "dBA": 0.020856641201440707,
+    "dJerkW": 4.757274337876268,
+    "foot": 0.009678773295321474,
+    "slide": 0.06781232716224946,
+    "n": 3242,
+    "exec_raw_clean": 0.9334975369458128,
+    "exec_raw_any": 0.0026899921313155344,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-s2-noaudio/final-test/offline/benchmark_seed_001.json"
+   }
+  ],
+  "n_runs": 6,
+  "FGD": {
+   "mean": 2.1069247975521317,
+   "ci95": [
+    2.071281741788254,
+    2.1425678533160095
+   ],
+   "min": 2.0638137403533605,
+   "max": 2.144847628096599,
+   "n": 6
+  },
+  "dDiv": {
+   "mean": 0.21466713863057288,
+   "ci95": [
+    0.20380212610624937,
+    0.2255321511548964
+   ],
+   "min": 0.1965530728677709,
+   "max": 0.22461465275356862,
+   "n": 6
+  },
+  "dBA": {
+   "mean": 0.019303688215271952,
+   "ci95": [
+    0.016299659929146983,
+    0.022307716501396922
+   ],
+   "min": 0.015776288836092056,
+   "max": 0.022418495702299146,
+   "n": 6
+  },
+  "dJerkW": {
+   "mean": 5.054959911842899,
+   "ci95": [
+    4.832486185500963,
+    5.277433638184835
+   ],
+   "min": 4.757274337876268,
+   "max": 5.312863162313036,
+   "n": 6
+  },
+  "foot": {
+   "mean": 0.00945250588073255,
+   "ci95": [
+    0.009300373412930727,
+    0.009604638348534372
+   ],
+   "min": 0.009336798542843016,
+   "max": 0.009678773295321474,
+   "n": 6
+  },
+  "slide": {
+   "mean": 0.06735219084810938,
+   "ci95": [
+    0.06652640208417146,
+    0.0681779796120473
+   ],
+   "min": 0.06623608796879704,
+   "max": 0.06815355766235973,
+   "n": 6
+  },
+  "exec_raw_clean": {
+   "mean": 0.9412972085385879,
+   "ci95": [
+    0.9324306211062707,
+    0.9501637959709051
+   ],
+   "min": 0.9334975369458128,
+   "max": 0.9556650246305419,
+   "n": 6
+  },
+  "exec_raw_any": {
+   "mean": 0.0022477598648294205,
+   "ci95": [
+    0.0013460008382389066,
+    0.0031495188914199344
+   ],
+   "min": 0.001070507072666386,
+   "max": 0.0033762146137939868,
+   "n": 6
+  },
+  "exec_cbf_clean": {
+   "mean": 1.0,
+   "ci95": [
+    1.0,
+    1.0
+   ],
+   "min": 1.0,
+   "max": 1.0,
+   "n": 6
+  },
+  "exec_cbf_any": {
+   "mean": 0.0,
+   "ci95": [
+    0.0,
+    0.0
+   ],
+   "min": 0.0,
+   "max": 0.0,
+   "n": 6
+  }
+ },
+ {
+  "label": "inference-level no audio psync",
+  "runs": [
+   {
+    "FGD": 2.0582639037222386,
+    "dDiv": 0.3145594627858377,
+    "dBA": 0.013926323988604383,
+    "dJerkW": 8.389473961312078,
+    "foot": 0.007100982338932885,
+    "slide": 0.05286674268939001,
+    "n": 3242,
+    "exec_raw_clean": 0.9532019704433498,
+    "exec_raw_any": 0.0026899921313155344,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-s0-noaudio/final-test/psync/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 2.0644028515092456,
+    "dDiv": 0.30161916558378277,
+    "dBA": 0.014456824571668414,
+    "dJerkW": 8.418436668608692,
+    "foot": 0.007148462521227392,
+    "slide": 0.05320335744249874,
+    "n": 3242,
+    "exec_raw_clean": 0.9630541871921182,
+    "exec_raw_any": 0.0014364923966548942,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-s0-noaudio/final-test/psync/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 2.0910990601410155,
+    "dDiv": 0.3753782015824463,
+    "dBA": 0.026667063918774714,
+    "dJerkW": 7.796525247077511,
+    "foot": 0.007335638180375992,
+    "slide": 0.05471403273236165,
+    "n": 3242,
+    "exec_raw_clean": 0.9408866995073891,
+    "exec_raw_any": 0.003906893333577324,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-s1-noaudio/final-test/psync/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 2.1245746932102083,
+    "dDiv": 0.3580678794589456,
+    "dBA": 0.025851311878362204,
+    "dJerkW": 7.728066528072784,
+    "foot": 0.00735280451399882,
+    "slide": 0.05471958777074973,
+    "n": 3242,
+    "exec_raw_clean": 0.9507389162561576,
+    "exec_raw_any": 0.0023240068073270264,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-s1-noaudio/final-test/psync/benchmark_seed_001.json"
+   },
+   {
+    "FGD": 2.1007338712064163,
+    "dDiv": 0.33811693076854277,
+    "dBA": 0.021885038339001683,
+    "dJerkW": 8.530331040868436,
+    "foot": 0.007179038877609701,
+    "slide": 0.053516144822894574,
+    "n": 3242,
+    "exec_raw_clean": 0.9408866995073891,
+    "exec_raw_any": 0.0025344483686204184,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-s2-noaudio/final-test/psync/benchmark_seed_000.json"
+   },
+   {
+    "FGD": 2.118522257607099,
+    "dDiv": 0.3243665801310449,
+    "dBA": 0.021337306152758417,
+    "dJerkW": 8.22805828958601,
+    "foot": 0.0071369415870586985,
+    "slide": 0.05419344662669713,
+    "n": 3242,
+    "exec_raw_clean": 0.9679802955665024,
+    "exec_raw_any": 0.0018756747854411038,
+    "exec_cbf_clean": 1.0,
+    "exec_cbf_any": 0.0,
+    "bench": "/mnt/cpfs/zbl-cpfs-new/CKPT/zehan/gesture-scmg/causal-train-1105/abltest-1108/test/czmws-s2-noaudio/final-test/psync/benchmark_seed_001.json"
+   }
+  ],
+  "n_runs": 6,
+  "FGD": {
+   "mean": 2.09293277289937,
+   "ci95": [
+    2.064245957255102,
+    2.121619588543638
+   ],
+   "min": 2.0582639037222386,
+   "max": 2.1245746932102083,
+   "n": 6
+  },
+  "dDiv": {
+   "mean": 0.3353513700517667,
+   "ci95": [
+    0.306357052886883,
+    0.3643456872166504
+   ],
+   "min": 0.30161916558378277,
+   "max": 0.3753782015824463,
+   "n": 6
+  },
+  "dBA": {
+   "mean": 0.020687311474861636,
+   "ci95": [
+    0.014962136505780523,
+    0.02641248644394275
+   ],
+   "min": 0.013926323988604383,
+   "max": 0.026667063918774714,
+   "n": 6
+  },
+  "dJerkW": {
+   "mean": 8.181815289254251,
+   "ci95": [
+    7.825300578620469,
+    8.538329999888033
+   ],
+   "min": 7.728066528072784,
+   "max": 8.530331040868436,
+   "n": 6
+  },
+  "foot": {
+   "mean": 0.007208978003200581,
+   "ci95": [
+    0.007095814336558594,
+    0.007322141669842568
+   ],
+   "min": 0.007100982338932885,
+   "max": 0.00735280451399882,
+   "n": 6
+  },
+  "slide": {
+   "mean": 0.05386888534743197,
+   "ci95": [
+    0.0530405685269876,
+    0.05469720216787634
+   ],
+   "min": 0.05286674268939001,
+   "max": 0.05471958777074973,
+   "n": 6
+  },
+  "exec_raw_clean": {
+   "mean": 0.9527914614121511,
+   "ci95": [
+    0.9410691911430096,
+    0.9645137316812926
+   ],
+   "min": 0.9408866995073891,
+   "max": 0.9679802955665024,
+   "n": 6
+  },
+  "exec_raw_any": {
+   "mean": 0.002461251303822717,
+   "ci95": [
+    0.001575807710288077,
+    0.0033466948973573567
+   ],
+   "min": 0.0014364923966548942,
+   "max": 0.003906893333577324,
+   "n": 6
+  },
+  "exec_cbf_clean": {
+   "mean": 1.0,
+   "ci95": [
+    1.0,
+    1.0
+   ],
+   "min": 1.0,
+   "max": 1.0,
+   "n": 6
+  },
+  "exec_cbf_any": {
+   "mean": 0.0,
+   "ci95": [
+    0.0,
+    0.0
+   ],
+   "min": 0.0,
+   "max": 0.0,
+   "n": 6
+  }
+ }
+]

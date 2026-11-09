@@ -1,0 +1,62 @@
+
+== BASE SELECTION (EX002_SFSCOPE_1108)  (designs / variants tried: self-forcing scope sf0 / all / encoders x 2 training seeds, + causal match czm-enc-s0 (7 lanes))
+  czm-enc-s0 vs enc-s0                   FAIL     (a) psync FGD range below False (115.0-135.1 vs 107.0-112.0); (b) offline <= 1.05x True; (c) psync FKD <= 1.10x False (FKD read with FGD, never alone); (e) guards False [reported: FAIL]
+  enc-s0 guards (offline AND psync)      PASS     liveliness floor (read as a floor only) [reported: PASS]
+  selected base                          enc-s0   frozen rule [reported: enc-s0]
+  fairness: czm-enc-s0 and enc-s0 have the same recipe / init / data / seed / steps / release / bench protocol because czm-enc-s0 = enc-s0 + the causal_front / spk / text switches only (EX002_SFSCOPE_1108 "Causal match"), both benched with bench_ex002 per_clip seeds 0-2.
+
+== SAFETY LAYER (EX002_CBF_1108)  (designs / variants tried: 3c-1 cbf_qp, 3c-2 slack (+2 pre-emptive sub-variants), 3c-3 proj_l2, 3c-3b, 3c-3c, 3c-4, 3c-4b, 3c-5, 3c-6, 3c-7 (2 orders); perceptual projection (negatives 19); KKT backends auto / qdldl, OSQP compared)
+  3c-1 cbf_qp                            PASS (registered 3 gates) / not adopted g1 clear True; dFGD within SD True; p99 (as registered for this module: the run itself) 21.5-33.3 ms; BUT fallback frames 2094-2483 per run and jerk-over-table 43 % -> rejected by a main-agent judgement beyond the registered gates; the later modules registered zero fallback and jerk as gates [reported: PASS (registered 3 gates) / not adopted]
+  3c-3 proj_l2 B25                       FAIL     fails g2,g4 | g1 clear True; g2 fallback frames [48, 0, 16, 0, 16, 0]; g3 dFGD/dFKD within raw SD offline +0.05/8.03 -0.006/0.099, psync +0.26/8.04 -0.004/0.093, jerk-over-table 0.0 %; g4 p99 (as registered for this module: the run itself) 168.2-178.2 ms [reported: FAIL]
+  3c-3b B13                              FAIL     fails g2,g4 | g1 clear True; g2 fallback frames [32, 0, 0, 0, 32, 0]; g3 dFGD/dFKD within raw SD offline +0.05/8.03 -0.005/0.099, psync +0.26/8.04 -0.004/0.093, jerk-over-table 0.0 %; g4 idle p99 102.0/101.0 ms [reported: FAIL]
+  3c-3c qdldl + tail 1e-3                FAIL     fails g2,g4 | g1 clear True; g2 fallback frames [32, 16, 80, 80, 32, 0]; g3 dFGD/dFKD within raw SD offline +0.09/8.03 -0.004/0.099, psync +0.22/8.04 -0.002/0.093, jerk-over-table 0.0 %; g4 idle p99 101.1/99.7 ms [reported: FAIL]
+  3c-4 recursive feasibility             FAIL     fails g2 | g1 clear True; g2 fallback frames [0, 16, 0, 32, 64, 0]; g3 dFGD/dFKD within raw SD offline +0.28/1.93 -0.007/0.028, psync +0.15/2.66 -0.013/0.027, jerk-over-table 0.0 %; g4 g4 not measured idle for this module (reported: superseded by 3c-4b before timing) [reported: FAIL]
+  3c-4b cut cap 8                        FAIL     fails g4 | g1 clear True; g2 fallback frames [0, 0, 0, 0, 0, 0]; g3 dFGD/dFKD within raw SD offline +0.28/1.93 -0.007/0.028, psync +0.18/2.66 -0.013/0.027, jerk-over-table 0.0 %; g4 idle p99 183.9/171.3 ms [reported: FAIL]
+  3c-5 predictive rows + carry           FAIL     fails g4 | g1 clear True; g2 fallback frames [0, 0, 0, 0, 0, 0]; g3 dFGD/dFKD within raw SD offline +0.28/1.93 -0.007/0.028, psync +0.17/2.66 -0.013/0.027, jerk-over-table 0.0 %; g4 idle p99 201.6/184.1 ms [reported: FAIL]
+  3c-3c + memo (gate 4 only)             PASS     idle p99 77.1/78.1 ms (outputs bit-identical to 3c-3c) [reported: PASS]
+  3c-6 = 3c-5 + 4 workers (gate 4)       FAIL     idle p99 169.3/154.0 ms (outputs bit-identical to 3c-5) [reported: FAIL]
+  3c-7 (D1) fingers_first quick lane     KILL     fallback 64, p99 259.1 vs 0.7 x 3c-4b 167.0 ms (same session) [reported: KILL]
+  3c-7 (D1) arm_first quick lane         KILL     fallback 64, p99 258.8 vs 0.7 x 3c-4b 167.0 ms (same session) [reported: KILL]
+  final layer                            3c-4b    gates 1-3 PASS with zero fallback, gate 4 FAIL (stated); optimisation stopped (coordinator) [reported: 3c-4b]
+  fairness: 3c-4 / 4b / 5 / 6 / 7 have the same input streams (enc-s0 bench outputs, offline / psync seeds 0-2), embodiment / limits / WBC table (release06 EX002RM, runtime-rm003), certificate (exact GJK test) and host (9950X, 1 thread unless stated) because they run through the same ex002_cbf_dev.py runner on the same files; 3c-1 .. 3c-3c ran on the voided czm pick, so they are compared with each other only.
+
+== INTERRUPTION (EX002_INTERRUPT_1107 + DUPLEX_LADDER)  (designs / variants tried: bases 3 (sibag-s2, enc-s0, r3d); post methods B3 / R0causal / Funnel (+ L2 diagnostic, L1 running, L2d killed); chains raw / 3c-4b / ISC; references full 757 / half B; yield metrics 5 versions)
+  full 757-tail ref: B3_isc              fails    yield3d 0.316 v3 0.032 unsafe 0.000 RKD-post 0.475 (RKD read with the yield components) fails yield3d [reported: fails]
+  full 757-tail ref: R0causal_isc        qualifies yield3d 0.982 v3 0.004 unsafe 0.000 RKD-post 0.551 (RKD read with the yield components) [reported: qualifies]
+  full 757-tail ref: Funnel_isc          qualifies yield3d 0.911 v3 0.044 unsafe 0.000 RKD-post 0.519 (RKD read with the yield components) [reported: qualifies]
+  full 757-tail ref: selection           Funnel_isc lower RKD-post among the qualifying post-hoc methods [reported: Funnel_isc]
+  half-B ref: B3_isc                     fails    yield3d 0.278 v3 0.032 unsafe 0.000 RKD-post 0.440 (RKD read with the yield components) fails yield3d [reported: fails]
+  half-B ref: R0causal_isc               qualifies yield3d 0.979 v3 0.004 unsafe 0.000 RKD-post 0.518 (RKD read with the yield components) [reported: qualifies]
+  half-B ref: Funnel_isc                 fails    yield3d 0.892 v3 0.044 unsafe 0.000 RKD-post 0.484 (RKD read with the yield components) fails yield3d [reported: fails]
+  half-B ref: selection                  R0causal_isc lower RKD-post among the qualifying post-hoc methods [reported: R0causal_isc]
+  half-B baseline B1_isc                 fails    yield3d 0.026 v3 0.105 unsafe 0.000 RKD-post 1.882 fails yield3d,v3 [reported: fails]
+  half-B baseline B2_isc                 qualifies yield3d 1.000 v3 0.002 unsafe 0.000 RKD-post 0.740 [reported: qualifies]
+  half-B baseline FRONT_isc              fails    yield3d 0.000 v3 0.015 unsafe 0.000 RKD-post 0.681 fails yield3d [reported: fails]
+  reading rule (v3 is not a freeze detector): B1_isc v3 per inference seed [0.105, 0.0861, 0.0819] vs the 10 % gate -> B1_isc is rejected by yield3d / RKD, not by v3.
+  reading rule (no single yield gate, audit D6 / D7 / D8): yield3d is recorded INVALID on human tails; the selection above is the registered verdict and is read only beside activity / withdrawal / RKD (V4_SCORE_postchain.json, BOOT_halfB_isc_v4.json).
+  clustered paired CI (H1) R0causal_isc - Funnel_isc: yield3d +0.087 [+0.056, +0.116], yield_height -0.023 [-0.045, -0.005], v3 -0.040 [-0.059, -0.024], unsafe +0.000 [+0.000, +0.000], rkd_post +0.034 [+0.021, +0.046]
+  fairness: B3_isc / R0causal_isc / Funnel_isc / B1-B2-FRONT_isc have the same base (enc-s0 psync s0), decoder (vae-r3), safety chain (3c-4b + ISC, safety_int_ex002.py --isc, prefix = projected U) and human reference because every row is built from the same int_psync_s0 continuations (or, for the baselines, the same uninterrupted psync s0) and scored by one eval_interrupt_ex002.py call per reference.
+
+== YIELD METRIC VALIDITY (audit D6-D8, M1)  (designs / variants tried: yield-height, yield3d, v4 it1, v4 it2, activity-only, PSS it0 / it1)
+  yield3d on half-B human tails          INVALID  human pass 0.166 (needs >= 0.85) [reported: INVALID]
+  v4 it1                                 INVALID  half-B v4 0.583 (>= 0.85), GT speech 0.004, B1 0.361 (<= 0.15) [reported: INVALID]
+  v4 it2                                 INVALID  half-B v4_needed 0.381 (>= 0.85), GT speech 0.088, B1 0.361 (<= 0.15) [reported: INVALID]
+  activity-only yield (D8)               INVALID  A 0.961 B 0.934 fresh 0.545 (>= 0.85); GT speech 0.408 (<= 0.15) [reported: INVALID]
+  PSS (M1) it1, last iteration           INVALID  half-B 0.848, fresh 0.667 (>= 0.85), GT speech 0.256 (<= 0.15), mismatched ref +1.3 pp [reported: INVALID]
+
+== DESIGN ROUND 11-08 (FABLE_DESIGN_1108; A)  (designs / variants tried: D1 (2 orders), D2 (poly / affine / agnostic), D3 (l2d + controls a-d), M1 (2 iterations))
+  D2 polyphase equaliser quick lane      KILL     round-trip L1 0.1200 vs r3 0.1203; phase max/min 1.211 (kill > 1.15; GT 1.034) [reported: KILL]
+  D3 L2d quick lane (41 events)          KILL     RKD-post 1.252 (kill >= 0.518), v3 0.073; yield3d 0.371, drift median / p95 / max 0.028 / 0.144 / 0.300 m [reported: KILL]
+  (D1 and M1: see SAFETY 3c-7 and METRIC VALIDITY)
+  fairness: l2d and its controls (a)-(d), R0causal raw and B3 raw have the same base (enc-s0 psync s0 continuations), decoder and raw chain because all rows post-process the same int_psync_s0 files of the same 41 interruptions and are scored by one eval_interrupt call (half-B reference).
+
+== CONTROL (EX002_CTL; only module 5b confirmation encoded here)  (designs / variants tried: lanes 1-4, modules 2, 5, 5b, 5c, port, 6 (not run), 7 / 8, 7b / 8b, 9, 9b, 9c, 9c'', 9d, 10)
+  5b gate 1 STG gain (forearm) + shuffle PASS     gain +0.114 (>= +0.10); shuffle follows True (0.353 vs original 0.296) [reported: PASS]
+  5b gate 2 finger hit (override) + shuffle PASS     hit 1.000 (>= 0.9); shuffle follows True [reported: PASS]
+  5b gate (i) sparse outside +-1 s       PASS     84.75 <= C + delta = 84.73 + 7.13 [reported: PASS]
+  5b gate (ii) sparse whole clip (+ override) PASS     94.91 <= C + delta = 89.31 + 5.70 [reported: PASS]
+  5b executability after CBF             PASS     all runs 100 % of clips [reported: PASS]
+  fairness: m5b given / shuffle / none have the same model (lane-4 ctl4 on sibag-s2), plans (fresh 1108), seeds 3-5 and scorer because they are blends / generations of one DLC job (dlci2zmkrgtpnpye) scored by one eval call.
+  NOT ENCODED (owner B, exp/ctl-port; verdicts as reported in EX002_CTL.md): lanes 1-4, 5, 5c, port, 7 / 8, 7b / 8b, 9, 9b, 9c, 9c'', 9d, 10.
+
+BEAT_EX002 ALL VERDICTS REPRODUCED

@@ -1,0 +1,206 @@
+{
+ "offline-s0": {
+  "n_clips": 43,
+  "frames": 97184,
+  "FKD": 1.578537872042503,
+  "FGD_v2_seeds": [
+   82.61014934862237,
+   82.52673394085207
+  ],
+  "FGD_v2": 82.56844164473722,
+  "lively": {
+   "clips": 43,
+   "still": 0.05219995060915377,
+   "held_share": 0.0,
+   "stutter": 1.064131160493177,
+   "wrist_speed": 0.27643626993369314,
+   "wrist_amp": 0.0911448341107911
+  },
+  "lively_gt": {
+   "clips": 43,
+   "still": 0.01663854132367468,
+   "held_share": 0.023255813953488372,
+   "stutter": 1.0262346194031742,
+   "wrist_speed": 0.41114834881613926,
+   "wrist_amp": 0.12030317457809855
+  },
+  "lively_gates": {
+   "still": false,
+   "wrist_speed": false,
+   "wrist_amp": true,
+   "held_share": true,
+   "stutter": true,
+   "pass": false
+  }
+ },
+ "offline-s1": {
+  "n_clips": 43,
+  "frames": 97184,
+  "FKD": 1.7086226051512448,
+  "FGD_v2_seeds": [
+   86.91395115538751,
+   84.87252893333118
+  ],
+  "FGD_v2": 85.89324004435935,
+  "lively": {
+   "clips": 43,
+   "still": 0.05224110964767863,
+   "held_share": 0.0,
+   "stutter": 1.0642594238809369,
+   "wrist_speed": 0.27356899348815206,
+   "wrist_amp": 0.09191297782822813
+  },
+  "lively_gt": {
+   "clips": 43,
+   "still": 0.01663854132367468,
+   "held_share": 0.023255813953488372,
+   "stutter": 1.0262346194031742,
+   "wrist_speed": 0.41114834881613926,
+   "wrist_amp": 0.12030317457809855
+  },
+  "lively_gates": {
+   "still": false,
+   "wrist_speed": false,
+   "wrist_amp": true,
+   "held_share": true,
+   "stutter": true,
+   "pass": false
+  }
+ },
+ "offline-s2": {
+  "n_clips": 43,
+  "frames": 97184,
+  "FKD": 1.640991748158548,
+  "FGD_v2_seeds": [
+   87.4838577839289,
+   87.24141932395162
+  ],
+  "FGD_v2": 87.36263855394026,
+  "lively": {
+   "clips": 43,
+   "still": 0.04652000329272308,
+   "held_share": 0.0,
+   "stutter": 1.0650068035531293,
+   "wrist_speed": 0.28083502105012664,
+   "wrist_amp": 0.09308175253544136
+  },
+  "lively_gt": {
+   "clips": 43,
+   "still": 0.01663854132367468,
+   "held_share": 0.023255813953488372,
+   "stutter": 1.0262346194031742,
+   "wrist_speed": 0.41114834881613926,
+   "wrist_amp": 0.12030317457809855
+  },
+  "lively_gates": {
+   "still": false,
+   "wrist_speed": false,
+   "wrist_amp": true,
+   "held_share": true,
+   "stutter": true,
+   "pass": false
+  }
+ },
+ "psync-s0": {
+  "n_clips": 43,
+  "frames": 97184,
+  "FKD": 1.8651425747861472,
+  "FGD_v2_seeds": [
+   129.95907299384123,
+   127.5184555505532
+  ],
+  "FGD_v2": 128.73876427219722,
+  "lively": {
+   "clips": 43,
+   "still": 0.052446904840302934,
+   "held_share": 0.0,
+   "stutter": 1.0717778805890892,
+   "wrist_speed": 0.2621551427239554,
+   "wrist_amp": 0.08444566179853032
+  },
+  "lively_gt": {
+   "clips": 43,
+   "still": 0.01663854132367468,
+   "held_share": 0.023255813953488372,
+   "stutter": 1.0262346194031742,
+   "wrist_speed": 0.41114834881613926,
+   "wrist_amp": 0.12030317457809855
+  },
+  "lively_gates": {
+   "still": false,
+   "wrist_speed": false,
+   "wrist_amp": false,
+   "held_share": true,
+   "stutter": true,
+   "pass": false
+  }
+ },
+ "psync-s1": {
+  "n_clips": 43,
+  "frames": 97184,
+  "FKD": 1.9009464730749963,
+  "FGD_v2_seeds": [
+   117.347878372575,
+   112.66445168556811
+  ],
+  "FGD_v2": 115.00616502907155,
+  "lively": {
+   "clips": 43,
+   "still": 0.04656116233124794,
+   "held_share": 0.0,
+   "stutter": 1.0438255935363534,
+   "wrist_speed": 0.26898976838941874,
+   "wrist_amp": 0.08675647487709569
+  },
+  "lively_gt": {
+   "clips": 43,
+   "still": 0.01663854132367468,
+   "held_share": 0.023255813953488372,
+   "stutter": 1.0262346194031742,
+   "wrist_speed": 0.41114834881613926,
+   "wrist_amp": 0.12030317457809855
+  },
+  "lively_gates": {
+   "still": false,
+   "wrist_speed": false,
+   "wrist_amp": false,
+   "held_share": true,
+   "stutter": true,
+   "pass": false
+  }
+ },
+ "psync-s2": {
+  "n_clips": 43,
+  "frames": 97184,
+  "FKD": 1.8528298985093743,
+  "FGD_v2_seeds": [
+   137.12563664138543,
+   133.05352453617297
+  ],
+  "FGD_v2": 135.0895805887792,
+  "lively": {
+   "clips": 43,
+   "still": 0.048433898584129075,
+   "held_share": 0.023255813953488372,
+   "stutter": 1.0701915779833935,
+   "wrist_speed": 0.26957729339666014,
+   "wrist_amp": 0.08588654807743885
+  },
+  "lively_gt": {
+   "clips": 43,
+   "still": 0.01663854132367468,
+   "held_share": 0.023255813953488372,
+   "stutter": 1.0262346194031742,
+   "wrist_speed": 0.41114834881613926,
+   "wrist_amp": 0.12030317457809855
+  },
+  "lively_gates": {
+   "still": false,
+   "wrist_speed": false,
+   "wrist_amp": false,
+   "held_share": true,
+   "stutter": true,
+   "pass": false
+  }
+ }
+}

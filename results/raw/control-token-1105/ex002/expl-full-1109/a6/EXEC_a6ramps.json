@@ -1,0 +1,15 @@
+{
+ "a6": {
+  "clips": 43,
+  "exec_after_cbf": 1.0,
+  "raw_violation_any": 0.42640254954693596,
+  "post_pos": 0.0,
+  "post_vel": 0.0,
+  "post_acc": 0.0,
+  "post_jerk": 0.06825422081040941,
+  "cbf_mean_abs_rad": 0.012912823332270862,
+  "ramp_finger_jerk_mean": 235.67908324749848,
+  "ramp_frames_over_finger_jerk_limit": 0.038461538461538464,
+  "ramp_frames": 546
+ }
+}

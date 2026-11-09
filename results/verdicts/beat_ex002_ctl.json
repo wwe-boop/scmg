@@ -1,0 +1,210 @@
+{
+ "lanes": {
+  "lane 1": {
+   "verdict": "FAIL",
+   "reason": "STG gain +0.273; finger hit 0.602; FGD v2 (dense given) 230.0 vs gate 99.37",
+   "expected": "FAIL",
+   "match": true
+  },
+  "lane 2 ctl2": {
+   "verdict": "FAIL",
+   "reason": "STG gain +0.123; finger hit 1.000 (override); FGD v2 (dense given) 163.2 vs gate 99.37",
+   "expected": "FAIL",
+   "match": true
+  },
+  "lane 3 ctl3": {
+   "verdict": "FAIL",
+   "reason": "STG gain +0.131; finger hit 1.000 (override); FGD v2 (dense given) 209.2 vs gate 99.37",
+   "expected": "FAIL",
+   "match": true
+  },
+  "lane 4 ctl4 (true freeze)": {
+   "verdict": "FAIL",
+   "reason": "STG gain +0.147; (i) sparse outside +-1 s 113.45 vs 100.44; (ii) whole clip (override) 114.73 vs 99.37",
+   "expected": "FAIL",
+   "match": true
+  }
+ },
+ "m5": {
+  "module 5": {
+   "verdict": "FAIL",
+   "reason": "STG gain +0.047 (gate +0.10)",
+   "expected": "FAIL",
+   "match": true
+  },
+  "module 5b (old plans)": {
+   "verdict": "PASS",
+   "reason": "STG gain +0.103 (shuffle follows True); (i) 91.72/100.44; (ii) 94.52 / fo 96.32 vs 99.37; finger (fo) 1.000",
+   "expected": "PASS",
+   "match": true
+  },
+  "module 5b fresh-plan confirmation": {
+   "verdict": "PASS",
+   "reason": "STG gain +0.114 CI [+0.094, +0.135] (shuffle True); (i) 84.75/91.86; (ii) 93.29 / fo 94.91 vs 95.01",
+   "expected": "PASS",
+   "match": true
+  },
+  "port to czm (offline)": {
+   "verdict": "FAIL",
+   "reason": "STG gain +0.070",
+   "expected": "FAIL",
+   "match": true
+  },
+  "port to czm (psync)": {
+   "verdict": "FAIL",
+   "reason": "STG gain +0.074",
+   "expected": "FAIL",
+   "match": true
+  },
+  "module 5c on enc-s0 (offline)": {
+   "verdict": "FAIL",
+   "reason": "STG gain +0.099 (shuffle True); (ii) 92.25 vs 90.15",
+   "expected": "FAIL",
+   "match": true
+  },
+  "module 5c on enc-s0 (psync)": {
+   "verdict": "FAIL",
+   "reason": "STG gain +0.088 (shuffle True); (ii) 118.27 vs 114.34",
+   "expected": "FAIL",
+   "match": true
+  }
+ },
+ "m78": {
+  "module 7 czm (offline)": {
+   "verdict": "FAIL",
+   "reason": "apex angle 28.5 (gate 25)",
+   "expected": "FAIL",
+   "match": true
+  },
+  "module 8 czm (offline)": {
+   "verdict": "FAIL",
+   "reason": "presenting hand raised 0.634; SIGNED palm 101.0 (sign-agnostic metric void)",
+   "expected": "FAIL",
+   "match": true
+  },
+  "module 7b sibag (offline)": {
+   "verdict": "FAIL",
+   "reason": "apex angle 33.2",
+   "expected": "FAIL",
+   "match": true
+  },
+  "module 8b sibag (offline)": {
+   "verdict": "FAIL",
+   "reason": "presenting hand raised 0.458; SIGNED palm 71.6",
+   "expected": "FAIL",
+   "match": true
+  },
+  "module 7 czm (psync)": {
+   "verdict": "FAIL",
+   "reason": "apex angle 29.1 (gate 25)",
+   "expected": "FAIL",
+   "match": true
+  },
+  "module 8 czm (psync)": {
+   "verdict": "FAIL",
+   "reason": "presenting hand raised 0.661; SIGNED palm 103.2 (sign-agnostic metric void)",
+   "expected": "FAIL",
+   "match": true
+  },
+  "module 7b sibag (psync)": {
+   "verdict": "FAIL",
+   "reason": "apex angle 35.2",
+   "expected": "FAIL",
+   "match": true
+  },
+  "module 8b sibag (psync)": {
+   "verdict": "FAIL",
+   "reason": "presenting hand raised 0.453; SIGNED palm 71.4",
+   "expected": "FAIL",
+   "match": true
+  }
+ },
+ "kf": {
+  "module 9 sibag (offline)": {
+   "verdict": "FAIL",
+   "reason": "angle 23.4; SIGNED palm 179.0 (was reported 1.0, void); (i) 111.0/100.3; release med / p95 / max 54.4 / 98.7 / nan",
+   "expected": "FAIL",
+   "match": true
+  },
+  "module 9 sibag (psync)": {
+   "verdict": "FAIL",
+   "reason": "angle 23.9; SIGNED palm 179.0 (was reported 1.0, void); (i) 124.8/102.6; release med / p95 / max 55.3 / 104.0 / nan",
+   "expected": "FAIL",
+   "match": true
+  },
+  "module 9b (offline)": {
+   "verdict": "FAIL",
+   "reason": "angle 29.0; raised 0.824; SIGNED palm 178.0",
+   "expected": "FAIL",
+   "match": true
+  },
+  "module 9b (psync)": {
+   "verdict": "FAIL",
+   "reason": "angle 28.2; raised 0.799; SIGNED palm 178.0",
+   "expected": "FAIL",
+   "match": true
+  },
+  "m9b5c (offline)": {
+   "verdict": "FAIL",
+   "reason": "angle 28.3; raised 0.824; SIGNED palm 178.0",
+   "expected": "FAIL",
+   "match": true
+  },
+  "m9b5c (psync)": {
+   "verdict": "FAIL",
+   "reason": "angle 27.7; raised 0.799; SIGNED palm 178.0",
+   "expected": "FAIL",
+   "match": true
+  },
+  "module 9c (offline)": {
+   "verdict": "FAIL",
+   "reason": "angle 26.5 (control row 23.8); SIGNED palm 178.0; STG +0.150 (shuffle True); (ii) 92.4/90.1; release med / p95 / max 26.9 / 91.0 / 198.7",
+   "expected": "FAIL",
+   "match": true
+  },
+  "module 9c'' (offline)": {
+   "verdict": "FAIL",
+   "reason": "angle 28.7 (gate 25); all other gates True: STG +0.109 shuffle True, elev +4.4, palm 3.5, raised 0.999, (i) 87.0/92.2, (ii) 80.9/90.1, release med / p95 / max 14.4 / 46.8 / 177.7",
+   "expected": "FAIL",
+   "match": true
+  },
+  "module 9c (psync)": {
+   "verdict": "FAIL",
+   "reason": "angle 25.3 (control row 22.8); SIGNED palm 178.0; STG +0.151 (shuffle True); (ii) 116.1/114.3; release med / p95 / max 27.6 / 89.4 / 229.0",
+   "expected": "FAIL",
+   "match": true
+  },
+  "module 9c'' (psync)": {
+   "verdict": "FAIL",
+   "reason": "angle 27.5 (gate 25); all other gates True: STG +0.102 shuffle True, elev +3.5, palm 3.6, raised 0.998, (i) 107.0/112.7, (ii) 101.2/114.3, release med / p95 / max 14.7 / 47.4 / 210.5",
+   "expected": "FAIL",
+   "match": true
+  },
+  "9d quick lane (kill rule)": {
+   "verdict": "KILLED",
+   "reason": "diff-IK hold speed 0.104 / 0.116 (< 0.2 kills); (1)+(2) signed palm 96 / 101 (worse than 9c'' kills)",
+   "expected": "KILLED",
+   "match": true
+  }
+ },
+ "m10": {
+  "tok10a": {
+   "verdict": "FAIL",
+   "reason": "offline AND psync (see lines above)",
+   "expected": "FAIL",
+   "match": true
+  },
+  "tok10b": {
+   "verdict": "FAIL",
+   "reason": "offline AND psync (see lines above)",
+   "expected": "FAIL",
+   "match": true
+  },
+  "tok10ab": {
+   "verdict": "PASS",
+   "reason": "offline AND psync (see lines above)",
+   "expected": "PASS",
+   "match": true
+  }
+ }
+}
