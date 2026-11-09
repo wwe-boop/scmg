@@ -512,8 +512,9 @@ class WindowDataset(torch.utils.data.IterableDataset):
             toks = []
             for it in c['items']:
                 d0 = (it['offset'] - c['start'] - s) / 50.
-                for (t_, a_, b_, ap_, ty_, v_, m_) in v.ctl.get(it['id'], ()):
-                    if 0 <= t_ + d0 < n / 50.: toks.append((t_ + d0, a_ + d0, b_ + d0, ap_ + d0, ty_, v_, m_))
+                for tk in v.ctl.get(it['id'], ()):
+                    t_, a_, b_, ap_, ty_, v_, m_ = tk[:7]
+                    if 0 <= t_ + d0 < n / 50.: toks.append((t_ + d0, a_ + d0, b_ + d0, ap_ + d0, ty_, v_, m_) + tuple(tk[7:]))
             extra.update(window_arrays(toks))
         if getattr(v, 'ret', None) is not None:        # retrieved exemplars of the window's items (window-relative s), <= 4
             RR = 4; lat = v.ret['lat']; rt = np.full(RR, np.nan, np.float32); rl = np.zeros((RR,) + lat.shape[1:], np.float32); rm = np.zeros(RR, bool)
@@ -617,11 +618,13 @@ def load_ctl_tokens(d, view_dir, items, clips, split):
         for t in ts:
             ty, val, vm = token_value(t)
             ap = t.get('apex', float('nan'))
-            out[k].append((float(t['t']), float(t['a']), float(t['b']), float(ap), ty, val, vm))
+            rec = (float(t['t']), float(t['a']), float(t['b']), float(ap), ty, val, vm)
+            if t.get('desc') is not None: rec = rec + (np.asarray(t['desc'], np.float32),)   # 11-09 P2 descriptor (default: 7-tuple)
+            out[k].append(rec)
     index = []
     for ci, c in enumerate(clips):
         for it in c['items']:
-            for (t_, a_, b_, ap_, ty_, v_, m_) in out.get(it['id'], ()):
+            for (t_, a_, b_, ap_, ty_, v_, m_, *_r) in out.get(it['id'], ()):
                 if group_of(ty_) == 0 and ty_ != TYPE_ID['beat']: index.append((ci, it['offset'] - c['start'] + int(round(t_ * 50))))   # not beat
     return out, index
 

@@ -48,6 +48,13 @@ class StageCfg:
     sel_audio_max_class: int = 0   # 11-05 G1: >0 = only chunks with 1 <= g_k <= this class are hidden (G1 gest track: 1..3 deictic /
                                    # iconic / metaphoric, 4 beat on ~88 % of chunks); 0 = every gesture chunk (old behaviour)
     w_foot: float = 0.0            # 11-05 G1 only: foot-contact consistency on the decoded [ctx | target] frames (scmg/g1_contact.py:
+    w_semrepa: float = 0.0         # 11-09 SemREPA (cfg.semrepa; docs/criteria/SEMREPA_1109.md): lambda x mean over valid chunks of
+                                   # 1 - cos(repa_proj(planner block h_k), teacher(GT window centred on chunk k)); 0 = off
+    semrepa_teacher: str = ''      # path of the frozen teacher (scripts/semantic/semrepa_teacher.py)
+    w_f4: float = 0.0              # 11-09 F4 (cfg.f4_align): symmetric in-batch InfoNCE (tau 0.07) between f4_txt(planner text tokens
+                                   # visible to chunk k with time in [c_k - 0.8, c_k + 0.8] s, mean) and f4_mot(GT chunk latents); 0 = off
+    w_f6: float = 0.0              # 11-09 F6 contrastive flow matching: lambda x mean_i relu(f6_margin x e_pos_i (detached) - e_mis_i),
+    f6_margin: float = 2.0         # e = per-instance supervised velocity MSE; mis = text + audio of batch item (b - 1); 0 = off
     w_safe: float = 0.0            # 11-05 G1 only: executable-contract loss on the decoded [ctx | target] frames (scmg/g1_safety.py:
                                    # URDF joint limits + calibrated left-right / arm-torso self-collision proxies); 0 = off
     safe_torso_w: float = 0.5      # weight of the weaker arm-torso proxy inside w_safe
@@ -154,6 +161,12 @@ class StageCfg:
     ctl_jitter_types: tuple = ()   # 11-06 round 5: only these token types are jittered (scmg/ctl.py TYPE_ID, e.g. (1, 2) deictic / iconic);
                                    # () = every annotation token (round-3 behaviour)
     ctl_lr_scale: float = 1.0      # 11-06: learning-rate multiplier of the control-token modules (scmg.train param group)
+    sem_cf_p: float = 0.0          # 11-09 P2 sem_cf (cfg.ctl_desc): P(sample's kept SEM tokens get another SEM token's descriptor + hand)
+    w_sem_desc: float = 0.0        # 11-09 P2 outcome loss: E(descriptor of the decoded window [a, b], given descriptor) (scmg/sem_desc.py)
+    sem_bank: str = ''             # SEM_BANK.json (descriptor mu / sd of the train bank) for w_sem_desc
+    sem_rollout_steps: int = 0     # 11-09 Design B: >0 = sem outcome on a decoded k-step CFG rollout (self-generated context with self_force_p)
+    sem_rollout_cfg: float = 2.0   # CFG weight of that rollout (the inference value)
+    sem_w_low: bool = False        # 11-09 W-low (docs/criteria/P2W_LOWT_1109.md): sem outcome frame weight (1 - t) instead of t
     ctl_cf_p: float = 0.0          # 11-06 counterfactual control: P(sample's kept POINT tokens get ANOTHER token's target, rolled over
                                    # the batch); their segment [a - 0.3, b + 0.3] is removed from the flow loss and only the ray loss
                                    # (w_ctl_aux, toward the swapped target) supervises it -> following the token is the only way down
@@ -553,7 +566,21 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             n0 = torch.round(cval[..., 0] * (COUNT_MAX / 2) + COUNT_MAX / 2)
             n1 = torch.remainder(n0 + torch.randint(1, COUNT_MAX + 1, n0.shape, device=dev), COUNT_MAX + 1)
             cval = cval.clone(); cval[..., 0] = torch.where(ccf, (n1 - COUNT_MAX / 2) / (COUNT_MAX / 2), cval[..., 0])
-        u = model.ctl_embed(batch['ctl_type'].long() * cm.long(), cval, cvm)
+        cdesc = cdm = None
+        if getattr(cfg, 'ctl_desc', False) and 'ctl_d' in batch:     # 11-09 P2: descriptor channel (+ counterfactual swap)
+            from .ctl import SEM
+            cdesc = batch['ctl_d'].float(); cdm = batch['ctl_dm'].float() * cm.float()
+            if sc.sem_cf_p > 0:
+                isS = cm & (batch['ctl_type'] == SEM) & (cdm > 0)
+                scf = isS & r(sc.sem_cf_p)[:, None]
+                bi_, ji_ = isS.nonzero(as_tuple=True)
+                if len(bi_) > 1:
+                    src_ = torch.roll(torch.arange(len(bi_), device=dev), 1)
+                    nd_ = cdesc.clone(); nd_[bi_, ji_] = cdesc[bi_[src_], ji_[src_]]
+                    nv_ = cval.clone(); nv_[bi_, ji_, 3] = cval[bi_[src_], ji_[src_], 3]
+                    cdesc = torch.where(scf[..., None], nd_, cdesc); cval = torch.where(scf[..., None], nv_, cval)
+                    cf = scf if cf is None else (cf | scf)
+        u = model.ctl_embed(batch['ctl_type'].long() * cm.long(), cval, cvm, cdesc, cdm)
         nowk = torch.arange(K, device=dev).float() * CHUNK_FRAMES / 50.
         if sc.p_async > 0:                # arrives with the word it is attached to; time known once voiced (streaming samples)
             arr_c = anchor_arrival(arr, batch['ttime'], tvalid, ct)
@@ -581,7 +608,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         qsec = model.flow_seconds(torch.arange(K, device=dev), cfg.ctx + CHUNK, cfg.ctx)
         cc = model.ctl_flow_cond(u, ct, keep, timed, qsec)
         if cc is not None: ctl_c = cc.flatten(0, 1)
-        ctl = dict(cm=cm, keep=keep, qsec=qsec, cval=cval, cf=cf, cvm=cvm)
+        ctl = dict(cm=cm, keep=keep, qsec=qsec, cval=cval, cf=cf, cvm=cvm, cdesc=cdesc, cdm=cdm)
     if getattr(cfg, 'ret', False) and 'ret_t' in batch:      # retrieved exemplars: arrive with their word, used once their time is known
         from .ctl import anchor_arrival, visibility
         rt = batch['ret_t'].float(); rm = batch['ret_m'].bool() & torch.isfinite(rt) & ~r(sc.ret_drop)[:, None]
@@ -743,7 +770,12 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         out_sf = 1.
     else:
         out_sf = 0.
+    if sc.w_semrepa > 0 and not getattr(cfg, 'semrepa', False): raise ValueError('StageCfg.w_semrepa needs cfg.semrepa (the projector)')
+    _repa = sc.w_semrepa > 0
+    if _repa: model._repa_capture = int(cfg.semrepa_block)
     h = run_planner(hist)
+    if _repa:
+        h_repa = model._repa_h; model._repa_capture = 0; model._repa_h = None
     if cfg.mtc: mtp, mtpm = mt.flatten(0, 1), mt_mask.flatten(0, 1)
     if cfg.style:
         style_tok, kl, _ = model.style_head(sref[:, None].expand(-1, K, -1), h, x_target=lat_k)
@@ -935,7 +967,7 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
 
     # ---- decoded continuity / rhythm
     if sc.w_cont > 0 or sc.w_rhy > 0 or sc.w_phys > 0 or sc.w_foot > 0 or sc.w_safe > 0 or \
-            ((sc.w_ctl_aux > 0 or sc.w_ctl_count > 0 or sc.w_ctl_finger > 0) and ctl is not None):
+            ((sc.w_ctl_aux > 0 or sc.w_ctl_count > 0 or sc.w_ctl_finger > 0 or sc.w_sem_desc > 0) and ctl is not None):
         x1hat = torch.where(known[..., None], x1i, xt + (1 - t[..., None]) * v)
         # decode with the context the streamer has: 3 more history chunks before the known context (the decoder looks
         # ~7 latents back) and the next chunk's first latent as look-ahead (inference emits a frame only once the latent
@@ -953,6 +985,25 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         zz = torch.cat([extra, x1hat, nxt], 1)
         yfull = vae.decode(zz * model.lat_std + model.lat_mean)
         y = yfull[:, Hx * STRIDE:(Hx + L) * STRIDE]                                   # frames of [ctx | target]
+        y_sem = y
+        if sc.sem_rollout_steps > 0 and sc.w_sem_desc > 0 and ctl is not None and ctl.get('cdesc') is not None:
+            # 11-09 Design B (docs/criteria/P2B_ROLLOUT_1109.md; default off): the sem outcome on a decoded k-step CFG rollout of every
+            # chunk's target from noise (conditional branch with gradient, unconditional branch detached), known context as given
+            if cfg.mtc or cfg.planner != 'chunk' or cfg.style or ins is not None: raise ValueError('sem_rollout_steps: plain chunk planner only')
+            with torch.no_grad():
+                a_u = model.audio_null.expand_as(a); am_u = torch.zeros_like(amask_k); tm_u = torch.zeros_like(tmask)
+                h_u = model.plan(plan_input, a_u, am_u, text, tm_u, g, tids=batch.get('tids'), tidm=(torch.zeros_like(tidm_d) if tidm_d is not None else None),
+                                 sref=sref, tvis=tvis, lvis=lvis, sstate=sstate)
+                h0_u = model.sem_h(h_u).flatten(0, 1); ft_u = model.flow_text(text, tm_u, tvis, tsec, K); aw_u = model.audio_null.to(aw.dtype).expand_as(aw)
+            kr = torch.zeros_like(known); kr[:, :cfg.ctx] = known[:, :cfg.ctx]
+            xr = torch.where(kr[..., None], x1i, torch.randn_like(x1i)); nst = int(sc.sem_rollout_steps)
+            for i_ in range(nst):
+                tt_ = torch.full(kr.shape, i_ / nst, device=dev); tt_[kr] = 1.
+                vc_ = model.flow_velocity(xr, tt_, kr, h_flow.flatten(0, 1), gi, aw, awm, style_tok, state_ada, ftext=ftext, **({} if ctl_c is None else dict(ctl_c=ctl_c)))
+                with torch.no_grad(): vu_ = model.flow_velocity(xr, tt_, kr, h0_u, gi, aw_u, awm, style_tok, state_ada, ftext=ft_u)
+                xr = torch.where(kr[..., None], xr, xr + (vu_ + sc.sem_rollout_cfg * (vc_ - vu_)) / nst)
+            nxt_r = torch.where((kk_ + 1 < K)[None, :, None], x1_full[:, nx], xr.view(B, K, L, -1)[:, :, -1]).flatten(0, 1)[:, None]
+            y_sem = vae.decode(torch.cat([extra, xr, nxt_r], 1) * model.lat_std + model.lat_mean)[:, Hx * STRIDE:(Hx + L) * STRIDE]
         fv = seg_valid[:, -2 * CHUNK_FRAMES:].float() * torch.cat(
             [has_ctx[:, None].float().expand(M, CHUNK_FRAMES), tgt_valid.float().repeat_interleave(STRIDE, 1)], 1)
         fv = fv * (kk.view(M) >= 4).float()[:, None]                                  # needs 4 chunks of history
@@ -978,6 +1029,11 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
             from .g1_safety import contract_loss
             sf = contract_loss(y.float() * qs + qm, fv_all * w_inst[:, None])   # the executable contract holds in the bridge too
             out.update(sf); loss = loss + sc.w_safe * (sf['safe_lim'] + sf['safe_lr'] + sc.safe_torso_w * sf['safe_torso'])
+        if sc.w_sem_desc > 0 and ctl is not None and ctl.get('cdesc') is not None:     # 11-09 P2 outcome loss
+            fw_sem = fv * w_inst[:, None] if sc.sem_rollout_steps == 0 else (fv > 0).float()   # rollout: no noise-level trust weight
+            if sc.sem_w_low and sc.sem_rollout_steps == 0: fw_sem = fv * (1 - w_inst)[:, None]    # 11-09 W-low: weight the steps x_hat can change
+            out.update(sem_desc_loss(y_sem.float() * qs + qm, batch, ctl, fw_sem, B, K, sc.sem_bank))
+            loss = loss + sc.w_sem_desc * out['sem_desc']
         if sc.w_ctl_aux > 0 and ctl is not None:
             out.update(ctl_ray_loss(y.float() * qs + qm, batch, ctl, fv * w_inst[:, None], B, K, extra=sc.w_ctl_ray_el > 0 or sc.w_ctl_raise > 0 or sc.w_ctl_ray_az > 0))
             loss = loss + sc.w_ctl_aux * out['ctl_ray']
@@ -1026,8 +1082,83 @@ def step_losses(model, vae, batch, sc: StageCfg, stats):
         out['kl'] = (klm * cm).sum() / cm.sum().clamp(min=1)
         out['kl_raw'] = (kl.sum(-1) * cm).sum() / cm.sum().clamp(min=1)
         loss = loss + sc.w_kl * out['kl']
+    if sc.w_f4 > 0:                                        # 11-09 F4 text-motion latent alignment (computed last: RNG untouched)
+        if not getattr(cfg, 'f4_align', False): raise ValueError('StageCfg.w_f4 needs cfg.f4_align')
+        tmv = model.chunk_text_mask(tmask, tvis, K)                                     # [B, K, Kt] visible to chunk k
+        ck = (torch.arange(K, device=dev).float() * CHUNK_FRAMES + CHUNK_FRAMES / 2) / 50.
+        tsv = torch.nan_to_num(tsec, nan=1e9)
+        wv = (tmv & ((tsv[:, None, :] - ck[None, :, None]).abs() <= 0.8)).float()        # [B, K, Kt]
+        nw = wv.sum(-1)
+        zt = torch.einsum('bkt,btd->bkd', wv, text.float()) / nw.clamp(min=1)[..., None]
+        cv4 = (nw > 0) & (mask[:, :K * CHUNK_FRAMES].view(B, K, CHUNK_FRAMES) > .5).all(-1)
+        if int(cv4.sum()) >= 2:
+            a4 = F.normalize(model.f4_txt(zt[cv4]).float(), dim=-1); b4 = F.normalize(model.f4_mot(lat_k[cv4].flatten(-2)).float(), dim=-1)
+            lg4 = a4 @ b4.T / 0.07; l4 = torch.arange(len(a4), device=dev)
+            out['f4'] = 0.5 * (F.cross_entropy(lg4, l4) + F.cross_entropy(lg4.T, l4))
+            loss = loss + sc.w_f4 * out['f4']
+    if sc.w_f6 > 0:                                        # 11-09 F6 contrastive flow matching (computed last)
+        if cfg.mtc or cfg.planner != 'chunk' or cfg.style or ctl_c is not None or ins is not None:
+            raise ValueError('w_f6: plain chunk planner without mtc / style / ctl / mask insertion only')
+        rl = lambda x: x.roll(1, 0)
+        a_m, am_m, tx_m, tk_m = rl(a), rl(amask_k), rl(text), rl(tmask)
+        tv_m = rl(tvis) if tvis is not None else None; ts_m = rl(tsec)
+        h_m = model.plan(plan_input, a_m, am_m, tx_m, tk_m, g, tids=batch.get('tids'), tidm=tidm_d, sref=sref, tvis=tv_m, lvis=lvis, sstate=sstate)
+        ft_m = model.flow_text(tx_m, tk_m, tv_m, ts_m, K)
+        aw_m = aw.view(B, K, *aw.shape[1:]).roll(1, 0).flatten(0, 1); awm_m = awm.view(B, K, *awm.shape[1:]).roll(1, 0).flatten(0, 1)
+        v_m = model.flow_velocity(xt, t, known, model.sem_h(h_m).flatten(0, 1), gi, aw_m, awm_m, style_tok, state_ada, ftext=ft_m)
+        sf = sup.float(); ns = sf.sum(-1)
+        e_pos = (err * sf).sum(-1) / ns.clamp(min=1); e_mis = ((v_m - (x1i - noise)).square().mean(-1) * sf).sum(-1) / ns.clamp(min=1)
+        ok6 = ns > 0
+        out['f6'] = F.relu(sc.f6_margin * e_pos.detach() - e_mis)[ok6].mean() if ok6.any() else loss.new_zeros(())
+        out['f6_ratio'] = (e_mis[ok6].mean() / e_pos[ok6].mean().clamp(min=1e-8)).detach() if ok6.any() else loss.new_zeros(())
+        loss = loss + sc.w_f6 * out['f6']
+    if _repa:                                              # 11-09 SemREPA on the main teacher-forced planner pass
+        from .semrepa import load_teacher, teacher_targets
+        tgt = teacher_targets(load_teacher(sc.semrepa_teacher, dev), q * qs + qm, K, CHUNK_FRAMES)       # [B, K, 192]
+        cv = (mask[:, :K * CHUNK_FRAMES].view(B, K, CHUNK_FRAMES) > .5).all(-1).float()
+        cs = F.cosine_similarity(model.repa_proj(h_repa).float(), tgt, dim=-1)
+        out['semrepa'] = ((1 - cs) * cv).sum() / cv.sum().clamp(min=1)
+        loss = loss + sc.w_semrepa * out['semrepa']
     out['loss'] = loss
     return out
+
+
+_SEMB = {}
+
+
+def sem_desc_loss(yp, batch, ctl, fw, B, K, bank):
+    """11-09 P2: yp [M = B K, 2 CF, J] decoded [ctx | target] frames (physical), fw [M, 2 CF]. The target halves of the K chunks of
+    a sample form its window estimate; for every kept SEM token with a descriptor, visible to the chunk of its window start
+    (ctl_a), window [a, a + 1.2 s] inside the estimate with all frames weighted > 0: E(descriptor of the decoded window with the
+    GIVEN hand, given descriptor) (scmg/sem_desc.py), weighted by the window's mean frame weight."""
+    from .common import EMBODIMENT
+    if EMBODIMENT != 'ex002': raise ValueError('StageCfg.w_sem_desc is the EX002 descriptor term (SCMG_J=34)')
+    from .ctl import SEM
+    from . import sem_desc as SD
+    if bank not in _SEMB:
+        import json as _j
+        from .common import P as _P
+        _SEMB[bank] = _j.loads(open(_P(bank)).read())
+    st = _SEMB[bank]; dev = yp.device; CF = CHUNK_FRAMES; T = K * CF
+    fa = torch.round(torch.nan_to_num(batch['ctl_a'].float(), -1e3) * 50.).long()
+    ka = torch.div(fa.clamp(min=0), CF, rounding_mode='floor').clamp(max=K - 1)
+    ok = ctl['cm'] & (batch['ctl_type'] == SEM) & (ctl['cdm'] > 0) & (fa >= 0) & (fa + SD.NW <= T)
+    ok = ok & torch.gather(ctl['keep'], 1, ka[:, None, :]).squeeze(1)
+    yw = yp.view(B, K, 2 * CF, -1)[:, :, CF:].reshape(B, T, -1)
+    fw_ = fw.view(B, K, 2 * CF)[:, :, CF:].reshape(B, T)
+    bi, ji = ok.nonzero(as_tuple=True)
+    z = dict(sem_desc=yp.sum() * 0., sem_desc_n=torch.zeros((), device=dev))
+    if len(bi) == 0: return z
+    idx = fa[bi, ji][:, None] + torch.arange(SD.NW, device=dev)[None]                         # [n, NW]
+    wv = fw_[bi[:, None], idx]                                                                # [n, NW]
+    good = (wv > 0).all(1)
+    if not good.any(): return z
+    bi, ji, idx, wv = bi[good], ji[good], idx[good], wv[good]
+    hand = (ctl['cval'][bi, ji, 3] > 0).long()
+    d = SD.standardise(SD.descriptor_q(yw[bi[:, None], idx], hand), st['mu'], st['sd'])
+    e = SD.error(d, ctl['cdesc'][bi, ji].float()); w = wv.mean(1)
+    return dict(sem_desc=(e * w).sum() / w.sum().clamp(min=1e-3), sem_desc_n=torch.tensor(float(len(bi)), device=dev),
+                sem_desc_raw=e.detach().mean())
 
 
 def ctl_ray_loss(yp, batch, ctl, fw, B, K, extra=False):

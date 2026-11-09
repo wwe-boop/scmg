@@ -37,10 +37,13 @@ LEX_CLASSES = ['we', 'self', 'you', 'third', 'neg', 'number', 'big', 'small', 'u
 TYPE_NAMES = ['pad'] + SEM_CLASSES + ['lex_' + c for c in LEX_CLASSES]
 NTYPES_V1 = len(TYPE_NAMES)    # 11-07 exp/duplex: types appended after this keep every existing id and encoding unchanged
 TYPE_NAMES = TYPE_NAMES + ['yield']   # 11-07 duplex mode: the interrupt event (the robot must yield the floor), group 0, no values
+TYPE_NAMES = TYPE_NAMES + ['sem']     # 11-09 P2 sem_cf: exemplar-descriptor token (hand in slot 3, 16-D descriptor in ctl_d), group 0
 TYPE_ID = {n: i for i, n in enumerate(TYPE_NAMES)}
 NTYPES = len(TYPE_NAMES)
 POINT = TYPE_ID['deictic']
 YIELD = TYPE_ID['yield']
+SEM = TYPE_ID['sem']
+ND = 16                        # 11-09 P2: descriptor channels (scmg/sem_desc.py)
 GESTURE = TYPE_ID['iconic']   # legacy name (amplitude-only types: iconic / metaphoric / beat)
 TYPES = {c: TYPE_ID[c] for c in SEM_CLASSES}
 NV, NVM = 5, 3                 # value channels / value-mask channels
@@ -167,6 +170,8 @@ def token_value(tok):
         if tgt is None and tok.get('az') is not None: tgt = target_from_dir(tok['az'], tok['el'], tok.get('hand', 1))
         if tgt is not None: v[:3] = np.asarray(tgt, np.float32) / POS_SCALE; m[0] = 1
         if tok.get('hand') is not None: v[3] = -1. if int(tok['hand']) == 0 else 1.; m[1] = 1
+    if ty == SEM and tok.get('hand') is not None:             # 11-09 P2: the exemplar's hand (descriptor: separate channel)
+        v[3] = -1. if int(tok['hand']) == 0 else 1.; m[1] = 1
     if tok.get('amp_bin') is not None: v[4] = float(tok['amp_bin']) - 1.; m[2] = 1
     if ty != POINT and tok.get('count') is not None:          # 11-07 count control (non-POINT annotation tokens): slot 0
         v[0] = count_value(tok['count']); m[0] = 1
@@ -241,15 +246,21 @@ def priority(ty):
 
 
 def window_arrays(toks, kc=KC):
-    """list of (window-relative time s, segment a, b, apex (s), type, val, vmask) -> padded arrays (type 0 = padding);
-    more than kc tokens: keep by priority() then time, stored in time order."""
+    """list of (window-relative time s, segment a, b, apex (s), type, val, vmask[, desc]) -> padded arrays (type 0 = padding);
+    more than kc tokens: keep by priority() then time, stored in time order. 11-09 P2: tokens with an 8th element (16-D
+    descriptor) add ctl_d [kc, 16] / ctl_dm [kc] (only when some token of the window carries one: default keys unchanged)."""
     t = np.full(kc, np.nan, np.float32); a = np.full(kc, np.nan, np.float32); b = np.full(kc, np.nan, np.float32)
     ap = np.full(kc, np.nan, np.float32); ty = np.zeros(kc, np.int64); gr = np.zeros(kc, np.int64)
     v = np.zeros((kc, NV), np.float32); m = np.zeros((kc, NVM), np.float32)
     keep = sorted(sorted(toks, key=lambda x: (priority(x[4]), x[0]))[:kc], key=lambda x: x[0])
-    for i, (t_, a_, b_, ap_, ty_, v_, m_) in enumerate(keep):
+    dd = np.zeros((kc, ND), np.float32); dm = np.zeros(kc, np.float32); has_d = False
+    for i, tok in enumerate(keep):
+        t_, a_, b_, ap_, ty_, v_, m_ = tok[:7]
         t[i], a[i], b[i], ap[i], ty[i], v[i], m[i], gr[i] = t_, a_, b_, ap_, ty_, v_, m_, group_of(ty_)
-    return dict(ctl_t=t, ctl_a=a, ctl_b=b, ctl_apex=ap, ctl_type=ty, ctl_g=gr, ctl_v=v, ctl_vm=m)
+        if len(tok) > 7 and tok[7] is not None: dd[i] = tok[7]; dm[i] = 1.; has_d = True
+    out = dict(ctl_t=t, ctl_a=a, ctl_b=b, ctl_apex=ap, ctl_type=ty, ctl_g=gr, ctl_v=v, ctl_vm=m)
+    if has_d: out.update(ctl_d=dd, ctl_dm=dm)
+    return out
 
 
 # ---------------------------------------------------------------- arrival / visibility (torch)

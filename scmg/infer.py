@@ -287,7 +287,8 @@ class Streamer:
         if self.has_ctl:                                             # control tokens: same arrival / voicing rules as their word
             from .ctl import anchor_arrival, visibility
             ctl_tt = (c['ctl_t'].float() - f0 / 50.)[None]; cm = (c['ctl_type'] > 0)[None] & torch.isfinite(ctl_tt)
-            ctl_u = m.ctl_embed(c['ctl_type'].long()[None] * cm.long(), c['ctl_v'][None].float(), c['ctl_vm'][None].float())
+            _cd = (c['ctl_d'][None].float(), c['ctl_dm'][None].float() * cm.float()) if 'ctl_d' in c else (None, None)   # 11-09 P2
+            ctl_u = m.ctl_embed(c['ctl_type'].long()[None] * cm.long(), c['ctl_v'][None].float(), c['ctl_vm'][None].float(), *_cd)
             nowc = torch.arange(W, device=self.dev).float() * CHUNK_FRAMES / 50.
             arr_c = (anchor_arrival((self.arr_text - f0 / 50.)[None], tt[None].float(), c['tmask'][None].bool(), ctl_tt)
                      if (self.arr_text is not None and self.text_mode != 'final') else ctl_tt)
@@ -297,7 +298,9 @@ class Streamer:
             stream_c = torch.tensor([bool((self.deploy_timing or adsc_m) and self.H < INF)], device=self.dev)
             if self.ctl_lookahead > 0:
                 from .ctl import TYPE_NAMES
-                g0 = (c['ctl_type'] > 0)[None] & (c['ctl_type'] <= len([n for n in TYPE_NAMES[1:] if not n.startswith('lex_')]))[None]
+                from .ctl import SEM
+                g0 = (c['ctl_type'] > 0)[None] & (c['ctl_type'] <= len([n for n in TYPE_NAMES[1:] if not n.startswith('lex_') and n != 'sem']))[None]
+                g0 = g0 | (c['ctl_type'] == SEM)[None]                  # 11-09 P2: SEM tokens get the look-ahead (the legacy id rule unchanged)
                 arr_c = torch.where(g0, torch.minimum(arr_c.float(), torch.nan_to_num(ctl_tt, 0.) - self.ctl_lookahead), arr_c.float())
             ckeep, ctimed = visibility(cm, ctl_tt, arr_c, torch.tensor([self.text_mode == 'final'], device=self.dev), nowc, heard_c, stream_c)
             if self.ctl_lookahead > 0:        # its time is known ctl_lookahead s before it is spoken (voiced-rule shifted)
